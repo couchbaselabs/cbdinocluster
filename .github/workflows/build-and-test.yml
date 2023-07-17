@@ -1,0 +1,61 @@
+name: Run Tests
+
+on:
+  push:
+    tags:
+      - v*
+    branches:
+      - master
+  pull_request:
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: 1.19
+      - name: Install dependencies
+        run: go get .
+      - name: Build OS X Binary
+        run: GOOS=darwin GOARCH=amd64 go build -o cbdyncluster2-darwin
+      - name: Build Linux Binary
+        run: GOOS=linux GOARCH=amd64 go build -o cbdyncluster2-linux
+      - name: Build Windows Binary
+        run: GOOS=windows GOARCH=amd64 go build -o cbdyncluster2-windows.exe
+      - uses: actions/upload-artifact@v3
+        with:
+          name: cbdyncluster2-darwin
+          path: cbdyncluster2-darwin
+      - uses: actions/upload-artifact@v3
+        with:
+          name: cbdyncluster2-linux
+          path: cbdyncluster2-linux
+      - uses: actions/upload-artifact@v3
+        with:
+          name: cbdyncluster2-windows.exe
+          path: cbdyncluster2-windows.exe
+  test:
+    name: Integration Test
+    needs: [build]
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: cbdyncluster2-linux
+      - run: chmod +x cbdyncluster2-linux
+      - name: Setup Cluster
+        run: |
+          CBDC_ID=$(./cbdyncluster2-linux allocate --purpose test --num-nodes=3 --version=7.0.0)
+          echo "CBDC_ID=$CBDC_ID" >> "$GITHUB_ENV"
+      - name: Run Tests
+        timeout-minutes: 10
+        run: |
+          echo ${{ env.CBDC_ID }}
+          sleep 1
+          curl http://172.17.0.2:8091
+      - name: Cleanup Cluster
+        if: always()
+        run: |
+          ./cbdyncluster2-linux rm ${{ env.CBDC_ID }}
