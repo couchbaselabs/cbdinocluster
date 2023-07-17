@@ -76,54 +76,66 @@ func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface
 	return nil
 }
 
-func (c *Controller) doGet(ctx context.Context, path string, out interface{}) error {
+func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.Request, error), maxRetries int, out interface{}) error {
+	retryNum := 0
 	for {
-		req, err := http.NewRequest(http.MethodGet, c.Endpoint+path, nil)
+		req, err := makeReq()
 		if err != nil {
 			return errors.Wrap(err, "failed to build request")
 		}
 
 		err = c.doReq(ctx, req, out)
 		if err != nil {
-			if errors.Is(err, io.EOF) {
-				// TODO(brett19): need to deal with context deadline here
-				time.Sleep(1 * time.Second)
-				continue
+			if maxRetries == 0 {
+				return err
 			}
 
-			return err
+			if retryNum >= maxRetries {
+				// after 10 retries we just return the error
+				return errors.Wrap(err, fmt.Sprintf("failed after %d retries", maxRetries))
+			}
+
+			retryNum++
+
+			select {
+			case <-time.After(1 * time.Second):
+				// continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+
+			continue
 		}
 
 		return nil
 	}
 }
 
+func (c *Controller) doGet(ctx context.Context, path string, out interface{}) error {
+	maxRetries := 10
+	return c.doRetriableReq(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+path, nil)
+	}, maxRetries, out)
+}
+
 func (c *Controller) doFormPost(ctx context.Context, path string, data url.Values, allowRetries bool, out interface{}) error {
 	encodedData := data.Encode()
 
-	for {
-		req, err := http.NewRequest(http.MethodPost, c.Endpoint+path, strings.NewReader(encodedData))
+	maxRetries := 10
+	if !allowRetries {
+		maxRetries = 0
+	}
+
+	return c.doRetriableReq(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+path, strings.NewReader(encodedData))
 		if err != nil {
-			return errors.Wrap(err, "failed to build request")
+			return nil, err
 		}
 
 		req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
 
-		err = c.doReq(ctx, req, out)
-		if err != nil {
-			if allowRetries {
-				if errors.Is(err, io.EOF) {
-					// TODO(brett19): need to deal with context deadline here
-					time.Sleep(1 * time.Second)
-					continue
-				}
-			}
-
-			return err
-		}
-
-		return nil
-	}
+		return req, nil
+	}, maxRetries, out)
 }
 
 func (c *Controller) genServicesList(opts *NodeSetupOptions) string {
