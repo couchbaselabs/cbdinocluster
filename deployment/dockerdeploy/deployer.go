@@ -98,16 +98,31 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 
 	log.Printf("gathering node images")
 
+	nodeDefs := make([]*ImageDef, len(opts.Nodes))
 	nodeImages := make([]*ImageRef, len(opts.Nodes))
 	for nodeIdx, node := range opts.Nodes {
-		imageRef, err := d.imageProvider.GetImage(ctx, &ImageDef{
+		imageDef := &ImageDef{
 			Version:             node.Version,
 			BuildNo:             node.BuildNo,
 			UseCommunityEdition: node.UseCommunityEdition,
 			UseServerless:       node.UseServerless,
-		})
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get image for a node")
+		}
+		nodeDefs[nodeIdx] = imageDef
+
+		var imageRef *ImageRef
+		for oNodeIdx := 0; oNodeIdx < nodeIdx; oNodeIdx++ {
+			if CompareImageDefs(nodeDefs[oNodeIdx], imageDef) == 0 {
+				imageRef = nodeImages[oNodeIdx]
+			}
+		}
+
+		if imageRef == nil {
+			foundImageRef, err := d.imageProvider.GetImage(ctx, imageDef)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to get image for a node")
+			}
+
+			imageRef = foundImageRef
 		}
 
 		nodeImages[nodeIdx] = imageRef
