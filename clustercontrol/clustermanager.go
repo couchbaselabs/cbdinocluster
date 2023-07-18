@@ -57,37 +57,41 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 		return errors.Wrap(err, "failed to configure the first node")
 	}
 
-	log.Printf("joining additional nodes to the cluster")
+	if len(opts.Nodes) == 1 {
+		log.Printf("only a single node in the cluster, skipping add+rebalance")
+	} else {
+		log.Printf("joining additional nodes to the cluster")
 
-	for _, node := range opts.Nodes {
-		if node.Address == firstNodeAddress {
-			continue
+		for _, node := range opts.Nodes {
+			if node.Address == firstNodeAddress {
+				continue
+			}
+
+			err := firstNodeCtrl.AddNode(ctx, &AddNodeOptions{
+				ServerGroup: "0",
+				Address:     node.Address,
+				Services:    node.NodeSetupOptions.NsServicesList(),
+				Username:    "",
+				Password:    "",
+			})
+			if err != nil {
+				return errors.Wrap(err, "failed to configure additional node")
+			}
 		}
 
-		err := firstNodeCtrl.AddNode(ctx, &AddNodeOptions{
-			ServerGroup: "0",
-			Address:     node.Address,
-			Services:    node.NodeSetupOptions.NsServicesList(),
-			Username:    "",
-			Password:    "",
-		})
+		log.Printf("initiating rebalance")
+
+		err = firstNodeMgr.Rebalance(ctx)
 		if err != nil {
-			return errors.Wrap(err, "failed to configure additional node")
+			log.Fatalf("rebalance begin error: %s", err)
 		}
-	}
 
-	log.Printf("initiating rebalance")
+		log.Printf("waiting for rebalance completion")
 
-	err = firstNodeMgr.Rebalance(ctx)
-	if err != nil {
-		log.Fatalf("rebalance begin error: %s", err)
-	}
-
-	log.Printf("waiting for rebalance completion")
-
-	err = firstNodeMgr.WaitForNoRunningTasks(ctx)
-	if err != nil {
-		log.Fatalf("task wait error: %s", err)
+		err = firstNodeMgr.WaitForNoRunningTasks(ctx)
+		if err != nil {
+			log.Fatalf("task wait error: %s", err)
+		}
 	}
 
 	log.Printf("cluster deployment completed")
