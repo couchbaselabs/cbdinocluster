@@ -67,7 +67,7 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 		err := firstNodeCtrl.AddNode(ctx, &AddNodeOptions{
 			ServerGroup: "0",
 			Address:     node.Address,
-			Services:    firstNodeMgr.GenServicesList(&node.NodeSetupOptions),
+			Services:    node.NodeSetupOptions.NsServicesList(),
 			Username:    "",
 			Password:    "",
 		})

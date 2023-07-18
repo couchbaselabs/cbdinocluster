@@ -48,27 +48,53 @@ type NodeSetupOptions struct {
 	EnableBackupService   bool
 }
 
-func (m *NodeManager) GenServicesList(opts *NodeSetupOptions) []string {
+func (o NodeSetupOptions) ServicesList() []string {
 	var serviceNames []string
-	if opts.EnableKvService {
+	if o.EnableKvService {
 		serviceNames = append(serviceNames, "kv")
 	}
-	if opts.EnableN1qlService {
-		serviceNames = append(serviceNames, "n1ql")
+	if o.EnableN1qlService {
+		serviceNames = append(serviceNames, "query")
 	}
-	if opts.EnableIndexService {
+	if o.EnableIndexService {
 		serviceNames = append(serviceNames, "index")
 	}
-	if opts.EnableFtsService {
+	if o.EnableFtsService {
 		serviceNames = append(serviceNames, "fts")
 	}
-	if opts.EnableCbasService {
+	if o.EnableCbasService {
 		serviceNames = append(serviceNames, "cbas")
 	}
-	if opts.EnableEventingService {
+	if o.EnableEventingService {
 		serviceNames = append(serviceNames, "eventing")
 	}
-	if opts.EnableBackupService {
+	if o.EnableBackupService {
+		serviceNames = append(serviceNames, "backup")
+	}
+	return serviceNames
+}
+
+func (o NodeSetupOptions) NsServicesList() []string {
+	var serviceNames []string
+	if o.EnableKvService {
+		serviceNames = append(serviceNames, "kv")
+	}
+	if o.EnableN1qlService {
+		serviceNames = append(serviceNames, "n1ql")
+	}
+	if o.EnableIndexService {
+		serviceNames = append(serviceNames, "index")
+	}
+	if o.EnableFtsService {
+		serviceNames = append(serviceNames, "fts")
+	}
+	if o.EnableCbasService {
+		serviceNames = append(serviceNames, "cbas")
+	}
+	if o.EnableEventingService {
+		serviceNames = append(serviceNames, "eventing")
+	}
+	if o.EnableBackupService {
 		serviceNames = append(serviceNames, "backup")
 	}
 	return serviceNames
@@ -111,7 +137,7 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 	}
 
 	err = c.SetupServices(ctx, &SetupServicesOptions{
-		Services: m.GenServicesList(&opts.NodeSetupOptions),
+		Services: opts.NodeSetupOptions.NsServicesList(),
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to setup services")
