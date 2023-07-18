@@ -8,7 +8,7 @@ import (
 )
 
 var rmCmd = &cobra.Command{
-	Use:   "rm",
+	Use:   "rm [flags] [cluster]",
 	Short: "Removes a cluster",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

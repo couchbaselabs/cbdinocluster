@@ -75,6 +75,7 @@ func identifyCluster(ctx context.Context, deployer deployment.Deployer, userInpu
 	}
 
 	var identifiedCluster *deployment.ClusterInfo
+
 	for _, cluster := range clusters {
 		if strings.HasPrefix(cluster.ClusterID, userInput) {
 			if identifiedCluster != nil {
@@ -90,4 +91,24 @@ func identifyCluster(ctx context.Context, deployer deployment.Deployer, userInpu
 	}
 
 	return identifiedCluster, nil
+}
+
+func identifyNode(ctx context.Context, cluster *deployment.ClusterInfo, userInput string) (*deployment.ClusterNodeInfo, error) {
+	var identifiedNode *deployment.ClusterNodeInfo
+
+	for _, node := range cluster.Nodes {
+		if strings.HasPrefix(node.NodeID, userInput) || node.Name == userInput {
+			if identifiedNode != nil {
+				return nil, errors.New("multiple nodes matched the specified identifier")
+			}
+
+			identifiedNode = node
+		}
+	}
+
+	if identifiedNode == nil {
+		return nil, errors.New("no nodes matched the specified identifier")
+	}
+
+	return identifiedNode, nil
 }

@@ -47,15 +47,15 @@ jobs:
       - run: chmod +x cbdyncluster2-linux
       - name: Setup Cluster
         run: |
-          CBDC_ID=$(./cbdyncluster2-linux allocate --purpose test --num-nodes=3 --version=7.0.0)
+          CBDC_ID=$(./cbdyncluster2-linux allocate simple:7.0.0)
           echo "CBDC_ID=$CBDC_ID" >> "$GITHUB_ENV"
       - name: Run Tests
         timeout-minutes: 10
         run: |
-          echo ${{ env.CBDC_ID }}
-          sleep 1
-          curl http://172.17.0.2:8091
+          ./cbdyncluster2-linux connstr $CBDC_ID
+          CBDC_MGMT=$(./cbdyncluster2-linux mgmt $CBDC_ID)
+          curl $CBDC_MGMT
       - name: Cleanup Cluster
         if: always()
         run: |
-          ./cbdyncluster2-linux rm ${{ env.CBDC_ID }}
+          ./cbdyncluster2-linux rm $CBDC_ID
