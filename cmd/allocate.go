@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/brett19/cbdyncluster2/clustercontrol"
 	"github.com/brett19/cbdyncluster2/deployment"
 	"github.com/brett19/cbdyncluster2/versionident"
 	"github.com/spf13/cobra"
@@ -65,6 +66,40 @@ var allocateCmd = &cobra.Command{
 		})
 		if err != nil {
 			log.Fatalf("cluster deployment failed: %s", err)
+		}
+
+		addNodes := make([]*clustercontrol.SetupNewClusterNodeOptions, len(nodes))
+		for nodeIdx, node := range cluster.Nodes {
+			addNodes[nodeIdx] = &clustercontrol.SetupNewClusterNodeOptions{
+				Address: node.IPAddress,
+
+				NodeSetupOptions: clustercontrol.NodeSetupOptions{
+					EnableKvService:       true,
+					EnableN1qlService:     true,
+					EnableIndexService:    true,
+					EnableFtsService:      true,
+					EnableCbasService:     false,
+					EnableEventingService: false,
+					EnableBackupService:   false,
+				},
+			}
+		}
+
+		clusterMgr := clustercontrol.ClusterManager{}
+		err = clusterMgr.SetupNewCluster(ctx, &clustercontrol.SetupNewClusterOptions{
+			KvMemoryQuotaMB:       256,
+			IndexMemoryQuotaMB:    256,
+			FtsMemoryQuotaMB:      256,
+			CbasMemoryQuotaMB:     1024,
+			EventingMemoryQuotaMB: 256,
+
+			Username: "Administrator",
+			Password: "password",
+
+			Nodes: addNodes,
+		})
+		if err != nil {
+			log.Fatalf("cluster setup failed: %s", err)
 		}
 
 		fmt.Printf("%s\n", cluster.ClusterID)

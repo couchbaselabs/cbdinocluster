@@ -2,12 +2,10 @@ package dockerdeploy
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strings"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/clustercontrol"
 	"github.com/brett19/cbdyncluster2/deployment"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
@@ -171,71 +169,6 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 			return nil, err
 		}
 	}
-
-	firstNodeAddress := nodes[0].IPAddress
-	clusterCtrl := clustercontrol.Controller{
-		Endpoint: fmt.Sprintf("http://%s:%d", firstNodeAddress, 8091),
-	}
-
-	log.Printf("configuring the first node")
-
-	err := clusterCtrl.SetupFirstNode(ctx, &clustercontrol.SetupFirstNodeOptions{
-		KvMemoryQuotaMB:       256,
-		IndexMemoryQuotaMB:    256,
-		FtsMemoryQuotaMB:      256,
-		CbasMemoryQuotaMB:     1024,
-		EventingMemoryQuotaMB: 256,
-
-		Username: "Administrator",
-		Password: "password",
-
-		NodeSetupOptions: clustercontrol.NodeSetupOptions{
-			EnableKvService:    true,
-			EnableN1qlService:  true,
-			EnableIndexService: true,
-			EnableFtsService:   true,
-		},
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to configure the first node")
-	}
-
-	log.Printf("joining additional nodes to the cluster")
-
-	for _, node := range nodes {
-		if node.IPAddress == firstNodeAddress {
-			continue
-		}
-
-		err := clusterCtrl.AddNode(ctx, &clustercontrol.AddNodeOptions{
-			Address: node.IPAddress,
-			NodeSetupOptions: clustercontrol.NodeSetupOptions{
-				EnableKvService:    true,
-				EnableN1qlService:  true,
-				EnableIndexService: true,
-				EnableFtsService:   true,
-			},
-		})
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to configure additional node")
-		}
-	}
-
-	log.Printf("initiating rebalance")
-
-	err = clusterCtrl.BeginRebalance(ctx)
-	if err != nil {
-		log.Fatalf("rebalance begin error: %s", err)
-	}
-
-	log.Printf("waiting for rebalance completion")
-
-	err = clusterCtrl.WaitForNoRunningTasks(ctx)
-	if err != nil {
-		log.Fatalf("task wait error: %s", err)
-	}
-
-	log.Printf("cluster deployment completed")
 
 	// we cheat for now...
 	clusters, err := d.ListClusters(ctx)

@@ -11,7 +11,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/brett19/cbdyncluster2/deployment/deployutils"
+	"github.com/brett19/cbdyncluster2/clustercontrol"
 	"github.com/pkg/errors"
 )
 
@@ -165,7 +165,11 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 	}
 
 	// wait till it's ready
-	err = deployutils.WaitForNode(ctx, "127.0.0.1")
+	clusterCtrl := &clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:%d", "127.0.0.1", 8091),
+	}
+
+	err = clusterCtrl.WaitForOnline(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for node readiness")
 	}

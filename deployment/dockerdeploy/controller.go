@@ -5,11 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/deployment/deployutils"
+	"github.com/brett19/cbdyncluster2/clustercontrol"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -243,7 +244,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 
 	log.Printf("container IP: %+v", node.IPAddress)
 
-	err = deployutils.WaitForNode(ctx, node.IPAddress)
+	clusterCtrl := &clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:%d", node.IPAddress, 8091),
+	}
+
+	err = clusterCtrl.WaitForOnline(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to wait for node readiness")
 	}
@@ -254,10 +259,13 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 	log.Printf("killing node container %s", containerID)
 
-	err := c.DockerCli.ContainerStop(context.Background(), containerID, container.StopOptions{})
+	err := c.DockerCli.ContainerStop(ctx, containerID, container.StopOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to stop container")
 	}
+
+	// we try to call remove to force it to be removed
+	c.DockerCli.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{})
 
 	// We call this to 'wait' for the removal to finish...
 	for {

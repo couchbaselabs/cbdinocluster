@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -16,35 +15,6 @@ import (
 
 type Controller struct {
 	Endpoint string
-}
-
-type NodeSetupOptions struct {
-	EnableKvService       bool
-	EnableN1qlService     bool
-	EnableIndexService    bool
-	EnableFtsService      bool
-	EnableCbasService     bool
-	EnableEventingService bool
-	EnableBackupService   bool
-}
-
-type SetupFirstNodeOptions struct {
-	KvMemoryQuotaMB       int
-	IndexMemoryQuotaMB    int
-	FtsMemoryQuotaMB      int
-	CbasMemoryQuotaMB     int
-	EventingMemoryQuotaMB int
-
-	Username string
-	Password string
-
-	NodeSetupOptions
-}
-
-type AddNodeOptions struct {
-	Address string
-
-	NodeSetupOptions
 }
 
 func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface{}) error {
@@ -138,116 +108,158 @@ func (c *Controller) doFormPost(ctx context.Context, path string, data url.Value
 	}, maxRetries, out)
 }
 
-func (c *Controller) genServicesList(opts *NodeSetupOptions) string {
-	var serviceNames []string
-	if opts.EnableKvService {
-		serviceNames = append(serviceNames, "kv")
-	}
-	if opts.EnableN1qlService {
-		serviceNames = append(serviceNames, "n1ql")
-	}
-	if opts.EnableIndexService {
-		serviceNames = append(serviceNames, "index")
-	}
-	if opts.EnableFtsService {
-		serviceNames = append(serviceNames, "fts")
-	}
-	if opts.EnableCbasService {
-		serviceNames = append(serviceNames, "cbas")
-	}
-	if opts.EnableEventingService {
-		serviceNames = append(serviceNames, "eventing")
-	}
-	if opts.EnableBackupService {
-		serviceNames = append(serviceNames, "backup")
-	}
-
-	return strings.Join(serviceNames, ",")
+func (c *Controller) Ping(ctx context.Context) error {
+	return c.doRetriableReq(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+"/pools", nil)
+	}, 0, nil)
 }
 
-func (c *Controller) SetupFirstNode(ctx context.Context, opts *SetupFirstNodeOptions) error {
-	err := c.doFormPost(ctx, "/nodeInit", url.Values{
-		"hostname": []string{"127.0.0.1"},
-		"afamily":  []string{"ipv4"},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to setup services")
-	}
+type NodeInitOptions struct {
+	Hostname string
+	Afamily  string
+}
 
-	err = c.doFormPost(ctx, "/pools/default", url.Values{
-		"clusterName":         []string{"test-cluster"},
-		"memoryQuota":         []string{fmt.Sprintf("%d", opts.KvMemoryQuotaMB)},
-		"indexMemoryQuota":    []string{fmt.Sprintf("%d", opts.IndexMemoryQuotaMB)},
-		"ftsMemoryQuota":      []string{fmt.Sprintf("%d", opts.FtsMemoryQuotaMB)},
-		"cbasMemoryQuota":     []string{fmt.Sprintf("%d", opts.CbasMemoryQuotaMB)},
-		"eventingMemoryQuota": []string{fmt.Sprintf("%d", opts.EventingMemoryQuotaMB)},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to configure memory quotas")
+func (c *Controller) NodeInit(ctx context.Context, opts *NodeInitOptions) error {
+	form := make(url.Values)
+	if opts.Hostname != "" {
+		form.Add("hostname", opts.Hostname)
 	}
-
-	err = c.doFormPost(ctx, "/node/controller/setupServices", url.Values{
-		"services": []string{c.genServicesList(&opts.NodeSetupOptions)},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to setup services")
+	if opts.Afamily != "" {
+		form.Add("afamily", opts.Afamily)
 	}
+	return c.doFormPost(ctx, "/nodeInit", form, true, nil)
+}
 
-	err = c.doFormPost(ctx, "/node/controller/enableExternalListener", url.Values{
-		"afamily":        []string{"ipv4"},
-		"nodeEncryption": []string{"off"},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to enable external listener")
+type UpdateDefaultPoolOptions struct {
+	ClusterName           string
+	KvMemoryQuotaMB       int
+	IndexMemoryQuotaMB    int
+	FtsMemoryQuotaMB      int
+	CbasMemoryQuotaMB     int
+	EventingMemoryQuotaMB int
+}
+
+func (c *Controller) UpdateDefaultPool(ctx context.Context, opts *UpdateDefaultPoolOptions) error {
+	form := make(url.Values)
+	if opts.ClusterName != "" {
+		form.Add("clusterName", opts.ClusterName)
 	}
-
-	err = c.doFormPost(ctx, "/node/controller/setupNetConfig", url.Values{
-		"afamily":        []string{"ipv4"},
-		"nodeEncryption": []string{"off"},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to setup net config")
+	if opts.KvMemoryQuotaMB > 0 {
+		form.Add("memoryQuota", fmt.Sprintf("%d", opts.KvMemoryQuotaMB))
 	}
-
-	err = c.doFormPost(ctx, "/node/controller/disableUnusedExternalListeners", url.Values{}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to disable unused external listeners")
+	if opts.IndexMemoryQuotaMB > 0 {
+		form.Add("indexMemoryQuota", fmt.Sprintf("%d", opts.IndexMemoryQuotaMB))
 	}
-
-	err = c.doFormPost(ctx, "/settings/indexes", url.Values{
-		"storageMode": []string{"plasma"},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to setup net config")
+	if opts.FtsMemoryQuotaMB > 0 {
+		form.Add("ftsMemoryQuota", fmt.Sprintf("%d", opts.FtsMemoryQuotaMB))
 	}
-
-	err = c.doFormPost(ctx, "/settings/web", url.Values{
-		"username": []string{opts.Username},
-		"password": []string{opts.Password},
-		"port":     []string{"SAME"},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to configure credentials")
+	if opts.CbasMemoryQuotaMB > 0 {
+		form.Add("cbasMemoryQuota", fmt.Sprintf("%d", opts.CbasMemoryQuotaMB))
 	}
+	if opts.EventingMemoryQuotaMB > 0 {
+		form.Add("eventingMemoryQuota", fmt.Sprintf("%d", opts.EventingMemoryQuotaMB))
+	}
+	return c.doFormPost(ctx, "/pools/default", form, true, nil)
+}
 
-	return nil
+type EnableExternalListenerOptions struct {
+	Afamily        string
+	NodeEncryption string
+}
+
+func (c *Controller) EnableExternalListener(ctx context.Context, opts *EnableExternalListenerOptions) error {
+	form := make(url.Values)
+	if opts.Afamily != "" {
+		form.Add("afamily", opts.Afamily)
+	}
+	if opts.NodeEncryption != "" {
+		form.Add("nodeEncryption", opts.NodeEncryption)
+	}
+	return c.doFormPost(ctx, "/node/controller/enableExternalListener", form, true, nil)
+}
+
+type SetupNetConfigOptions struct {
+	Afamily        string
+	NodeEncryption string
+}
+
+func (c *Controller) SetupNetConfig(ctx context.Context, opts *SetupNetConfigOptions) error {
+	form := make(url.Values)
+	if opts.Afamily != "" {
+		form.Add("afamily", opts.Afamily)
+	}
+	if opts.NodeEncryption != "" {
+		form.Add("nodeEncryption", opts.NodeEncryption)
+	}
+	return c.doFormPost(ctx, "/node/controller/setupNetConfig", form, true, nil)
+}
+
+func (c *Controller) DisableUnusedExternalListeners(ctx context.Context) error {
+	return c.doFormPost(ctx, "/node/controller/disableUnusedExternalListeners", url.Values{}, true, nil)
+}
+
+type UpdateIndexSettingsOptions struct {
+	StorageMode string
+}
+
+func (c *Controller) UpdateIndexSettings(ctx context.Context, opts *UpdateIndexSettingsOptions) error {
+	form := make(url.Values)
+	if opts.StorageMode != "" {
+		form.Add("storageMode", opts.StorageMode)
+	}
+	return c.doFormPost(ctx, "/settings/indexes", form, true, nil)
+}
+
+type UpdateWebSettingsOptions struct {
+	Username string
+	Password string
+}
+
+func (c *Controller) UpdateWebSettings(ctx context.Context, opts *UpdateWebSettingsOptions) error {
+	form := make(url.Values)
+	if opts.Username != "" {
+		form.Add("username", opts.Username)
+	}
+	if opts.Password != "" {
+		form.Add("password", opts.Password)
+	}
+	form.Add("port", "SAME")
+	return c.doFormPost(ctx, "/settings/web", form, true, nil)
+}
+
+type SetupServicesOptions struct {
+	Services []string
+}
+
+func (c *Controller) SetupServices(ctx context.Context, opts *SetupServicesOptions) error {
+	form := make(url.Values)
+	if len(opts.Services) > 0 {
+		form.Add("services", strings.Join(opts.Services, ","))
+	}
+	return c.doFormPost(ctx, "/node/controller/setupServices", form, true, nil)
+}
+
+type AddNodeOptions struct {
+	ServerGroup string
+
+	Address  string
+	Services []string
+	Username string
+	Password string
 }
 
 func (c *Controller) AddNode(ctx context.Context, opts *AddNodeOptions) error {
-	err := c.doFormPost(ctx, "/pools/default/serverGroups/0/addNode", url.Values{
-		"hostname": []string{opts.Address},
-		"services": []string{c.genServicesList(&opts.NodeSetupOptions)},
-		"user":     []string{""},
-		"password": []string{""},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to add node")
-	}
+	form := make(url.Values)
+	form.Add("hostname", opts.Address)
+	form.Add("services", strings.Join(opts.Services, ","))
+	form.Add("user", opts.Username)
+	form.Add("password", opts.Password)
 
-	return nil
+	path := fmt.Sprintf("/pools/default/serverGroups/%s/addNode", opts.ServerGroup)
+	return c.doFormPost(ctx, path, form, true, nil)
 }
 
-func (c *Controller) BeginRebalance(ctx context.Context) error {
+func (c *Controller) ListNodeOTPs(ctx context.Context) ([]string, error) {
 	var resp struct {
 		Nodes []struct {
 			OTPNode string `json:"otpNode"`
@@ -255,52 +267,47 @@ func (c *Controller) BeginRebalance(ctx context.Context) error {
 	}
 	err := c.doGet(ctx, "/pools/default", &resp)
 	if err != nil {
-		return errors.Wrap(err, "failed to fetch list of nodes to rebalance")
+		return nil, err
 	}
 
-	var otpNodes []string
-	for _, node := range resp.Nodes {
-		otpNodes = append(otpNodes, node.OTPNode)
+	nodeOtps := make([]string, len(resp.Nodes))
+	for nodeIdx, node := range resp.Nodes {
+		nodeOtps[nodeIdx] = node.OTPNode
 	}
 
-	err = c.doFormPost(ctx, "/controller/rebalance", url.Values{
-		"knownNodes": []string{strings.Join(otpNodes, ",")},
-	}, true, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to start rebalance")
-	}
-
-	return nil
+	return nodeOtps, nil
 }
 
-func (c *Controller) WaitForNoRunningTasks(ctx context.Context) error {
-	log.Printf("waiting for all cluster tasks to complete")
+type BeginRebalanceOptions struct {
+	KnownNodeOTPs []string
+}
 
-	for {
-		var resp []struct {
-			Status string `json:"status"`
-		}
-		err := c.doGet(ctx, "/pools/default/tasks", &resp)
-		if err != nil {
-			return errors.Wrap(err, "failed to fetch list of tasks")
-		}
+func (c *Controller) BeginRebalance(ctx context.Context, opts *BeginRebalanceOptions) error {
+	form := make(url.Values)
+	form.Add("knownNodes", strings.Join(opts.KnownNodeOTPs, ","))
 
-		hasRunningTask := false
-		for _, task := range resp {
-			if task.Status != "notRunning" {
-				hasRunningTask = true
-			}
-		}
+	return c.doFormPost(ctx, "/controller/rebalance", form, true, nil)
+}
 
-		if hasRunningTask {
-			time.Sleep(1 * time.Second)
-			continue
-		}
+type Task struct {
+	Status string
+}
 
-		break
+func (c *Controller) ListTasks(ctx context.Context) ([]*Task, error) {
+	var resp []struct {
+		Status string `json:"status"`
+	}
+	err := c.doGet(ctx, "/pools/default/tasks", &resp)
+	if err != nil {
+		return nil, err
 	}
 
-	log.Printf("done!")
+	tasks := make([]*Task, len(resp))
+	for statusIdx, status := range resp {
+		tasks[statusIdx] = &Task{
+			Status: status.Status,
+		}
+	}
 
-	return nil
+	return tasks, nil
 }
