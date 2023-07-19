@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"log"
+	"os/user"
 	"runtime"
 	"strings"
 
@@ -66,6 +67,15 @@ func getDeployer(ctx context.Context) deployment.Deployer {
 	}
 
 	return deployer
+}
+
+func identifyCurrentUser() string {
+	osUser, err := user.Current()
+	if err != nil {
+		return ""
+	}
+
+	return osUser.Username
 }
 
 func identifyCluster(ctx context.Context, deployer deployment.Deployer, userInput string) (*deployment.ClusterInfo, error) {

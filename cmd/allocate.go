@@ -44,11 +44,12 @@ var allocateCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		ctx := context.Background()
 
-		creator := "someone@couchbase.com"
 		defStr, _ := cmd.Flags().GetString("def")
 		defFile, _ := cmd.Flags().GetString("def-file")
 		purpose, _ := cmd.Flags().GetString("purpose")
 		expiry, _ := cmd.Flags().GetDuration("expiry")
+
+		currentUser := identifyCurrentUser()
 
 		var def *AllocateDef
 
@@ -199,7 +200,7 @@ var allocateCmd = &cobra.Command{
 		}
 
 		clusterDeployDef := &deployment.NewClusterOptions{
-			Creator: creator,
+			Creator: currentUser,
 			Purpose: purpose,
 			Expiry:  expiry,
 			Nodes:   nodeDeployDefs,
