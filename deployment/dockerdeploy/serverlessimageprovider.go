@@ -4,7 +4,6 @@ import (
 	"context"
 	"embed"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
@@ -19,6 +19,7 @@ import (
 var assetsFs embed.FS
 
 type ServerlessImageProvider struct {
+	Logger            *zap.Logger
 	DockerCli         *client.Client
 	BaseProviderTag   string
 	BaseImageProvider ImageProvider
@@ -56,7 +57,7 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 
 	for _, image := range images {
 		if slices.Contains(image.RepoTags, fullTagPath) {
-			log.Printf("found existing image with this tag")
+			p.Logger.Debug("found existing image with this tag")
 
 			return &ImageRef{
 				ImagePath: fullTagPath,
@@ -64,7 +65,7 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 		}
 	}
 
-	log.Printf("getting base image to use")
+	p.Logger.Debug("getting base image to use")
 	baseDef := *def
 	baseDef.UseServerless = false
 	baseImageRef, err := p.BaseImageProvider.GetImage(ctx, &baseDef)
@@ -72,7 +73,7 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 		return nil, errors.Wrap(err, "failed to get base image")
 	}
 
-	log.Printf("creating temporary tar file")
+	p.Logger.Debug("creating temporary tar file")
 	tmpTarFile, err := os.CreateTemp("", "dynclsttar")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create temp file to tar docker data")
@@ -85,7 +86,7 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 		return nil, errors.Wrap(err, "failed to create tar builder")
 	}
 
-	log.Printf("adding base data to tar image")
+	p.Logger.Debug("adding base data to tar image")
 	err = t.AddEmbedDir(&assetsFs, "dockerfiles/serverless", "")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to add base data")
@@ -104,9 +105,9 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 	}
 	defer tmpRTarFile.Close()
 
-	log.Printf("starting image build of '%s'", fullTagPath)
+	p.Logger.Debug("starting image build", zap.String("image", fullTagPath))
 
-	err = dockerBuildAndPipe(ctx, p.DockerCli, tmpRTarFile, types.ImageBuildOptions{
+	err = dockerBuildAndPipe(ctx, p.Logger, p.DockerCli, tmpRTarFile, types.ImageBuildOptions{
 		BuildArgs: map[string]*string{
 			"BASE_IMAGE": &baseImageRef.ImagePath,
 		},

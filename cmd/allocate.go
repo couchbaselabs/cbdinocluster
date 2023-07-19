@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"github.com/brett19/cbdyncluster2/deployment"
 	"github.com/brett19/cbdyncluster2/versionident"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v3"
 )
@@ -42,26 +42,28 @@ var allocateCmd = &cobra.Command{
 	Short:   "Allocates a cluster",
 	Example: "allocate simple:7.0.0\nallocate single:7.2.0",
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
+		helper := CmdHelper{}
+		logger := helper.GetLogger()
+		ctx := helper.GetContext()
+		deployer := helper.GetDeployer(ctx)
+		currentUser := helper.IdentifyCurrentUser()
 
 		defStr, _ := cmd.Flags().GetString("def")
 		defFile, _ := cmd.Flags().GetString("def-file")
 		purpose, _ := cmd.Flags().GetString("purpose")
 		expiry, _ := cmd.Flags().GetDuration("expiry")
 
-		currentUser := identifyCurrentUser()
-
 		var def *AllocateDef
 
 		if len(args) >= 1 {
 			if def != nil {
-				log.Fatalf("must specify only a single tag, definition or definition file")
+				logger.Fatal("must specify only a single tag, definition or definition file")
 			}
 
 			defId := args[0]
 			defIdParts := strings.Split(defId, ":")
 			if len(defIdParts) != 2 {
-				log.Fatalf("unexpected definition id format")
+				logger.Fatal("unexpected definition id format")
 			}
 
 			defName := defIdParts[0]
@@ -69,7 +71,7 @@ var allocateCmd = &cobra.Command{
 
 			_, err := versionident.Identify(context.Background(), defVersion)
 			if err != nil {
-				log.Fatalf("failed to parse definition version: %s", err)
+				logger.Fatal("failed to parse definition version", zap.Error(err))
 			}
 
 			if defName == "simple" {
@@ -93,19 +95,19 @@ var allocateCmd = &cobra.Command{
 					},
 				}
 			} else {
-				log.Fatalf("unknown definition name: %s", defName)
+				logger.Fatal("unknown definition name", zap.String("name", defName))
 			}
 		}
 
 		if defStr != "" {
 			if def != nil {
-				log.Fatalf("must specify only a single tag, definition or definition file")
+				logger.Fatal("must specify only a single tag, definition or definition file")
 			}
 
 			var parsedDef AllocateDef
 			err := yaml.Unmarshal([]byte(defStr), &parsedDef)
 			if err != nil {
-				log.Fatalf("failed to parse cluster definition: %s", err)
+				logger.Fatal("failed to parse cluster definition", zap.Error(err))
 			}
 
 			def = &parsedDef
@@ -113,34 +115,32 @@ var allocateCmd = &cobra.Command{
 
 		if defFile != "" {
 			if def != nil {
-				log.Fatalf("must specify only a single tag, definition or definition file")
+				logger.Fatal("must specify only a single tag, definition or definition file")
 			}
 
 			defFileBytes, err := os.ReadFile(defFile)
 			if err != nil {
-				log.Fatalf("failed to read definition file '%s': %s", defFile, err)
+				logger.Fatal("failed to read definition file '%s': %s", zap.Error(err), zap.String("file", defFile))
 			}
 
 			var parsedDef AllocateDef
 			err = yaml.Unmarshal(defFileBytes, &parsedDef)
 			if err != nil {
-				log.Fatalf("failed to parse cluster definition from file '%s': %s", defFile, err)
+				logger.Fatal("failed to parse cluster definition from file", zap.Error(err), zap.String("file", defFile))
 			}
 
 			def = &parsedDef
 		}
 
 		if def == nil {
-			log.Fatalf("must specify a definition tag, definition or definition file")
+			logger.Fatal("must specify a definition tag, definition or definition file")
 		}
 
 		if expiry < 0 {
-			log.Fatalf("must specify a positive expiry time")
+			logger.Fatal("must specify a positive expiry time")
 		} else if expiry == 0 {
 			expiry = 1 * time.Hour
 		}
-
-		deployer := getDeployer(ctx)
 
 		var nodeDeployDefs []*deployment.NewClusterNodeOptions
 		var nodeSetupDefs []*clustercontrol.SetupNewClusterNodeOptions
@@ -151,7 +151,7 @@ var allocateCmd = &cobra.Command{
 			}
 
 			if nodeDef.Version == "" {
-				log.Fatalf("missing version for a node definition")
+				logger.Fatal("missing version for a node definition")
 			}
 
 			nodeServices := nodeDef.Services
@@ -161,7 +161,7 @@ var allocateCmd = &cobra.Command{
 
 			identVersion, err := versionident.Identify(ctx, nodeDef.Version)
 			if err != nil {
-				log.Fatalf("failed to identify specified version '%s': %s\n", nodeDef.Version, err)
+				logger.Fatal("failed to identify specified version\n", zap.Error(err), zap.String("version", nodeDef.Version))
 			}
 
 			for nodeDupIdx := 0; nodeDupIdx < nodeCount; nodeDupIdx++ {
@@ -222,31 +222,31 @@ var allocateCmd = &cobra.Command{
 		if clusterSetupDef.KvMemoryQuotaMB == 0 {
 			clusterSetupDef.KvMemoryQuotaMB = 256
 		} else if clusterSetupDef.KvMemoryQuotaMB < 256 {
-			log.Printf("kv memory quota must be at least 256, adjusting it...")
+			logger.Warn("kv memory quota must be at least 256, adjusting it...")
 			clusterSetupDef.KvMemoryQuotaMB = 256
 		}
 		if clusterSetupDef.IndexMemoryQuotaMB == 0 {
 			clusterSetupDef.IndexMemoryQuotaMB = 256
 		} else if clusterSetupDef.IndexMemoryQuotaMB < 256 {
-			log.Printf("index memory quota must be at least 256, adjusting it...")
+			logger.Warn("index memory quota must be at least 256, adjusting it...")
 			clusterSetupDef.IndexMemoryQuotaMB = 256
 		}
 		if clusterSetupDef.FtsMemoryQuotaMB == 0 {
 			clusterSetupDef.FtsMemoryQuotaMB = 256
 		} else if clusterSetupDef.FtsMemoryQuotaMB < 256 {
-			log.Printf("fts memory quota must be at least 256, adjusting it...")
+			logger.Warn("fts memory quota must be at least 256, adjusting it...")
 			clusterSetupDef.FtsMemoryQuotaMB = 256
 		}
 		if clusterSetupDef.CbasMemoryQuotaMB == 0 {
 			clusterSetupDef.CbasMemoryQuotaMB = 1024
 		} else if clusterSetupDef.CbasMemoryQuotaMB < 1024 {
-			log.Printf("cbas memory quota must be at least 1024, adjusting it...")
+			logger.Warn("cbas memory quota must be at least 1024, adjusting it...")
 			clusterSetupDef.CbasMemoryQuotaMB = 1024
 		}
 		if clusterSetupDef.EventingMemoryQuotaMB == 0 {
 			clusterSetupDef.EventingMemoryQuotaMB = 256
 		} else if clusterSetupDef.EventingMemoryQuotaMB < 256 {
-			log.Printf("eventing memory quota must be at least 256, adjusting it...")
+			logger.Warn("eventing memory quota must be at least 256, adjusting it...")
 			clusterSetupDef.EventingMemoryQuotaMB = 256
 		}
 
@@ -257,56 +257,72 @@ var allocateCmd = &cobra.Command{
 			clusterSetupDef.Password = "password"
 		}
 
-		log.Printf("Deploying cluster with configuration:")
-		log.Printf("  Meta-Data:")
-		log.Printf("    Creator: %s", clusterDeployDef.Creator)
-		log.Printf("    Purpose: %s", clusterDeployDef.Purpose)
-		log.Printf("    Expiry: %s", clusterDeployDef.Expiry)
-		log.Printf("  Memory Quotas")
-		log.Printf("    Kv: %d MB", clusterSetupDef.KvMemoryQuotaMB)
-		log.Printf("    Indexer: %d MB", clusterSetupDef.IndexMemoryQuotaMB)
-		log.Printf("    Fts: %d MB", clusterSetupDef.FtsMemoryQuotaMB)
-		log.Printf("    Cbas: %d MB", clusterSetupDef.CbasMemoryQuotaMB)
-		log.Printf("    Eventing: %d MB", clusterSetupDef.EventingMemoryQuotaMB)
-		log.Printf("  Username: %s", clusterSetupDef.Username)
-		log.Printf("  Password: %s", clusterSetupDef.Password)
-		log.Printf("  Nodes:")
-		for nodeIdx := range nodeDeployDefs {
-			deployDef := nodeDeployDefs[nodeIdx]
-			setupDef := nodeSetupDefs[nodeIdx]
-			log.Printf("    -  Name: %s", deployDef.Name)
-			log.Printf("       Version: %s", deployDef.Version)
-			if deployDef.BuildNo == 0 {
-				log.Printf("       BuildNo: Public GA")
-			} else {
-				log.Printf("       BuildNo: %d", deployDef.BuildNo)
-			}
-			if deployDef.UseCommunityEdition {
-				log.Printf("       Edition: Community Edition")
-			} else {
-				log.Printf("       Edition: Enterprise Edition")
-			}
-			if deployDef.UseServerless {
-				log.Printf("       Serverless: Yes")
-			} else {
-				log.Printf("       Serverless: No")
-			}
-			log.Printf("       Services: %s", strings.Join(setupDef.ServicesList(), ", "))
-		}
+		logger.Info("prepared cluster definition", zap.Any("config", map[string]interface{}{
+			"metaData": map[string]interface{}{
+				"creator": clusterDeployDef.Creator,
+				"purpose": clusterDeployDef.Purpose,
+				"expiry":  clusterDeployDef.Expiry.String(),
+			},
+			"memoryQuotasMb": map[string]interface{}{
+				"kv":       clusterSetupDef.KvMemoryQuotaMB,
+				"indexer":  clusterSetupDef.IndexMemoryQuotaMB,
+				"fts":      clusterSetupDef.FtsMemoryQuotaMB,
+				"cbas":     clusterSetupDef.CbasMemoryQuotaMB,
+				"eventing": clusterSetupDef.EventingMemoryQuotaMB,
+			},
+			"username": clusterSetupDef.Username,
+			"password": clusterSetupDef.Password,
+			"nodes": func() interface{} {
+				var out []interface{}
+				for nodeIdx := range nodeDeployDefs {
+					deployDef := nodeDeployDefs[nodeIdx]
+					setupDef := nodeSetupDefs[nodeIdx]
+					out = append(out, map[string]interface{}{
+						"name":    deployDef.Name,
+						"version": deployDef.Version,
+						"buildno": func() interface{} {
+							if deployDef.BuildNo == 0 {
+								return "ga"
+							} else {
+								return deployDef.BuildNo
+							}
+						}(),
+						"edition": func() interface{} {
+							if deployDef.UseCommunityEdition {
+								return "community"
+							} else {
+								return "enterprise"
+							}
+						}(),
+						"serverless": func() interface{} {
+							if deployDef.UseServerless {
+								return "yes"
+							} else {
+								return "no"
+							}
+						}(),
+						"services": setupDef.ServicesList(),
+					})
+				}
+				return out
+			}(),
+		}))
 
 		cluster, err := deployer.NewCluster(ctx, clusterDeployDef)
 		if err != nil {
-			log.Fatalf("cluster deployment failed: %s", err)
+			logger.Fatal("cluster deployment failed", zap.Error(err))
 		}
 
 		for nodeIdx, node := range cluster.Nodes {
 			nodeSetupDefs[nodeIdx].Address = node.IPAddress
 		}
 
-		clusterMgr := clustercontrol.ClusterManager{}
+		clusterMgr := clustercontrol.ClusterManager{
+			Logger: logger,
+		}
 		err = clusterMgr.SetupNewCluster(ctx, clusterSetupDef)
 		if err != nil {
-			log.Fatalf("cluster setup failed: %s", err)
+			logger.Fatal("cluster setup failed", zap.Error(err))
 		}
 
 		fmt.Printf("%s\n", cluster.ClusterID)

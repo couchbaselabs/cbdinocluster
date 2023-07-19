@@ -1,8 +1,7 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
+	"log"
 
 	"github.com/spf13/cobra"
 )
@@ -21,10 +20,10 @@ to quickly create a Cobra application.`,
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
+		log.Fatalf("failed to initialize command line parser: %s", err)
 	}
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Turns on verbose logging")
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/brett19/cbdyncluster2/clustercontrol"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 const (
@@ -27,6 +27,7 @@ type ServerDef struct {
 }
 
 type OsxController struct {
+	Logger *zap.Logger
 }
 
 func (c *OsxController) cleanupPrevious(ctx context.Context) error {
@@ -37,7 +38,7 @@ func (c *OsxController) cleanupPrevious(ctx context.Context) error {
 	}
 	for _, mount := range mounts {
 		if strings.HasPrefix(mount.Name(), "Couchbase") {
-			err = execAndPipe("hdiutil", "detach", "/Volumes/"+mount.Name())
+			err = execAndPipe(c.Logger, "hdiutil", "detach", "/Volumes/"+mount.Name())
 			if err != nil {
 				return errors.Wrap(err, "failed to detach existing volume")
 			}
@@ -85,10 +86,10 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 	}
 
 	if _, err := os.Stat(installerPath); err == nil {
-		log.Printf("found installer on disk")
+		c.Logger.Debug("found installer on disk")
 		// file already exists
 	} else {
-		log.Printf("downloading installer")
+		c.Logger.Debug("downloading installer")
 
 		err := os.MkdirAll(CB_INSTALLER_PATH, os.ModePerm)
 		if err != nil {
@@ -111,11 +112,11 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 		if err != nil {
 			return errors.Wrap(err, "failed to download installer")
 		}
-		log.Printf("downloaded installer: %d bytes", n)
+		c.Logger.Debug("downloaded installer", zap.Int64("size", n))
 	}
 
 	// hdiutil attach couchbase-server-....dmg
-	err = execAndPipe("hdiutil", "attach", installerPath)
+	err = execAndPipe(c.Logger, "hdiutil", "attach", installerPath)
 	if err != nil {
 		// TODO(brett19): Ignored for now...
 		return errors.Wrap(err, "failed to mount volume")
@@ -144,13 +145,13 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 	}
 
 	// copy to Applications folder
-	err = execAndPipe("cp", "-R", "/Volumes/"+mountName+"/"+appFile, "/Applications")
+	err = execAndPipe(c.Logger, "cp", "-R", "/Volumes/"+mountName+"/"+appFile, "/Applications")
 	if err != nil {
 		return errors.Wrap(err, "failed to copy app file")
 	}
 
 	// hdiutil detach /Volumes/Couchbase*
-	err = execAndPipe("hdiutil", "detach", "/Volumes/"+mountName)
+	err = execAndPipe(c.Logger, "hdiutil", "detach", "/Volumes/"+mountName)
 	if err != nil {
 		return errors.Wrap(err, "failed to detach volume")
 	}
@@ -159,7 +160,7 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 	// _ = execAndPipe("xattr", "-d", "-r", "com.apple.quarantine", "/Applications/"+appFile)
 
 	// execute
-	err = execAndPipe("open", "-a", "/Applications/"+appFile)
+	err = execAndPipe(c.Logger, "open", "-a", "/Applications/"+appFile)
 	if err != nil {
 		return errors.Wrap(err, "failed to launch server")
 	}
@@ -178,7 +179,7 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 }
 
 func (c *OsxController) Stop(ctx context.Context) error {
-	_ = execAndPipe("osascript", "-e", "quit app \"Couchbase Server\"")
+	_ = execAndPipe(c.Logger, "osascript", "-e", "quit app \"Couchbase Server\"")
 
 	return nil
 }

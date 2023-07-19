@@ -3,12 +3,14 @@ package clustercontrol
 import (
 	"context"
 	"fmt"
-	"log"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
-type ClusterManager struct{}
+type ClusterManager struct {
+	Logger *zap.Logger
+}
 
 type SetupNewClusterNodeOptions struct {
 	Address string
@@ -39,7 +41,7 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 	}
 	firstNodeCtrl := firstNodeMgr.Controller()
 
-	log.Printf("setting up initial cluster node")
+	m.Logger.Info("setting up initial cluster node")
 
 	err := firstNodeMgr.SetupOneNodeCluster(ctx, &SetupOneNodeClusterOptions{
 		KvMemoryQuotaMB:       opts.KvMemoryQuotaMB,
@@ -58,9 +60,9 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 	}
 
 	if len(opts.Nodes) == 1 {
-		log.Printf("only a single node in the cluster, skipping add+rebalance")
+		m.Logger.Info("only a single node in the cluster, skipping add+rebalance")
 	} else {
-		log.Printf("joining additional nodes to the cluster")
+		m.Logger.Info("joining additional nodes to the cluster")
 
 		for _, node := range opts.Nodes {
 			if node.Address == firstNodeAddress {
@@ -79,22 +81,22 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 			}
 		}
 
-		log.Printf("initiating rebalance")
+		m.Logger.Info("initiating rebalance")
 
 		err = firstNodeMgr.Rebalance(ctx)
 		if err != nil {
-			log.Fatalf("rebalance begin error: %s", err)
+			return errors.Wrap(err, "failed to start rebalance")
 		}
 
-		log.Printf("waiting for rebalance completion")
+		m.Logger.Info("waiting for rebalance completion")
 
 		err = firstNodeMgr.WaitForNoRunningTasks(ctx)
 		if err != nil {
-			log.Fatalf("task wait error: %s", err)
+			return errors.Wrap(err, "failed to wait for tasks to complete")
 		}
 	}
 
-	log.Printf("cluster deployment completed")
+	m.Logger.Info("cluster setup completed")
 
 	return nil
 }

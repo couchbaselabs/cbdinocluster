@@ -5,14 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
-func dockerBuildAndPipe(ctx context.Context, cli *client.Client, buildContext io.Reader, options types.ImageBuildOptions) error {
+func dockerBuildAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, buildContext io.Reader, options types.ImageBuildOptions) error {
 	buildResp, err := cli.ImageBuild(ctx, buildContext, options)
 	if err != nil {
 		return errors.Wrap(err, "failed to build image")
@@ -20,10 +20,11 @@ func dockerBuildAndPipe(ctx context.Context, cli *client.Client, buildContext io
 	defer buildResp.Body.Close()
 
 	pipeRdr, pipeWrt := io.Pipe()
+	defer pipeWrt.Close()
 	go func() {
 		scanner := bufio.NewScanner(pipeRdr)
 		for scanner.Scan() {
-			log.Printf("BUILD: %s", scanner.Text())
+			logger.Debug("docker build output", zap.String("text", scanner.Text()))
 		}
 	}()
 
@@ -48,7 +49,7 @@ func dockerBuildAndPipe(ctx context.Context, cli *client.Client, buildContext io
 	return nil
 }
 
-func dockerPullAndPipe(ctx context.Context, cli *client.Client, refStr string, options types.ImagePullOptions) error {
+func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, refStr string, options types.ImagePullOptions) error {
 	pullResp, err := cli.ImagePull(ctx, refStr, options)
 	if err != nil {
 		return errors.Wrap(err, "failed to pull image")
@@ -71,7 +72,7 @@ func dockerPullAndPipe(ctx context.Context, cli *client.Client, refStr string, o
 		case "Downloading":
 		case "Extracting":
 		default:
-			log.Printf("PULL: %s", streamMsg.Status)
+			logger.Debug("docker pull output", zap.String("text", streamMsg.Status))
 		}
 	}
 

@@ -2,7 +2,6 @@ package dockerdeploy
 
 import (
 	"context"
-	"log"
 	"strings"
 	"time"
 
@@ -10,10 +9,12 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 )
 
 type Deployer struct {
+	logger        *zap.Logger
 	dockerCli     *client.Client
 	imageProvider ImageProvider
 	controller    *Controller
@@ -22,6 +23,7 @@ type Deployer struct {
 var _ deployment.Deployer = (*Deployer)(nil)
 
 type DeployerOptions struct {
+	Logger       *zap.Logger
 	DockerCli    *client.Client
 	NetworkName  string
 	GhcrUsername string
@@ -30,13 +32,16 @@ type DeployerOptions struct {
 
 func NewDeployer(opts *DeployerOptions) (*Deployer, error) {
 	return &Deployer{
+		logger:    opts.Logger,
 		dockerCli: opts.DockerCli,
 		imageProvider: &HybridImageProvider{
+			Logger:       opts.Logger,
 			DockerCli:    opts.DockerCli,
 			GhcrUsername: opts.GhcrUsername,
 			GhcrPassword: opts.GhcrPassword,
 		},
 		controller: &Controller{
+			Logger:      opts.Logger,
 			DockerCli:   opts.DockerCli,
 			NetworkName: opts.NetworkName,
 		},
@@ -94,7 +99,7 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 		}
 	}
 
-	log.Printf("gathering node images")
+	d.logger.Info("gathering node images")
 
 	nodeDefs := make([]*ImageDef, len(opts.Nodes))
 	nodeImages := make([]*ImageRef, len(opts.Nodes))
@@ -128,7 +133,7 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 
 	clusterID := uuid.NewString()
 
-	log.Printf("deploying nodes")
+	d.logger.Info("deploying nodes")
 
 	nodes := make([]*NodeInfo, len(opts.Nodes))
 	leaveNodesAfterReturn := false
@@ -146,6 +151,9 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 	waitCh := make(chan error)
 	for nodeIdx, nodeDef := range opts.Nodes {
 		go func(nodeIdx int, nodeDef *deployment.NewClusterNodeOptions) {
+			logger := d.logger.With(zap.Int("index", nodeIdx))
+			logger.Info("deploying node", zap.Any("def", nodeDef))
+
 			node, err := d.controller.DeployNode(ctx, &DeployNodeOptions{
 				Creator:   opts.Creator,
 				Name:      nodeDef.Name,
@@ -159,6 +167,8 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 				return
 			}
 
+			logger.Info("deployed node")
+
 			nodes[nodeIdx] = node
 			waitCh <- nil
 		}(nodeIdx, nodeDef)
@@ -169,6 +179,8 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 			return nil, err
 		}
 	}
+
+	d.logger.Info("nodes deployed")
 
 	// we cheat for now...
 	clusters, err := d.ListClusters(ctx)
@@ -198,6 +210,10 @@ func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 
 	for _, node := range nodes {
 		if node.ClusterID == clusterID {
+			d.logger.Info("removing node",
+				zap.String("id", node.NodeID),
+				zap.String("container", node.ContainerID))
+
 			d.controller.RemoveNode(ctx, node.ContainerID)
 		}
 	}
@@ -212,6 +228,10 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 	}
 
 	for _, node := range nodes {
+		d.logger.Info("removing node",
+			zap.String("id", node.NodeID),
+			zap.String("container", node.ContainerID))
+
 		d.controller.RemoveNode(ctx, node.ContainerID)
 	}
 
@@ -227,6 +247,10 @@ func (d *Deployer) Cleanup(ctx context.Context) error {
 	curTime := time.Now()
 	for _, node := range nodes {
 		if !node.Expiry.After(curTime) {
+			d.logger.Info("removing node",
+				zap.String("id", node.NodeID),
+				zap.String("container", node.ContainerID))
+
 			d.controller.RemoveNode(ctx, node.ContainerID)
 		}
 	}
@@ -240,12 +264,11 @@ func (d *Deployer) DestroyAllResources(ctx context.Context) error {
 		return errors.Wrap(err, "failed to list all nodes")
 	}
 
-	log.Printf("found %d nodes to destroy:", len(nodes))
 	for _, node := range nodes {
-		log.Printf("  %s", node.ContainerID)
-	}
+		d.logger.Info("removing node",
+			zap.String("id", node.NodeID),
+			zap.String("container", node.ContainerID))
 
-	for _, node := range nodes {
 		err := d.controller.RemoveNode(ctx, node.ContainerID)
 		if err != nil {
 			return errors.Wrap(err, "failed to remove")

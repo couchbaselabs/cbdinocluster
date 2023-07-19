@@ -12,25 +12,57 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
-func getDeployer(ctx context.Context) deployment.Deployer {
+type CmdHelper struct {
+	logger *zap.Logger
+}
+
+func (h *CmdHelper) GetContext() context.Context {
+	return context.Background()
+}
+
+func (h *CmdHelper) GetLogger() *zap.Logger {
+	if h.logger == nil {
+		verbose, _ := rootCmd.Flags().GetBool("verbose")
+
+		logConfig := zap.NewDevelopmentConfig()
+		if !verbose {
+			logConfig.Level.SetLevel(zap.InfoLevel)
+			logConfig.DisableCaller = true
+		}
+
+		logger, err := logConfig.Build()
+		if err != nil {
+			log.Fatalf("failed to initialize verbose logger: %s", err)
+		}
+
+		h.logger = logger
+	}
+
+	return h.logger
+}
+
+func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
+	logger := h.GetLogger()
+
 	dockerCli, err := client.NewClientWithOpts(
 		client.WithHostFromEnv(),
 		client.WithAPIVersionNegotiation(),
 	)
 	if err != nil {
-		log.Fatalf("docker connect error: %s", err)
+		logger.Fatal("failed to connect to docker", zap.Error(err))
 	}
 
 	_, err = dockerCli.Ping(ctx)
 	if err != nil {
-		log.Fatalf("failed to ping docker host: %s", err)
+		logger.Fatal("failed to ping docker", zap.Error(err))
 	}
 
 	networks, err := dockerCli.NetworkList(ctx, types.NetworkListOptions{})
 	if err != nil {
-		log.Fatalf("failed to list docker networks: %s", err)
+		logger.Fatal("failed to list docker networks", zap.Error(err))
 	}
 
 	foundMacVlanNetwork := false
@@ -45,31 +77,32 @@ func getDeployer(ctx context.Context) deployment.Deployer {
 		selectedNetwork = "macvlan0"
 	} else {
 		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-			log.Fatalf("must use macvlan0 network on windows and mac but none was found")
+			logger.Fatal("must use macvlan0 network on windows and mac but none was found")
 		}
 
 		selectedNetwork = ""
 	}
 
 	deployer, err := dockerdeploy.NewDeployer(&dockerdeploy.DeployerOptions{
+		Logger:       logger,
 		DockerCli:    dockerCli,
 		NetworkName:  selectedNetwork,
 		GhcrUsername: "",
 		GhcrPassword: "",
 	})
 	if err != nil {
-		log.Fatalf("deployer init failed: %s", err)
+		logger.Fatal("failed to initialize deployer", zap.Error(err))
 	}
 
 	err = deployer.Cleanup(ctx)
 	if err != nil {
-		log.Fatalf("failed to execute cleanup: %s", err)
+		logger.Fatal("failed to run pre-cleanup", zap.Error(err))
 	}
 
 	return deployer
 }
 
-func identifyCurrentUser() string {
+func (h *CmdHelper) IdentifyCurrentUser() string {
 	osUser, err := user.Current()
 	if err != nil {
 		return ""
@@ -78,10 +111,10 @@ func identifyCurrentUser() string {
 	return osUser.Username
 }
 
-func identifyCluster(ctx context.Context, deployer deployment.Deployer, userInput string) (*deployment.ClusterInfo, error) {
+func (h *CmdHelper) IdentifyCluster(ctx context.Context, deployer deployment.Deployer, userInput string) (*deployment.ClusterInfo, error) {
 	clusters, err := deployer.ListClusters(ctx)
 	if err != nil {
-		log.Fatalf("failed to list clusters: %s", err)
+		return nil, errors.Wrap(err, "failed to list clusters")
 	}
 
 	var identifiedCluster *deployment.ClusterInfo
@@ -103,7 +136,7 @@ func identifyCluster(ctx context.Context, deployer deployment.Deployer, userInpu
 	return identifiedCluster, nil
 }
 
-func identifyNode(ctx context.Context, cluster *deployment.ClusterInfo, userInput string) (*deployment.ClusterNodeInfo, error) {
+func (h *CmdHelper) IdentifyNode(ctx context.Context, cluster *deployment.ClusterInfo, userInput string) (*deployment.ClusterNodeInfo, error) {
 	var identifiedNode *deployment.ClusterNodeInfo
 
 	for _, node := range cluster.Nodes {

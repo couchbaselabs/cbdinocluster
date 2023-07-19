@@ -1,10 +1,8 @@
 package cmd
 
 import (
-	"context"
-	"log"
-
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var rmCmd = &cobra.Command{
@@ -12,17 +10,19 @@ var rmCmd = &cobra.Command{
 	Short: "Removes a cluster",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
-		deployer := getDeployer(ctx)
+		helper := CmdHelper{}
+		logger := helper.GetLogger()
+		ctx := helper.GetContext()
+		deployer := helper.GetDeployer(ctx)
 
-		cluster, err := identifyCluster(ctx, deployer, args[0])
+		cluster, err := helper.IdentifyCluster(ctx, deployer, args[0])
 		if err != nil {
-			log.Fatalf("failed to identify cluster: %s", err)
+			logger.Fatal("failed to identify cluster", zap.Error(err))
 		}
 
 		err = deployer.RemoveCluster(ctx, cluster.ClusterID)
 		if err != nil {
-			log.Fatalf("failed to remove cluster: %s", err)
+			logger.Fatal("failed to remove cluster", zap.Error(err))
 		}
 	},
 }

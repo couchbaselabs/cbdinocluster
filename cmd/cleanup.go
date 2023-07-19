@@ -1,22 +1,22 @@
 package cmd
 
 import (
-	"context"
-	"log"
-
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup",
 	Short: "Cleans up any expired resources",
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
-		deployer := getDeployer(ctx)
+		helper := CmdHelper{}
+		logger := helper.GetLogger()
+		ctx := helper.GetContext()
+		deployer := helper.GetDeployer(ctx)
 
 		err := deployer.Cleanup(ctx)
 		if err != nil {
-			log.Fatalf("failed to cleanup clusters: %s", err)
+			logger.Fatal("failed to cleanup clusters", zap.Error(err))
 		}
 	},
 }

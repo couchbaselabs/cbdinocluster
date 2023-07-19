@@ -5,14 +5,15 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type GhcrImageProvider struct {
+	Logger       *zap.Logger
 	DockerCli    *client.Client
 	GhcrUsername string
 	GhcrPassword string
@@ -47,9 +48,10 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 		serverVersion = "community-" + serverVersion
 	}
 
-	log.Printf("pulling image from ghcr")
+	p.Logger.Debug("pulling image from ghcr")
+
 	ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", serverVersion)
-	err := dockerPullAndPipe(ctx, p.DockerCli, ghcrImagePath, types.ImagePullOptions{
+	err := dockerPullAndPipe(ctx, p.Logger, p.DockerCli, ghcrImagePath, types.ImagePullOptions{
 		RegistryAuth: p.genGhcrAuthStr(),
 	})
 	if err != nil {

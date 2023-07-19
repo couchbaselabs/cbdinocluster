@@ -1,24 +1,25 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var psCmd = &cobra.Command{
 	Use:   "ps",
 	Short: "Lists all clusters",
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
-		deployer := getDeployer(ctx)
+		helper := CmdHelper{}
+		logger := helper.GetLogger()
+		ctx := helper.GetContext()
+		deployer := helper.GetDeployer(ctx)
 
 		clusters, err := deployer.ListClusters(ctx)
 		if err != nil {
-			log.Fatalf("failed to list clusters: %s", err)
+			logger.Fatal("failed to list clusters", zap.Error(err))
 		}
 
 		fmt.Printf("Clusters:\n")

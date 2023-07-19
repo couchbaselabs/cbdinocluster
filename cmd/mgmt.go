@@ -1,12 +1,11 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
-	"log"
 
 	"github.com/brett19/cbdyncluster2/deployment"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 )
 
 var mgmtCmd = &cobra.Command{
@@ -15,19 +14,21 @@ var mgmtCmd = &cobra.Command{
 	Short:   "Gets an address to management the cluster",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
-		ctx := context.Background()
-		deployer := getDeployer(ctx)
+		helper := CmdHelper{}
+		logger := helper.GetLogger()
+		ctx := helper.GetContext()
+		deployer := helper.GetDeployer(ctx)
 
-		cluster, err := identifyCluster(ctx, deployer, args[0])
+		cluster, err := helper.IdentifyCluster(ctx, deployer, args[0])
 		if err != nil {
-			log.Fatalf("failed to identify cluster: %s", err)
+			logger.Fatal("failed to identify cluster", zap.Error(err))
 		}
 
 		var specificNode *deployment.ClusterNodeInfo
 		if len(args) >= 2 {
-			identifiedNode, err := identifyNode(ctx, cluster, args[1])
+			identifiedNode, err := helper.IdentifyNode(ctx, cluster, args[1])
 			if err != nil {
-				log.Fatalf("failed to identify cluster: %s", err)
+				logger.Fatal("failed to identify cluster", zap.Error(err))
 			}
 
 			specificNode = identifiedNode

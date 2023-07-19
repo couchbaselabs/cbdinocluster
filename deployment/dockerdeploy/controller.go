@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"time"
 
 	"github.com/brett19/cbdyncluster2/clustercontrol"
@@ -17,9 +16,11 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type Controller struct {
+	Logger      *zap.Logger
 	DockerCli   *client.Client
 	NetworkName string
 }
@@ -67,12 +68,16 @@ func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
 }
 
 func (c *Controller) ListNodes(ctx context.Context) ([]*NodeInfo, error) {
+	c.Logger.Debug("listing nodes")
+
 	containers, err := c.DockerCli.ContainerList(ctx, types.ContainerListOptions{
 		All: true,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list containers")
 	}
+
+	c.Logger.Debug("received initial container list, reading states")
 
 	var nodes []*NodeInfo
 
@@ -103,6 +108,8 @@ type DockerNodeStateJson struct {
 }
 
 func (c *Controller) WriteNodeState(ctx context.Context, containerID string, state *DockerNodeState) error {
+	c.Logger.Debug("writing node state", zap.String("container", containerID), zap.Any("state", state))
+
 	jsonState := &DockerNodeStateJson{
 		Owner:  state.Owner,
 		Expiry: state.Expiry,
@@ -131,6 +138,8 @@ func (c *Controller) WriteNodeState(ctx context.Context, containerID string, sta
 }
 
 func (c *Controller) ReadNodeState(ctx context.Context, containerID string) (*DockerNodeState, error) {
+	c.Logger.Debug("reading node state", zap.String("container", containerID))
+
 	resp, _, err := c.DockerCli.CopyFromContainer(ctx, containerID, "/var/cbdyncluster")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to read dyncluster node state")
@@ -184,9 +193,11 @@ type DeployNodeOptions struct {
 }
 
 func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*NodeInfo, error) {
-	log.Printf("Allocating node for cluster %s", def.ClusterID)
-
 	nodeID := uuid.NewString()
+	logger := c.Logger.With(zap.String("nodeId", nodeID))
+
+	logger.Debug("deploying node", zap.Any("def", def))
+
 	containerName := "cbdynnode-" + nodeID
 
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
@@ -210,6 +221,8 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 	}
 
 	containerID := createResult.ID
+
+	logger.Debug("container created, starting", zap.String("container", containerID))
 
 	err = c.DockerCli.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
 	if err != nil {
@@ -242,7 +255,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		return nil, errors.New("failed to find newly created container")
 	}
 
-	log.Printf("container IP: %+v", node.IPAddress)
+	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
 
 	clusterCtrl := &clustercontrol.NodeManager{
 		Endpoint: fmt.Sprintf("http://%s:%d", node.IPAddress, 8091),
@@ -253,19 +266,28 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		return nil, errors.Wrap(err, "failed to wait for node readiness")
 	}
 
+	logger.Debug("container is ready!")
+
 	return node, nil
 }
 
 func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
-	log.Printf("killing node container %s", containerID)
+	logger := c.Logger.With(zap.String("container", containerID))
+	logger.Debug("removing node")
+
+	logger.Debug("stopping container")
 
 	err := c.DockerCli.ContainerStop(ctx, containerID, container.StopOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to stop container")
 	}
 
+	logger.Debug("removing container")
+
 	// we try to call remove to force it to be removed
 	c.DockerCli.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{})
+
+	logger.Debug("waiting for container to disappear")
 
 	// We call this to 'wait' for the removal to finish...
 	for {
@@ -288,6 +310,8 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 
 		break
 	}
+
+	logger.Debug("node has been removed!")
 
 	return nil
 }
