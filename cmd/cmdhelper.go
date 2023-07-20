@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"log"
+	"os"
 	"os/user"
 	"runtime"
 	"strings"
@@ -45,6 +46,9 @@ func (h *CmdHelper) GetLogger() *zap.Logger {
 }
 
 func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
+	githubUser := os.Getenv("GITHUB_USER")
+	githubToken := os.Getenv("GITHUB_TOKEN")
+
 	logger := h.GetLogger()
 
 	dockerCli, err := client.NewClientWithOpts(
@@ -87,8 +91,8 @@ func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
 		Logger:       logger,
 		DockerCli:    dockerCli,
 		NetworkName:  selectedNetwork,
-		GhcrUsername: "",
-		GhcrPassword: "",
+		GhcrUsername: githubUser,
+		GhcrPassword: githubToken,
 	})
 	if err != nil {
 		logger.Fatal("failed to initialize deployer", zap.Error(err))
