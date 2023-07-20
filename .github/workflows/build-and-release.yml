@@ -1,0 +1,32 @@
+name: Build and Release
+
+permissions:
+  contents: write
+on:
+  push:
+    tags:
+      - v*
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v2
+        with:
+          go-version: 1.19
+      - name: Install dependencies
+        run: go get .
+      - name: Build OS X Binary
+        run: GOOS=darwin GOARCH=amd64 go build -o cbdyncluster2-darwin
+      - name: Build Linux Binary
+        run: GOOS=linux GOARCH=amd64 go build -o cbdyncluster2-linux
+      - name: Build Windows Binary
+        run: GOOS=windows GOARCH=amd64 go build -o cbdyncluster2-windows.exe
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            cbdyncluster2-darwin
+            cbdyncluster2-linux
+            cbdyncluster2-windows.exe
