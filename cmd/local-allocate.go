@@ -36,9 +36,9 @@ type AllocateDef struct {
 	Nodes []AllocateNodeDef `yaml:"nodes"`
 }
 
-var allocateCmd = &cobra.Command{
+var localAllocateCmd = &cobra.Command{
 	Use:     "allocate [flags] [definition-tag | --def | --def-file]",
-	Aliases: []string{"create", "alloc"},
+	Aliases: []string{"alloc", "create"},
 	Short:   "Allocates a cluster",
 	Example: "allocate simple:7.0.0\nallocate single:7.2.0",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -330,10 +330,10 @@ var allocateCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(allocateCmd)
+	localCmd.AddCommand(localAllocateCmd)
 
-	allocateCmd.Flags().String("def", "", "The cluster definition you wish to provision.")
-	allocateCmd.Flags().String("def-file", "", "The path to a file containing a cluster definition to provision.")
-	allocateCmd.Flags().String("purpose", "", "The purpose for allocating this cluster")
-	allocateCmd.Flags().Duration("expiry", 1*time.Hour, "The time to keep this cluster allocated for")
+	localAllocateCmd.Flags().String("def", "", "The cluster definition you wish to provision.")
+	localAllocateCmd.Flags().String("def-file", "", "The path to a file containing a cluster definition to provision.")
+	localAllocateCmd.Flags().String("purpose", "", "The purpose for allocating this cluster")
+	localAllocateCmd.Flags().Duration("expiry", 1*time.Hour, "The time to keep this cluster allocated for")
 }

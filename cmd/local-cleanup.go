@@ -5,7 +5,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var cleanupCmd = &cobra.Command{
+var localCleanupCmd = &cobra.Command{
 	Use:   "cleanup",
 	Short: "Cleans up any expired resources",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -22,5 +22,5 @@ var cleanupCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(cleanupCmd)
+	localCmd.AddCommand(localCleanupCmd)
 }

@@ -5,7 +5,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var removeAllCommand = &cobra.Command{
+var localRemoveAllCmd = &cobra.Command{
 	Use:   "remove-all",
 	Short: "Removes all running clusters",
 	Run: func(cmd *cobra.Command, args []string) {
@@ -22,5 +22,5 @@ var removeAllCommand = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(removeAllCommand)
+	localCmd.AddCommand(localRemoveAllCmd)
 }

@@ -32,7 +32,7 @@ func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface
 	if resp.StatusCode != 200 {
 		bytes, _ := io.ReadAll(resp.Body)
 
-		return fmt.Errorf("non-200 status code encountered: %s", bytes)
+		return fmt.Errorf("non-200 status code encountered: %d %s", resp.StatusCode, bytes)
 	}
 
 	if out != nil {

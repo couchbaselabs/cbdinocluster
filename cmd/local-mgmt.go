@@ -2,17 +2,16 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/brett19/cbdyncluster2/deployment"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
-var connstrCmd = &cobra.Command{
-	Use:     "connstr [flags] cluster [node]",
+var localMgmtCmd = &cobra.Command{
+	Use:     "mgmt [flags] cluster [node]",
 	Aliases: []string{"conn-str"},
-	Short:   "Gets a connection string to connect to the cluster",
+	Short:   "Gets an address to management the cluster",
 	Args:    cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
@@ -35,24 +34,19 @@ var connstrCmd = &cobra.Command{
 			specificNode = identifiedNode
 		}
 
-		var nodeAddrs []string
+		var nodeAddr string
 		for _, node := range cluster.Nodes {
 			if specificNode != nil && node != specificNode {
 				continue
 			}
 
-			portToUse := 11210
-			if portToUse == 11210 {
-				nodeAddrs = append(nodeAddrs, node.IPAddress)
-			} else {
-				nodeAddrs = append(nodeAddrs, fmt.Sprintf("%s:%d", node.IPAddress, 11210))
-			}
+			nodeAddr = fmt.Sprintf("%s:%d", node.IPAddress, 8091)
 		}
 
-		fmt.Printf("couchbase://%s\n", strings.Join(nodeAddrs, ","))
+		fmt.Printf("http://%s\n", nodeAddr)
 	},
 }
 
 func init() {
-	rootCmd.AddCommand(connstrCmd)
+	localCmd.AddCommand(localMgmtCmd)
 }

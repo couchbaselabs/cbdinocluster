@@ -8,9 +8,10 @@ import (
 	"go.uber.org/zap"
 )
 
-var psCmd = &cobra.Command{
-	Use:   "ps",
-	Short: "Lists all clusters",
+var localListCmd = &cobra.Command{
+	Use:     "list",
+	Aliases: []string{"ls", "ps"},
+	Short:   "Lists all clusters",
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
@@ -33,5 +34,6 @@ var psCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(psCmd)
+	rootCmd.AddCommand(localListCmd)
+	localCmd.AddCommand(localListCmd)
 }
