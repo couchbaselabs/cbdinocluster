@@ -42,7 +42,9 @@ jobs:
       - uses: actions/download-artifact@v3
         with:
           name: cbdyncluster2-linux
-      - run: chmod +x cbdyncluster2-linux
+      - run: |
+          chmod +x cbdyncluster2-linux
+          ./cbdyncluster2-linux init --auto
       - name: Setup Cluster
         run: |
           CBDC_ID=$(./cbdyncluster2-linux allocate simple:7.0.0)
