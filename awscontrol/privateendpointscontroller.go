@@ -2,6 +2,8 @@ package awscontrol
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -88,6 +90,54 @@ func (c *PrivateEndpointsController) CreateVPCEndpoint(ctx context.Context, opts
 	}, nil
 }
 
+func (c *PrivateEndpointsController) WaitForVPCEndpointStatus(ctx context.Context, vpceID string, desiredState string) error {
+	ec2Client := c.ec2Client()
+
+	MISSING_STATE := "*MISSING*"
+	if desiredState == "" {
+		// a blank desired state means to wait until it's deleted...
+		desiredState = MISSING_STATE
+	}
+
+	for {
+		vpcEndpoints, err := ec2Client.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{
+			VpcEndpointIds: []string{vpceID},
+		})
+
+		if err != nil {
+			return errors.Wrap(err, "failed to list vpc endpoints")
+		}
+
+		endpointStatus := ""
+		for _, endpoint := range vpcEndpoints.VpcEndpoints {
+			if *endpoint.VpcEndpointId == vpceID {
+				endpointStatus = string(endpoint.State)
+			}
+		}
+
+		if endpointStatus == "" {
+			endpointStatus = MISSING_STATE
+		}
+
+		if endpointStatus == MISSING_STATE && desiredState != MISSING_STATE {
+			return fmt.Errorf("endpoint disappeared during wait for '%s' state", desiredState)
+		}
+
+		if endpointStatus != desiredState {
+			c.Logger.Info("waiting for private endpoint status...",
+				zap.String("current", endpointStatus),
+				zap.String("desired", desiredState))
+
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		break
+	}
+
+	return nil
+}
+
 func (c *PrivateEndpointsController) EnableVPCEndpointPrivateDNS(ctx context.Context, vpceID string) error {
 	ec2Client := c.ec2Client()
 
@@ -97,6 +147,11 @@ func (c *PrivateEndpointsController) EnableVPCEndpointPrivateDNS(ctx context.Con
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to modify vpc endpoint")
+	}
+
+	err = c.WaitForVPCEndpointStatus(ctx, vpceID, "available")
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for available state")
 	}
 
 	return nil
