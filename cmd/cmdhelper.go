@@ -9,7 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/brett19/cbdyncluster2/capellacontrol"
+	"github.com/brett19/cbdyncluster2/capellarest"
 	"github.com/brett19/cbdyncluster2/cbdcconfig"
 	"github.com/brett19/cbdyncluster2/cloudprovision"
 	"github.com/brett19/cbdyncluster2/deployment"
@@ -121,10 +121,10 @@ func (h *CmdHelper) GetCloudProvisioner(ctx context.Context) *cloudprovision.Pro
 	capellaPass := config.Capella.Password
 	capellaOid := config.Capella.OrganizationID
 
-	client, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
+	client, err := capellarest.NewClient(ctx, &capellarest.ClientOptions{
 		Logger:   logger,
 		Endpoint: "https://api.cloud.couchbase.com",
-		Auth: &capellacontrol.BasicCredentials{
+		Auth: &capellarest.BasicCredentials{
 			Username: capellaUser,
 			Password: capellaPass,
 		},

@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/clustercontrol"
+	"github.com/brett19/cbdyncluster2/cbmgmtrest"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -257,8 +257,10 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 
 	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
 
-	clusterCtrl := &clustercontrol.NodeManager{
+	clusterCtrl := &cbmgmtrest.NodeManager{
 		Endpoint: fmt.Sprintf("http://%s:%d", node.IPAddress, 8091),
+		Username: "Administrator",
+		Password: "password",
 	}
 
 	err = clusterCtrl.WaitForOnline(ctx)

@@ -1,4 +1,4 @@
-package clustercontrol
+package cbmgmtrest
 
 import (
 	"context"
@@ -9,16 +9,20 @@ import (
 
 type NodeManager struct {
 	Endpoint string
+	Username string
+	Password string
 }
 
-func (m *NodeManager) Controller() *Controller {
-	return &Controller{
+func (m *NodeManager) Client() *Client {
+	return &Client{
 		Endpoint: m.Endpoint,
+		Username: m.Username,
+		Password: m.Password,
 	}
 }
 
 func (m *NodeManager) WaitForOnline(ctx context.Context) error {
-	c := m.Controller()
+	c := m.Client()
 
 	for {
 		err := c.Ping(ctx)
@@ -38,68 +42,6 @@ func (m *NodeManager) WaitForOnline(ctx context.Context) error {
 	return nil
 }
 
-type NodeSetupOptions struct {
-	EnableKvService       bool
-	EnableN1qlService     bool
-	EnableIndexService    bool
-	EnableFtsService      bool
-	EnableCbasService     bool
-	EnableEventingService bool
-	EnableBackupService   bool
-}
-
-func (o NodeSetupOptions) ServicesList() []string {
-	var serviceNames []string
-	if o.EnableKvService {
-		serviceNames = append(serviceNames, "kv")
-	}
-	if o.EnableN1qlService {
-		serviceNames = append(serviceNames, "query")
-	}
-	if o.EnableIndexService {
-		serviceNames = append(serviceNames, "index")
-	}
-	if o.EnableFtsService {
-		serviceNames = append(serviceNames, "fts")
-	}
-	if o.EnableCbasService {
-		serviceNames = append(serviceNames, "cbas")
-	}
-	if o.EnableEventingService {
-		serviceNames = append(serviceNames, "eventing")
-	}
-	if o.EnableBackupService {
-		serviceNames = append(serviceNames, "backup")
-	}
-	return serviceNames
-}
-
-func (o NodeSetupOptions) NsServicesList() []string {
-	var serviceNames []string
-	if o.EnableKvService {
-		serviceNames = append(serviceNames, "kv")
-	}
-	if o.EnableN1qlService {
-		serviceNames = append(serviceNames, "n1ql")
-	}
-	if o.EnableIndexService {
-		serviceNames = append(serviceNames, "index")
-	}
-	if o.EnableFtsService {
-		serviceNames = append(serviceNames, "fts")
-	}
-	if o.EnableCbasService {
-		serviceNames = append(serviceNames, "cbas")
-	}
-	if o.EnableEventingService {
-		serviceNames = append(serviceNames, "eventing")
-	}
-	if o.EnableBackupService {
-		serviceNames = append(serviceNames, "backup")
-	}
-	return serviceNames
-}
-
 type SetupOneNodeClusterOptions struct {
 	KvMemoryQuotaMB       int
 	IndexMemoryQuotaMB    int
@@ -114,7 +56,7 @@ type SetupOneNodeClusterOptions struct {
 }
 
 func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNodeClusterOptions) error {
-	c := m.Controller()
+	c := m.Client()
 
 	err := c.NodeInit(ctx, &NodeInitOptions{
 		Hostname: "127.0.0.1",
@@ -183,7 +125,7 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 }
 
 func (m *NodeManager) Rebalance(ctx context.Context) error {
-	c := m.Controller()
+	c := m.Client()
 
 	nodeOtps, err := c.ListNodeOTPs(ctx)
 	if err != nil {
@@ -201,7 +143,7 @@ func (m *NodeManager) Rebalance(ctx context.Context) error {
 }
 
 func (m *NodeManager) WaitForNoRunningTasks(ctx context.Context) error {
-	c := m.Controller()
+	c := m.Client()
 
 	for {
 		tasks, err := c.ListTasks(ctx)

@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/brett19/cbdyncluster2/clustercontrol"
+	"github.com/brett19/cbdyncluster2/cbmgmtrest"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -166,8 +166,10 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 	}
 
 	// wait till it's ready
-	clusterCtrl := &clustercontrol.NodeManager{
+	clusterCtrl := &cbmgmtrest.NodeManager{
 		Endpoint: fmt.Sprintf("http://%s:%d", "127.0.0.1", 8091),
+		Username: "Administrator",
+		Password: "password",
 	}
 
 	err = clusterCtrl.WaitForOnline(ctx)

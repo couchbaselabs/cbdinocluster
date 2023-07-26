@@ -1,4 +1,4 @@
-package capellacontrol
+package capellarest
 
 import (
 	"bytes"
@@ -43,23 +43,23 @@ var _ Credentials = (*TokenCredentials)(nil)
 
 func (c TokenCredentials) isCredentials() bool { return true }
 
-type Controller struct {
+type Client struct {
 	logger     *zap.Logger
 	httpClient *http.Client
 	endpoint   string
 	auth       Credentials
 }
 
-type ControllerOptions struct {
+type ClientOptions struct {
 	Logger     *zap.Logger
 	HttpClient *http.Client
 	Endpoint   string
 	Auth       Credentials
 }
 
-func NewController(ctx context.Context, opts *ControllerOptions) (*Controller, error) {
+func NewClient(ctx context.Context, opts *ClientOptions) (*Client, error) {
 	if opts == nil {
-		opts = &ControllerOptions{}
+		opts = &ClientOptions{}
 	}
 
 	httpClient := opts.HttpClient
@@ -74,7 +74,7 @@ func NewController(ctx context.Context, opts *ControllerOptions) (*Controller, e
 		return nil, errors.New("invalid auth type")
 	}
 
-	return &Controller{
+	return &Client{
 		logger:     opts.Logger,
 		httpClient: httpClient,
 		endpoint:   opts.Endpoint,
@@ -82,7 +82,7 @@ func NewController(ctx context.Context, opts *ControllerOptions) (*Controller, e
 	}, nil
 }
 
-func (c *Controller) doReq(
+func (c *Client) doReq(
 	ctx context.Context,
 	req *http.Request,
 	out interface{},
@@ -111,7 +111,7 @@ func (c *Controller) doReq(
 	return nil
 }
 
-func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.Request, error), maxRetries int, out interface{}) error {
+func (c *Client) doRetriableReq(ctx context.Context, makeReq func() (*http.Request, error), maxRetries int, out interface{}) error {
 	req, err := makeReq()
 	if err != nil {
 		return errors.Wrap(err, "failed to build request")
@@ -120,7 +120,7 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 	return c.doReq(ctx, req, out)
 }
 
-func (c *Controller) doBasicReq(
+func (c *Client) doBasicReq(
 	ctx context.Context,
 	allowRetries bool,
 	method string,
@@ -184,7 +184,7 @@ func (c *Controller) doBasicReq(
 	}, maxRetries, out)
 }
 
-func (c *Controller) updateJwtToken(ctx context.Context, auth *BasicCredentials) error {
+func (c *Client) updateJwtToken(ctx context.Context, auth *BasicCredentials) error {
 	var resp struct {
 		Jwt string `json:"jwt"`
 	}
@@ -272,7 +272,7 @@ type ProjectInfo struct {
 
 type ListProjectsResponse PagedResourceResponse[*ProjectInfo]
 
-func (c *Controller) ListProjects(
+func (c *Client) ListProjects(
 	ctx context.Context,
 	tenantID string,
 	req *PaginatedRequest,
@@ -297,7 +297,7 @@ type CreateProjectResponse struct {
 	Id string `json:"id"`
 }
 
-func (c *Controller) CreateProject(
+func (c *Client) CreateProject(
 	ctx context.Context,
 	tenantID string,
 	req *CreateProjectRequest,
@@ -319,7 +319,7 @@ type UpdateProjectRequest struct {
 
 type UpdateProjectResponse PagedResourceResponse[*ProjectInfo]
 
-func (c *Controller) UpdateProject(
+func (c *Client) UpdateProject(
 	ctx context.Context,
 	tenantID, projectID string,
 	req *UpdateProjectRequest,
@@ -335,7 +335,7 @@ func (c *Controller) UpdateProject(
 	return resp, nil
 }
 
-func (c *Controller) DeleteProject(
+func (c *Client) DeleteProject(
 	ctx context.Context,
 	tenantID, projectID string,
 ) error {
@@ -397,7 +397,7 @@ type ClusterInfo_Status struct {
 
 type ListClustersResponse PagedResourceResponse[*ClusterInfo]
 
-func (c *Controller) ListAllClusters(
+func (c *Client) ListAllClusters(
 	ctx context.Context,
 	tenantID string,
 	req *PaginatedRequest,
@@ -451,7 +451,7 @@ type CreateClusterResponse struct {
 	Id string `json:"id"`
 }
 
-func (c *Controller) CreateCluster(
+func (c *Client) CreateCluster(
 	ctx context.Context,
 	tenantID string,
 	req *CreateClusterRequest,
@@ -467,7 +467,7 @@ func (c *Controller) CreateCluster(
 	return resp, nil
 }
 
-func (c *Controller) DeleteCluster(
+func (c *Client) DeleteCluster(
 	ctx context.Context,
 	tenantID, projectID string, clusterID string,
 ) error {
@@ -485,7 +485,7 @@ type UpdateClusterMetaRequest struct {
 	Name        string `json:"name"`
 }
 
-func (c *Controller) UpdateClusterMeta(
+func (c *Client) UpdateClusterMeta(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 	req *UpdateClusterMetaRequest,
@@ -515,7 +515,7 @@ type ClusterJobInfo struct {
 
 type ListClusterJobsResponse PagedResourceResponse[*ClusterJobInfo]
 
-func (c *Controller) ListClusterJobs(
+func (c *Client) ListClusterJobs(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 ) (*ListClusterJobsResponse, error) {
@@ -544,7 +544,7 @@ type GetDeploymentOptionsResponse_ServerVersions struct {
 	Versions       []string `json:"versions"`
 }
 
-func (c *Controller) GetDeploymentOptions(
+func (c *Client) GetDeploymentOptions(
 	ctx context.Context,
 	tenantID string,
 ) (*GetDeploymentOptionsResponse, error) {
@@ -571,7 +571,7 @@ type AllowListEntryInfo struct {
 
 type ListAllowListEntriesResponse PagedResourceResponse[*AllowListEntryInfo]
 
-func (c *Controller) ListAllowListEntries(
+func (c *Client) ListAllowListEntries(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 	req *PaginatedRequest,
@@ -599,7 +599,7 @@ type UpdateAllowListEntriesRequest_Entry struct {
 	ExpiresAt string `json:"expiresAt,omitempty"`
 }
 
-func (c *Controller) UpdateAllowListEntries(
+func (c *Client) UpdateAllowListEntries(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 	req *UpdateAllowListEntriesRequest,
@@ -613,7 +613,7 @@ func (c *Controller) UpdateAllowListEntries(
 	return nil
 }
 
-func (c *Controller) EnablePrivateEndpoints(
+func (c *Client) EnablePrivateEndpoints(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 ) error {
@@ -626,7 +626,7 @@ func (c *Controller) EnablePrivateEndpoints(
 	return nil
 }
 
-func (c *Controller) DisablePrivateEndpoints(
+func (c *Client) DisablePrivateEndpoints(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 ) error {
@@ -646,7 +646,7 @@ type PrivateEndpointInfo struct {
 
 type GetPrivateEndpointResponse ResourceResponse[PrivateEndpointInfo]
 
-func (c *Controller) GetPrivateEndpoint(
+func (c *Client) GetPrivateEndpoint(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 ) (*GetPrivateEndpointResponse, error) {
@@ -667,7 +667,7 @@ type PrivateEndpointDetailsInfo struct {
 	ServiceName string `json:"serviceName"`
 }
 
-func (c *Controller) GetPrivateEndpointDetails(
+func (c *Client) GetPrivateEndpointDetails(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 ) (*ResourceResponse[PrivateEndpointDetailsInfo], error) {
@@ -690,7 +690,7 @@ type PrivateEndpointLinkInfo struct {
 
 type ListPrivateEndpointLinksResponse PagedResponse[*PrivateEndpointLinkInfo]
 
-func (c *Controller) ListPrivateEndpointLinks(
+func (c *Client) ListPrivateEndpointLinks(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 ) (*ListPrivateEndpointLinksResponse, error) {
@@ -710,24 +710,13 @@ type PrivateEndpointLinkRequest struct {
 	SubnetIds string `json:"subnetIds"` // this is a space-delimited list of subnet-ids
 }
 
-type PrivateEndpointLinkSetupInfo struct {
+type PrivateEndpointLinkCommandInfo struct {
 	Command string `json:"command"`
 }
 
-type CreatePrivateEndpointLinkResponse ResourceResponse[PrivateEndpointLinkSetupInfo]
+type CreatePrivateEndpointLinkResponse ResourceResponse[PrivateEndpointLinkCommandInfo]
 
-// This isn't actually neccessary, it's used by the UI to generate the aws link
-// command to use to link to the VPC.
-/*
-   Example Output:
-     aws ec2 create-vpc-endpoint
-       --vpc-id vpc-0ea6734517a89f0f9
-	   --region us-west-2
-	   --service-name com.amazonaws.vpce.us-west-2.vpce-svc-048c94c79e2d1249a
-	   --vpc-endpoint-type Interface
-	   --subnet-ids subnet-03b3b018d16b1e599 subnet-066bf3b21c106d96b
-*/
-func (c *Controller) GenPrivateEndpointLinkCommand(
+func (c *Client) CreatePrivateEndpointLinkCommand(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
 	req *PrivateEndpointLinkRequest,
@@ -743,14 +732,14 @@ func (c *Controller) GenPrivateEndpointLinkCommand(
 	return resp, err
 }
 
-type PrivateEndpointAcceptLinkRequest struct {
+type AcceptPrivateEndpointLinkRequest struct {
 	EndpointID string `json:"endpointId"`
 }
 
-func (c *Controller) AcceptPrivateEndpointLink(
+func (c *Client) AcceptPrivateEndpointLink(
 	ctx context.Context,
 	tenantID, projectID, clusterID string,
-	req *PrivateEndpointAcceptLinkRequest,
+	req *AcceptPrivateEndpointLinkRequest,
 ) error {
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/connection", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)

@@ -1,4 +1,4 @@
-package clustercontrol
+package cbmgmtrest
 
 import (
 	"context"
@@ -13,14 +13,16 @@ import (
 	"github.com/pkg/errors"
 )
 
-type Controller struct {
+type Client struct {
 	Endpoint string
+	Username string
+	Password string
 }
 
-func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface{}) error {
+func (c *Client) doReq(ctx context.Context, req *http.Request, out interface{}) error {
 	client := &http.Client{}
 
-	req.SetBasicAuth("Administrator", "password")
+	req.SetBasicAuth(c.Username, c.Password)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -46,7 +48,7 @@ func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface
 	return nil
 }
 
-func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.Request, error), maxRetries int, out interface{}) error {
+func (c *Client) doRetriableReq(ctx context.Context, makeReq func() (*http.Request, error), maxRetries int, out interface{}) error {
 	retryNum := 0
 	for {
 		req, err := makeReq()
@@ -81,14 +83,14 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 	}
 }
 
-func (c *Controller) doGet(ctx context.Context, path string, out interface{}) error {
+func (c *Client) doGet(ctx context.Context, path string, out interface{}) error {
 	maxRetries := 10
 	return c.doRetriableReq(ctx, func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+path, nil)
 	}, maxRetries, out)
 }
 
-func (c *Controller) doFormPost(ctx context.Context, path string, data url.Values, allowRetries bool, out interface{}) error {
+func (c *Client) doFormPost(ctx context.Context, path string, data url.Values, allowRetries bool, out interface{}) error {
 	encodedData := data.Encode()
 
 	maxRetries := 10
@@ -108,7 +110,7 @@ func (c *Controller) doFormPost(ctx context.Context, path string, data url.Value
 	}, maxRetries, out)
 }
 
-func (c *Controller) Ping(ctx context.Context) error {
+func (c *Client) Ping(ctx context.Context) error {
 	return c.doRetriableReq(ctx, func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, c.Endpoint+"/pools", nil)
 	}, 0, nil)
@@ -119,7 +121,7 @@ type NodeInitOptions struct {
 	Afamily  string
 }
 
-func (c *Controller) NodeInit(ctx context.Context, opts *NodeInitOptions) error {
+func (c *Client) NodeInit(ctx context.Context, opts *NodeInitOptions) error {
 	form := make(url.Values)
 	if opts.Hostname != "" {
 		form.Add("hostname", opts.Hostname)
@@ -139,7 +141,7 @@ type UpdateDefaultPoolOptions struct {
 	EventingMemoryQuotaMB int
 }
 
-func (c *Controller) UpdateDefaultPool(ctx context.Context, opts *UpdateDefaultPoolOptions) error {
+func (c *Client) UpdateDefaultPool(ctx context.Context, opts *UpdateDefaultPoolOptions) error {
 	form := make(url.Values)
 	if opts.ClusterName != "" {
 		form.Add("clusterName", opts.ClusterName)
@@ -167,7 +169,7 @@ type EnableExternalListenerOptions struct {
 	NodeEncryption string
 }
 
-func (c *Controller) EnableExternalListener(ctx context.Context, opts *EnableExternalListenerOptions) error {
+func (c *Client) EnableExternalListener(ctx context.Context, opts *EnableExternalListenerOptions) error {
 	form := make(url.Values)
 	if opts.Afamily != "" {
 		form.Add("afamily", opts.Afamily)
@@ -183,7 +185,7 @@ type SetupNetConfigOptions struct {
 	NodeEncryption string
 }
 
-func (c *Controller) SetupNetConfig(ctx context.Context, opts *SetupNetConfigOptions) error {
+func (c *Client) SetupNetConfig(ctx context.Context, opts *SetupNetConfigOptions) error {
 	form := make(url.Values)
 	if opts.Afamily != "" {
 		form.Add("afamily", opts.Afamily)
@@ -194,7 +196,7 @@ func (c *Controller) SetupNetConfig(ctx context.Context, opts *SetupNetConfigOpt
 	return c.doFormPost(ctx, "/node/controller/setupNetConfig", form, true, nil)
 }
 
-func (c *Controller) DisableUnusedExternalListeners(ctx context.Context) error {
+func (c *Client) DisableUnusedExternalListeners(ctx context.Context) error {
 	return c.doFormPost(ctx, "/node/controller/disableUnusedExternalListeners", url.Values{}, true, nil)
 }
 
@@ -202,7 +204,7 @@ type UpdateIndexSettingsOptions struct {
 	StorageMode string
 }
 
-func (c *Controller) UpdateIndexSettings(ctx context.Context, opts *UpdateIndexSettingsOptions) error {
+func (c *Client) UpdateIndexSettings(ctx context.Context, opts *UpdateIndexSettingsOptions) error {
 	form := make(url.Values)
 	if opts.StorageMode != "" {
 		form.Add("storageMode", opts.StorageMode)
@@ -215,7 +217,7 @@ type UpdateWebSettingsOptions struct {
 	Password string
 }
 
-func (c *Controller) UpdateWebSettings(ctx context.Context, opts *UpdateWebSettingsOptions) error {
+func (c *Client) UpdateWebSettings(ctx context.Context, opts *UpdateWebSettingsOptions) error {
 	form := make(url.Values)
 	if opts.Username != "" {
 		form.Add("username", opts.Username)
@@ -231,7 +233,7 @@ type SetupServicesOptions struct {
 	Services []string
 }
 
-func (c *Controller) SetupServices(ctx context.Context, opts *SetupServicesOptions) error {
+func (c *Client) SetupServices(ctx context.Context, opts *SetupServicesOptions) error {
 	form := make(url.Values)
 	if len(opts.Services) > 0 {
 		form.Add("services", strings.Join(opts.Services, ","))
@@ -248,7 +250,7 @@ type AddNodeOptions struct {
 	Password string
 }
 
-func (c *Controller) AddNode(ctx context.Context, opts *AddNodeOptions) error {
+func (c *Client) AddNode(ctx context.Context, opts *AddNodeOptions) error {
 	form := make(url.Values)
 	form.Add("hostname", opts.Address)
 	form.Add("services", strings.Join(opts.Services, ","))
@@ -259,7 +261,7 @@ func (c *Controller) AddNode(ctx context.Context, opts *AddNodeOptions) error {
 	return c.doFormPost(ctx, path, form, true, nil)
 }
 
-func (c *Controller) ListNodeOTPs(ctx context.Context) ([]string, error) {
+func (c *Client) ListNodeOTPs(ctx context.Context) ([]string, error) {
 	var resp struct {
 		Nodes []struct {
 			OTPNode string `json:"otpNode"`
@@ -282,7 +284,7 @@ type BeginRebalanceOptions struct {
 	KnownNodeOTPs []string
 }
 
-func (c *Controller) BeginRebalance(ctx context.Context, opts *BeginRebalanceOptions) error {
+func (c *Client) BeginRebalance(ctx context.Context, opts *BeginRebalanceOptions) error {
 	form := make(url.Values)
 	form.Add("knownNodes", strings.Join(opts.KnownNodeOTPs, ","))
 
@@ -293,7 +295,7 @@ type Task struct {
 	Status string
 }
 
-func (c *Controller) ListTasks(ctx context.Context) ([]*Task, error) {
+func (c *Client) ListTasks(ctx context.Context) ([]*Task, error) {
 	var resp []struct {
 		Status string `json:"status"`
 	}

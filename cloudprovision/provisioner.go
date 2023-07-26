@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/capellacontrol"
+	"github.com/brett19/cbdyncluster2/capellarest"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -14,14 +14,14 @@ import (
 
 type Provisioner struct {
 	logger   *zap.Logger
-	client   *capellacontrol.Controller
-	mgr      *capellacontrol.Manager
+	client   *capellarest.Client
+	mgr      *capellarest.Manager
 	tenantID string
 }
 
 type NewProvisionerOptions struct {
 	Logger   *zap.Logger
-	Client   *capellacontrol.Controller
+	Client   *capellarest.Client
 	TenantID string
 }
 
@@ -29,7 +29,7 @@ func NewProvisioner(opts *NewProvisionerOptions) (*Provisioner, error) {
 	return &Provisioner{
 		logger: opts.Logger,
 		client: opts.Client,
-		mgr: &capellacontrol.Manager{
+		mgr: &capellarest.Manager{
 			Logger: opts.Logger,
 			Client: opts.Client,
 		},
@@ -39,15 +39,15 @@ func NewProvisioner(opts *NewProvisionerOptions) (*Provisioner, error) {
 
 type clusterInfo struct {
 	Meta        *ProjectNameMetaData
-	Project     *capellacontrol.ProjectInfo
-	Cluster     *capellacontrol.ClusterInfo
+	Project     *capellarest.ProjectInfo
+	Cluster     *capellarest.ClusterInfo
 	IsCorrupted bool
 }
 
 func (p *Provisioner) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 	p.logger.Debug("listing cloud projects")
 
-	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
+	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellarest.PaginatedRequest{
 		Page:          1,
 		PerPage:       1000,
 		SortBy:        "name",
@@ -59,7 +59,7 @@ func (p *Provisioner) listClusters(ctx context.Context) ([]*clusterInfo, error) 
 
 	p.logger.Debug("listing all cloud clusters")
 
-	clusters, err := p.client.ListAllClusters(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
+	clusters, err := p.client.ListAllClusters(ctx, p.tenantID, &capellarest.PaginatedRequest{
 		Page:          1,
 		PerPage:       1000,
 		SortBy:        "name",
@@ -69,8 +69,8 @@ func (p *Provisioner) listClusters(ctx context.Context) ([]*clusterInfo, error) 
 		return nil, errors.Wrap(err, "failed to list all clusters")
 	}
 
-	getClustersForProject := func(projectID string) []*capellacontrol.ClusterInfo {
-		var out []*capellacontrol.ClusterInfo
+	getClustersForProject := func(projectID string) []*capellarest.ClusterInfo {
+		var out []*capellarest.ClusterInfo
 		for _, cluster := range clusters.Data {
 			if cluster.Data.Project.Id == projectID {
 				out = append(out, cluster.Data)
@@ -214,7 +214,7 @@ func (p *Provisioner) NewCluster(ctx context.Context, opts *NewClusterOptions) (
 
 	p.logger.Debug("creating a new cloud project")
 
-	newProject, err := p.client.CreateProject(ctx, p.tenantID, &capellacontrol.CreateProjectRequest{
+	newProject, err := p.client.CreateProject(ctx, p.tenantID, &capellarest.CreateProjectRequest{
 		Name: projectName,
 	})
 	if err != nil {
@@ -234,7 +234,7 @@ func (p *Provisioner) NewCluster(ctx context.Context, opts *NewClusterOptions) (
 
 	p.logger.Debug("creating a new cloud cluster")
 
-	newCluster, err := p.client.CreateCluster(ctx, p.tenantID, &capellacontrol.CreateClusterRequest{
+	newCluster, err := p.client.CreateCluster(ctx, p.tenantID, &capellarest.CreateClusterRequest{
 		CIDR:        deploymentOpts.SuggestedCidr,
 		Description: "",
 		Name:        clusterName,
@@ -244,16 +244,16 @@ func (p *Provisioner) NewCluster(ctx context.Context, opts *NewClusterOptions) (
 		Region:      "us-west-2",
 		Server:      deploymentOpts.ServerVersions.DefaultVersion,
 		SingleAZ:    false,
-		Specs: []capellacontrol.CreateClusterRequest_Spec{
+		Specs: []capellarest.CreateClusterRequest_Spec{
 			{
 				Compute: "m5.xlarge",
 				Count:   3,
-				Disk: capellacontrol.CreateClusterRequest_Spec_Disk{
+				Disk: capellarest.CreateClusterRequest_Spec_Disk{
 					Type:     "gp3",
 					SizeInGb: 50,
 					Iops:     3000,
 				},
-				DiskAutoScaling: capellacontrol.CreateClusterRequest_Spec_DiskScaling{
+				DiskAutoScaling: capellarest.CreateClusterRequest_Spec_DiskScaling{
 					Enabled: true,
 				},
 				Provider: "aws",
@@ -340,7 +340,7 @@ func (p *Provisioner) ListAllowListEntries(ctx context.Context, clusterID string
 		return nil, err
 	}
 
-	entries, err := p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+	entries, err := p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellarest.PaginatedRequest{
 		Page:          1,
 		PerPage:       1000,
 		SortBy:        "name",
@@ -368,8 +368,8 @@ func (p *Provisioner) AddAllowListEntry(ctx context.Context, clusterID string, c
 		return err
 	}
 
-	err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
-		Create: []capellacontrol.UpdateAllowListEntriesRequest_Entry{
+	err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellarest.UpdateAllowListEntriesRequest{
+		Create: []capellarest.UpdateAllowListEntriesRequest_Entry{
 			{
 				Cidr:    cidr,
 				Comment: "",
@@ -389,7 +389,7 @@ func (p *Provisioner) RemoveAllowListEntry(ctx context.Context, clusterID string
 		return err
 	}
 
-	entries, err := p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+	entries, err := p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellarest.PaginatedRequest{
 		Page:          1,
 		PerPage:       1000,
 		SortBy:        "name",
@@ -410,7 +410,7 @@ func (p *Provisioner) RemoveAllowListEntry(ctx context.Context, clusterID string
 		return errors.New("could not find matching cidr")
 	}
 
-	err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
+	err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellarest.UpdateAllowListEntriesRequest{
 		Delete: []string{foundEntryId},
 	})
 	if err != nil {
@@ -485,7 +485,7 @@ func (p *Provisioner) AcceptPrivateEndpointLink(ctx context.Context, clusterID s
 		return errors.Wrap(err, "failed to wait for private endpoint link")
 	}
 
-	err = p.client.AcceptPrivateEndpointLink(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PrivateEndpointAcceptLinkRequest{
+	err = p.client.AcceptPrivateEndpointLink(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellarest.AcceptPrivateEndpointLinkRequest{
 		EndpointID: vpceID,
 	})
 	if err != nil {
@@ -501,7 +501,7 @@ func (p *Provisioner) AcceptPrivateEndpointLink(ctx context.Context, clusterID s
 }
 
 func (p *Provisioner) RemoveAll(ctx context.Context) error {
-	clusters, err := p.client.ListAllClusters(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
+	clusters, err := p.client.ListAllClusters(ctx, p.tenantID, &capellarest.PaginatedRequest{
 		Page:          1,
 		PerPage:       100,
 		SortBy:        "name",
@@ -511,7 +511,7 @@ func (p *Provisioner) RemoveAll(ctx context.Context) error {
 		return errors.Wrap(err, "failed to list all clusters")
 	}
 
-	var clustersToRemove []*capellacontrol.ClusterInfo
+	var clustersToRemove []*capellarest.ClusterInfo
 	for _, cluster := range clusters.Data {
 		if !strings.HasPrefix(cluster.Data.Name, "cbdc2_") {
 			continue
@@ -544,7 +544,7 @@ func (p *Provisioner) RemoveAll(ctx context.Context) error {
 		}
 	}
 
-	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
+	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellarest.PaginatedRequest{
 		Page:          1,
 		PerPage:       100,
 		SortBy:        "name",
@@ -554,7 +554,7 @@ func (p *Provisioner) RemoveAll(ctx context.Context) error {
 		return errors.Wrap(err, "failed to list all projects")
 	}
 
-	var projectsToRemove []*capellacontrol.ProjectInfo
+	var projectsToRemove []*capellarest.ProjectInfo
 	for _, project := range projects.Data {
 		if !strings.HasPrefix(project.Data.Name, "cbdc2_") {
 			continue

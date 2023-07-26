@@ -77,5 +77,4 @@ func TestVersionIdent(t *testing.T) {
 	})
 	checkVersion("7", nil)
 	checkVersion("invalid", nil)
-
 }

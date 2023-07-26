@@ -1,4 +1,4 @@
-package clustercontrol
+package cbmgmtrest
 
 import (
 	"context"
@@ -38,8 +38,10 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 	firstNodeEndpoint := fmt.Sprintf("http://%s:%d", firstNodeAddress, 8091)
 	firstNodeMgr := &NodeManager{
 		Endpoint: firstNodeEndpoint,
+		Username: "Administrator",
+		Password: "password",
 	}
-	firstNodeCtrl := firstNodeMgr.Controller()
+	firstNodeCtrl := firstNodeMgr.Client()
 
 	m.Logger.Info("setting up initial cluster node")
 

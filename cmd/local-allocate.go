@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/clustercontrol"
+	"github.com/brett19/cbdyncluster2/cbmgmtrest"
 	"github.com/brett19/cbdyncluster2/deployment"
 	"github.com/brett19/cbdyncluster2/versionident"
 	"github.com/spf13/cobra"
@@ -143,7 +143,7 @@ var localAllocateCmd = &cobra.Command{
 		}
 
 		var nodeDeployDefs []*deployment.NewClusterNodeOptions
-		var nodeSetupDefs []*clustercontrol.SetupNewClusterNodeOptions
+		var nodeSetupDefs []*cbmgmtrest.SetupNewClusterNodeOptions
 		for _, nodeDef := range def.Nodes {
 			nodeCount := nodeDef.Count
 			if nodeCount <= 0 {
@@ -180,10 +180,10 @@ var localAllocateCmd = &cobra.Command{
 					UseServerless:       identVersion.Serverless,
 				}
 
-				nodeSetupDef := &clustercontrol.SetupNewClusterNodeOptions{
+				nodeSetupDef := &cbmgmtrest.SetupNewClusterNodeOptions{
 					Address: "", // this is set after provisioning
 
-					NodeSetupOptions: clustercontrol.NodeSetupOptions{
+					NodeSetupOptions: cbmgmtrest.NodeSetupOptions{
 						EnableKvService:       slices.Contains(nodeServices, "kv"),
 						EnableN1qlService:     slices.Contains(nodeServices, "query"),
 						EnableIndexService:    slices.Contains(nodeServices, "index"),
@@ -206,7 +206,7 @@ var localAllocateCmd = &cobra.Command{
 			Nodes:   nodeDeployDefs,
 		}
 
-		clusterSetupDef := &clustercontrol.SetupNewClusterOptions{
+		clusterSetupDef := &cbmgmtrest.SetupNewClusterOptions{
 			KvMemoryQuotaMB:       def.KvMemoryMB,
 			IndexMemoryQuotaMB:    def.IndexMemoryMB,
 			FtsMemoryQuotaMB:      def.FtsMemoryMB,
@@ -317,7 +317,7 @@ var localAllocateCmd = &cobra.Command{
 			nodeSetupDefs[nodeIdx].Address = node.IPAddress
 		}
 
-		clusterMgr := clustercontrol.ClusterManager{
+		clusterMgr := cbmgmtrest.ClusterManager{
 			Logger: logger,
 		}
 		err = clusterMgr.SetupNewCluster(ctx, clusterSetupDef)

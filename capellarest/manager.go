@@ -1,4 +1,4 @@
-package capellacontrol
+package capellarest
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 
 type Manager struct {
 	Logger *zap.Logger
-	Client *Controller
+	Client *Client
 }
 
 func (m *Manager) WaitForClusterState(
