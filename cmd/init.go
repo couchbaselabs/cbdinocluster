@@ -273,6 +273,9 @@ var initCmd = &cobra.Command{
 											},
 										},
 									},
+									Options: map[string]string{
+										"parent": "col0",
+									},
 								})
 								if err != nil {
 									fmt.Printf("Looks like something went wrong creating that network:\n%s\n", err)
