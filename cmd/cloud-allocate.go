@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/cloudprovision"
+	"github.com/couchbaselabs/cbdinocluster/cloudprovision"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )

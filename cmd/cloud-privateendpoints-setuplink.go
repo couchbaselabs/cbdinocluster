@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/brett19/cbdyncluster2/awscontrol"
+	"github.com/couchbaselabs/cbdinocluster/awscontrol"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )

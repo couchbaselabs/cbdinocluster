@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/brett19/cbdyncluster2/clustercontrol"
+	"github.com/couchbaselabs/cbdinocluster/clustercontrol"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )

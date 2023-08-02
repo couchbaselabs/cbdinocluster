@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/brett19/cbdyncluster2/cmd"
+	"github.com/couchbaselabs/cbdinocluster/cmd"
 )
 
 func main() {

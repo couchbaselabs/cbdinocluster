@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/capellacontrol"
+	"github.com/couchbaselabs/cbdinocluster/capellacontrol"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"

@@ -17,23 +17,23 @@ jobs:
       - name: Install dependencies
         run: go get .
       - name: Build OS X Binary
-        run: GOOS=darwin GOARCH=amd64 go build -o cbdyncluster2-darwin
+        run: GOOS=darwin GOARCH=amd64 go build -o cbdinocluster-darwin
       - name: Build Linux Binary
-        run: GOOS=linux GOARCH=amd64 go build -o cbdyncluster2-linux
+        run: GOOS=linux GOARCH=amd64 go build -o cbdinocluster-linux
       - name: Build Windows Binary
-        run: GOOS=windows GOARCH=amd64 go build -o cbdyncluster2-windows.exe
+        run: GOOS=windows GOARCH=amd64 go build -o cbdinocluster-windows.exe
       - uses: actions/upload-artifact@v3
         with:
-          name: cbdyncluster2-darwin
-          path: cbdyncluster2-darwin
+          name: cbdinocluster-darwin
+          path: cbdinocluster-darwin
       - uses: actions/upload-artifact@v3
         with:
-          name: cbdyncluster2-linux
-          path: cbdyncluster2-linux
+          name: cbdinocluster-linux
+          path: cbdinocluster-linux
       - uses: actions/upload-artifact@v3
         with:
-          name: cbdyncluster2-windows.exe
-          path: cbdyncluster2-windows.exe
+          name: cbdinocluster-windows.exe
+          path: cbdinocluster-windows.exe
   test:
     name: Integration Test
     needs: [build]
@@ -41,21 +41,21 @@ jobs:
     steps:
       - uses: actions/download-artifact@v3
         with:
-          name: cbdyncluster2-linux
+          name: cbdinocluster-linux
       - run: |
-          chmod +x cbdyncluster2-linux
-          ./cbdyncluster2-linux init --auto
+          chmod +x cbdinocluster-linux
+          ./cbdinocluster-linux init --auto
       - name: Setup Cluster
         run: |
-          CBDC_ID=$(./cbdyncluster2-linux allocate simple:7.0.0)
+          CBDC_ID=$(./cbdinocluster-linux allocate simple:7.0.0)
           echo "CBDC_ID=$CBDC_ID" >> "$GITHUB_ENV"
       - name: Run Tests
         timeout-minutes: 10
         run: |
-          ./cbdyncluster2-linux connstr $CBDC_ID
-          CBDC_MGMT=$(./cbdyncluster2-linux mgmt $CBDC_ID)
+          ./cbdinocluster-linux connstr $CBDC_ID
+          CBDC_MGMT=$(./cbdinocluster-linux mgmt $CBDC_ID)
           curl $CBDC_MGMT
       - name: Cleanup Cluster
         if: always()
         run: |
-          ./cbdyncluster2-linux rm $CBDC_ID
+          ./cbdinocluster-linux rm $CBDC_ID

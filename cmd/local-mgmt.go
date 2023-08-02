@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/brett19/cbdyncluster2/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )

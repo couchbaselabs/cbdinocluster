@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/brett19/cbdyncluster2/versionident"
+	"github.com/couchbaselabs/cbdinocluster/versionident"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

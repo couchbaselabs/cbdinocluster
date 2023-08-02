@@ -45,7 +45,7 @@ func DefaultConfigPath() (string, error) {
 		return "", errors.Wrap(err, "failed to find user home path")
 	}
 
-	configPath := path.Join(homePath, ".cbdyncluster2")
+	configPath := path.Join(homePath, ".cbdinocluster")
 	return configPath, nil
 }
 

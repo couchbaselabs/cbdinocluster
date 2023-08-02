@@ -1,4 +1,4 @@
-module github.com/brett19/cbdyncluster2
+module github.com/couchbaselabs/cbdinocluster
 
 go 1.18
 

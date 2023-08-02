@@ -18,15 +18,15 @@ jobs:
       - name: Install dependencies
         run: go get .
       - name: Build OS X Binary
-        run: GOOS=darwin GOARCH=amd64 go build -o cbdyncluster2-darwin
+        run: GOOS=darwin GOARCH=amd64 go build -o cbdinocluster-darwin
       - name: Build Linux Binary
-        run: GOOS=linux GOARCH=amd64 go build -o cbdyncluster2-linux
+        run: GOOS=linux GOARCH=amd64 go build -o cbdinocluster-linux
       - name: Build Windows Binary
-        run: GOOS=windows GOARCH=amd64 go build -o cbdyncluster2-windows.exe
+        run: GOOS=windows GOARCH=amd64 go build -o cbdinocluster-windows.exe
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            cbdyncluster2-darwin
-            cbdyncluster2-linux
-            cbdyncluster2-windows.exe
+            cbdinocluster-darwin
+            cbdinocluster-linux
+            cbdinocluster-windows.exe

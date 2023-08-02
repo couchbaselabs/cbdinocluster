@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/clustercontrol"
-	"github.com/brett19/cbdyncluster2/deployment"
-	"github.com/brett19/cbdyncluster2/versionident"
+	"github.com/couchbaselabs/cbdinocluster/clustercontrol"
+	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/versionident"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"

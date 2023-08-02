@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/brett19/cbdyncluster2/utils/tarhelper"
+	"github.com/couchbaselabs/cbdinocluster/utils/tarhelper"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"

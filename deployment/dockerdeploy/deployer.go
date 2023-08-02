@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brett19/cbdyncluster2/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
