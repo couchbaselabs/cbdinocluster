@@ -9,11 +9,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const Version = 2
+
 type Config struct {
 	Docker  *Config_Docker  `yaml:"docker"`
 	GitHub  *Config_GitHub  `yaml:"github"`
 	AWS     *Config_AWS     `yaml:"aws"`
+	GCP     *Config_GCP     `yaml:"gcp"`
+	Azure   *Config_Azure   `yaml:"azure"`
 	Capella *Config_Capella `yaml:"capella"`
+
+	Version         int    `yaml:"version"`
+	DefaultCloud    string `yaml:"default-cloud"`
+	DefaultDeployer string `yaml:"default-deployer"`
 }
 
 type Config_Docker struct {
@@ -31,6 +39,15 @@ type Config_AWS struct {
 	FromEnvironment bool   `yaml:"from-env"`
 	AccessKey       string `yaml:"access-key"`
 	SecretKey       string `yaml:"secret-key"`
+	DefaultRegion   string `yaml:"default-region"`
+}
+
+type Config_GCP struct {
+	DefaultRegion string `yaml:"default-region"`
+}
+
+type Config_Azure struct {
+	DefaultRegion string `yaml:"default-region"`
 }
 
 type Config_Capella struct {
@@ -49,6 +66,19 @@ func DefaultConfigPath() (string, error) {
 	return configPath, nil
 }
 
+func Upgrade(config *Config) *Config {
+	if config.Version < 2 {
+		config.DefaultCloud = "aws"
+		config.DefaultDeployer = "docker"
+		if config.AWS != nil {
+			config.AWS.DefaultRegion = "us-west-2"
+		}
+		config.Version = 2
+	}
+
+	return config
+}
+
 func Load(ctx context.Context) (*Config, error) {
 	configPath, err := DefaultConfigPath()
 	if err != nil {
@@ -64,6 +94,15 @@ func Load(ctx context.Context) (*Config, error) {
 	err = yaml.Unmarshal(configBytes, &config)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to parse config file")
+	}
+
+	if config.Version != Version {
+		config = Upgrade(config)
+
+		err := Save(ctx, config)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to save upgraded configuration")
+		}
 	}
 
 	return config, nil

@@ -25,14 +25,5 @@ func Execute() {
 }
 
 func init() {
-	// some shortcuts to make things easier to use
-	rootCmd.AddCommand(localAllocateCmd)
-	rootCmd.AddCommand(localCleanupCmd)
-	rootCmd.AddCommand(localConnstrCmd)
-	rootCmd.AddCommand(localListCmd)
-	rootCmd.AddCommand(localMgmtCmd)
-	rootCmd.AddCommand(localRemoveAllCmd)
-	rootCmd.AddCommand(localRemoveCmd)
-
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Turns on verbose logging")
 }

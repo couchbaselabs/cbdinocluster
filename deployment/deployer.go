@@ -3,43 +3,35 @@ package deployment
 import (
 	"context"
 	"time"
+
+	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 )
 
-type NewClusterNodeOptions struct {
-	Name                string
-	Version             string
-	BuildNo             int
-	UseCommunityEdition bool
-	UseServerless       bool
+type ClusterNodeInfo interface {
+	GetID() string
+	GetResourceID() string
+	GetName() string
+	GetIPAddress() string
 }
 
-type NewClusterOptions struct {
-	Creator string
-	Purpose string
-	Expiry  time.Duration
-	Nodes   []*NewClusterNodeOptions
+type ClusterInfo interface {
+	GetID() string
+	GetPurpose() string
+	GetExpiry() time.Time
+	GetState() string
+	GetNodes() []ClusterNodeInfo
 }
 
-type ClusterNodeInfo struct {
-	ResourceID string
-	NodeID     string
-	Name       string
-	IPAddress  string
-}
-
-type ClusterInfo struct {
-	ClusterID string
-	Creator   string
-	Owner     string
-	Purpose   string
-	Expiry    time.Time
-	Nodes     []*ClusterNodeInfo
+type ConnectInfo struct {
+	ConnStr string
+	Mgmt    string
 }
 
 type Deployer interface {
-	ListClusters(ctx context.Context) ([]*ClusterInfo, error)
-	NewCluster(ctx context.Context, opts *NewClusterOptions) (*ClusterInfo, error)
+	ListClusters(ctx context.Context) ([]ClusterInfo, error)
+	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
 	RemoveCluster(ctx context.Context, clusterID string) error
 	RemoveAll(ctx context.Context) error
 	Cleanup(ctx context.Context) error
+	GetConnectInfo(ctx context.Context, clusterID string) (*ConnectInfo, error)
 }

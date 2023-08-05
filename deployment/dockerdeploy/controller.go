@@ -9,7 +9,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/couchbaselabs/cbdinocluster/clustercontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"

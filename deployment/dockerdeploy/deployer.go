@@ -2,10 +2,14 @@ package dockerdeploy
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/versionident"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
@@ -48,7 +52,7 @@ func NewDeployer(opts *DeployerOptions) (*Deployer, error) {
 	}, nil
 }
 
-func (d *Deployer) ListClusters(ctx context.Context) ([]*deployment.ClusterInfo, error) {
+func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 	nodes, err := d.controller.ListNodes(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list nodes")
@@ -59,14 +63,14 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]*deployment.ClusterInfo,
 		return strings.Compare(a.Name, b.Name) < 0
 	})
 
-	var clusters []*deployment.ClusterInfo
-	getCluster := func(clusterID string) *deployment.ClusterInfo {
+	var clusters []*ClusterInfo
+	getCluster := func(clusterID string) *ClusterInfo {
 		for _, cluster := range clusters {
 			if cluster.ClusterID == clusterID {
 				return cluster
 			}
 		}
-		cluster := &deployment.ClusterInfo{
+		cluster := &ClusterInfo{
 			ClusterID: clusterID,
 		}
 		clusters = append(clusters, cluster)
@@ -81,7 +85,7 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]*deployment.ClusterInfo,
 		if node.Expiry.After(cluster.Expiry) {
 			cluster.Expiry = node.Expiry
 		}
-		cluster.Nodes = append(cluster.Nodes, &deployment.ClusterNodeInfo{
+		cluster.Nodes = append(cluster.Nodes, &ClusterNodeInfo{
 			ResourceID: "docker:" + node.ContainerID[0:8] + "...",
 			NodeID:     node.NodeID,
 			Name:       node.Name,
@@ -92,30 +96,42 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]*deployment.ClusterInfo,
 	return clusters, nil
 }
 
-func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOptions) (*deployment.ClusterInfo, error) {
-	for _, node := range opts.Nodes {
-		if node.Name == "" {
-			return nil, errors.New("all defined nodes must have names")
-		}
+func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, error) {
+	clusters, err := d.listClusters(ctx)
+	if err != nil {
+		return nil, err
 	}
 
+	var out []deployment.ClusterInfo
+	for _, cluster := range clusters {
+		out = append(out, cluster)
+	}
+	return out, nil
+}
+
+func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
 	d.logger.Info("gathering node images")
 
-	nodeDefs := make([]*ImageDef, len(opts.Nodes))
-	nodeImages := make([]*ImageRef, len(opts.Nodes))
-	for nodeIdx, node := range opts.Nodes {
-		imageDef := &ImageDef{
-			Version:             node.Version,
-			BuildNo:             node.BuildNo,
-			UseCommunityEdition: node.UseCommunityEdition,
-			UseServerless:       node.UseServerless,
+	nodeGrpDefs := make([]*ImageDef, len(def.NodeGroups))
+	nodeGrpImages := make([]*ImageRef, len(def.NodeGroups))
+	for nodeGrpIdx, nodeGrp := range def.NodeGroups {
+		versionInfo, err := versionident.Identify(ctx, nodeGrp.Version)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to identify version")
 		}
-		nodeDefs[nodeIdx] = imageDef
+
+		imageDef := &ImageDef{
+			Version:             versionInfo.Version,
+			BuildNo:             versionInfo.BuildNo,
+			UseCommunityEdition: versionInfo.CommunityEdition,
+			UseServerless:       versionInfo.Serverless,
+		}
+		nodeGrpDefs[nodeGrpIdx] = imageDef
 
 		var imageRef *ImageRef
-		for oNodeIdx := 0; oNodeIdx < nodeIdx; oNodeIdx++ {
-			if CompareImageDefs(nodeDefs[oNodeIdx], imageDef) == 0 {
-				imageRef = nodeImages[oNodeIdx]
+		for oNodeGrpIdx := 0; oNodeGrpIdx < nodeGrpIdx; oNodeGrpIdx++ {
+			if CompareImageDefs(nodeGrpDefs[oNodeGrpIdx], imageDef) == 0 {
+				imageRef = nodeGrpImages[oNodeGrpIdx]
 			}
 		}
 
@@ -128,14 +144,14 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 			imageRef = foundImageRef
 		}
 
-		nodeImages[nodeIdx] = imageRef
+		nodeGrpImages[nodeGrpIdx] = imageRef
 	}
 
 	clusterID := uuid.NewString()
 
 	d.logger.Info("deploying nodes")
 
-	nodes := make([]*NodeInfo, len(opts.Nodes))
+	nodes := make([]*NodeInfo, 0)
 	leaveNodesAfterReturn := false
 	cleanupNodes := func() {
 		if !leaveNodesAfterReturn {
@@ -148,32 +164,57 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 	}
 	defer cleanupNodes()
 
-	waitCh := make(chan error)
-	for nodeIdx, nodeDef := range opts.Nodes {
-		go func(nodeIdx int, nodeDef *deployment.NewClusterNodeOptions) {
-			logger := d.logger.With(zap.Int("index", nodeIdx))
-			logger.Info("deploying node", zap.Any("def", nodeDef))
+	var nodeOpts []*DeployNodeOptions
+	var nodeNodeGrps []*clusterdef.NodeGroup
+	for nodeGrpIdx, nodeGrp := range def.NodeGroups {
+		for grpNodeIdx := 0; grpNodeIdx < nodeGrp.Count; grpNodeIdx++ {
+			d.logger.Info("deploying", zap.Any("nodeGrp", nodeGrp))
 
-			node, err := d.controller.DeployNode(ctx, &DeployNodeOptions{
-				Creator:   opts.Creator,
-				Name:      nodeDef.Name,
-				Purpose:   opts.Purpose,
+			nodeName := ""
+			if nodeGrp.DockerNodeGroup != nil {
+				nodeName = nodeGrp.DockerNodeGroup.Name
+			}
+			if nodeName == "" {
+				nodeName = "node"
+			}
+			if nodeGrp.Count > 1 {
+				nodeName = fmt.Sprintf("%s_%d", nodeName, grpNodeIdx)
+			}
+
+			image := nodeGrpImages[nodeGrpIdx]
+
+			deployOpts := &DeployNodeOptions{
+				Creator:   "",
+				Name:      nodeName,
+				Purpose:   def.Purpose,
 				ClusterID: clusterID,
-				Image:     nodeImages[nodeIdx],
-				Expiry:    opts.Expiry,
-			})
+				Image:     image,
+				Expiry:    def.Expiry,
+			}
+
+			nodeOpts = append(nodeOpts, deployOpts)
+			nodeNodeGrps = append(nodeNodeGrps, nodeGrp)
+		}
+	}
+
+	waitCh := make(chan error)
+	for _, deployOpts := range nodeOpts {
+		go func(deployOpts *DeployNodeOptions) {
+			d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
+
+			node, err := d.controller.DeployNode(ctx, deployOpts)
 			if err != nil {
 				waitCh <- errors.Wrap(err, "failed to deploy a node")
 				return
 			}
 
-			logger.Info("deployed node")
+			d.logger.Info("deployed node")
 
-			nodes[nodeIdx] = node
+			nodes = append(nodes, node)
 			waitCh <- nil
-		}(nodeIdx, nodeDef)
+		}(deployOpts)
 	}
-	for range opts.Nodes {
+	for range nodeOpts {
 		err := <-waitCh
 		if err != nil {
 			return nil, err
@@ -183,12 +224,12 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 	d.logger.Info("nodes deployed")
 
 	// we cheat for now...
-	clusters, err := d.ListClusters(ctx)
+	clusters, err := d.listClusters(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list clusters")
 	}
 
-	var thisCluster *deployment.ClusterInfo
+	var thisCluster *ClusterInfo
 	for _, cluster := range clusters {
 		if cluster.ClusterID == clusterID {
 			thisCluster = cluster
@@ -199,6 +240,103 @@ func (d *Deployer) NewCluster(ctx context.Context, opts *deployment.NewClusterOp
 	}
 
 	leaveNodesAfterReturn = true
+
+	kvMemoryQuotaMB := 256
+	indexMemoryQuotaMB := 256
+	ftsMemoryQuotaMB := 256
+	cbasMemoryQuotaMB := 1024
+	eventingMemoryQuotaMB := 256
+	username := "Administrator"
+	password := "password"
+	if def.DockerCluster != nil {
+		if def.DockerCluster.KvMemoryMB > 0 {
+			kvMemoryQuotaMB = def.DockerCluster.KvMemoryMB
+		}
+		if def.DockerCluster.IndexMemoryMB > 0 {
+			indexMemoryQuotaMB = def.DockerCluster.IndexMemoryMB
+		}
+		if def.DockerCluster.FtsMemoryMB > 0 {
+			ftsMemoryQuotaMB = def.DockerCluster.FtsMemoryMB
+		}
+		if def.DockerCluster.CbasMemoryMB > 0 {
+			cbasMemoryQuotaMB = def.DockerCluster.CbasMemoryMB
+		}
+		if def.DockerCluster.EventingMemoryMB > 0 {
+			eventingMemoryQuotaMB = def.DockerCluster.EventingMemoryMB
+		}
+		if def.DockerCluster.Username != "" {
+			username = def.DockerCluster.Username
+		}
+		if def.DockerCluster.Password != "" {
+			password = def.DockerCluster.Password
+		}
+	}
+
+	if kvMemoryQuotaMB < 256 {
+		d.logger.Warn("kv memory must be at least 256, adjusting it...")
+		kvMemoryQuotaMB = 256
+	}
+	if indexMemoryQuotaMB < 256 {
+		d.logger.Warn("index memory must be at least 256, adjusting it...")
+		indexMemoryQuotaMB = 256
+	}
+	if ftsMemoryQuotaMB < 256 {
+		d.logger.Warn("fts memory must be at least 256, adjusting it...")
+		ftsMemoryQuotaMB = 256
+	}
+	if cbasMemoryQuotaMB < 1024 {
+		d.logger.Warn("cbas memory must be at least 1024, adjusting it...")
+		cbasMemoryQuotaMB = 1024
+	}
+	if eventingMemoryQuotaMB < 256 {
+		d.logger.Warn("eventing memory must be at least 256, adjusting it...")
+		eventingMemoryQuotaMB = 256
+	}
+
+	var setupNodeOpts []*clustercontrol.SetupNewClusterNodeOptions
+	for nodeIdx, node := range nodes {
+		nodeGrp := nodeNodeGrps[nodeIdx]
+
+		services := nodeGrp.Services
+		if len(services) == 0 {
+			services = []clusterdef.Service{
+				clusterdef.KvService,
+				clusterdef.IndexService,
+				clusterdef.QueryService,
+				clusterdef.SearchService,
+			}
+		}
+
+		nsServices, err := clusterdef.ServicesToNsServices(services)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to generate ns server services list")
+		}
+
+		setupNodeOpts = append(setupNodeOpts, &clustercontrol.SetupNewClusterNodeOptions{
+			Address:  node.IPAddress,
+			Services: nsServices,
+		})
+	}
+
+	setupOpts := &clustercontrol.SetupNewClusterOptions{
+		KvMemoryQuotaMB:       kvMemoryQuotaMB,
+		IndexMemoryQuotaMB:    indexMemoryQuotaMB,
+		FtsMemoryQuotaMB:      ftsMemoryQuotaMB,
+		CbasMemoryQuotaMB:     cbasMemoryQuotaMB,
+		EventingMemoryQuotaMB: eventingMemoryQuotaMB,
+		Username:              username,
+		Password:              password,
+		Nodes:                 setupNodeOpts,
+	}
+
+	clusterMgr := clustercontrol.ClusterManager{
+		Logger: d.logger,
+	}
+	err = clusterMgr.SetupNewCluster(ctx, setupOpts)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to setup cluster")
+	}
+
 	return thisCluster, nil
 }
 
@@ -236,6 +374,46 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
+	clusters, err := d.listClusters(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list nodes")
+	}
+
+	var thisCluster *ClusterInfo
+	for _, cluster := range clusters {
+		if cluster.ClusterID == clusterID {
+			thisCluster = cluster
+		}
+	}
+	if thisCluster == nil {
+		return nil, errors.New("failed to find cluster")
+	}
+
+	var connstrAddrs []string
+	var mgmtAddrs []string
+	for _, node := range thisCluster.Nodes {
+		kvPort := 11210
+		mgmtPort := 8091
+
+		if kvPort == 11210 {
+			connstrAddrs = append(connstrAddrs, node.IPAddress)
+		} else {
+			connstrAddrs = append(connstrAddrs, fmt.Sprintf("%s:%d", node.IPAddress, 11210))
+		}
+
+		mgmtAddrs = append(mgmtAddrs, fmt.Sprintf("%s:%d", node.IPAddress, mgmtPort))
+	}
+
+	connStr := fmt.Sprintf("couchbase://%s\n", strings.Join(connstrAddrs, ","))
+	mgmt := fmt.Sprintf("http://%s\n", strings.Join(mgmtAddrs, ","))
+
+	return &deployment.ConnectInfo{
+		ConnStr: connStr,
+		Mgmt:    mgmt,
+	}, nil
 }
 
 func (d *Deployer) Cleanup(ctx context.Context) error {

@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/couchbaselabs/cbdinocluster/clustercontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -28,6 +28,15 @@ type ServerDef struct {
 
 type OsxController struct {
 	Logger *zap.Logger
+}
+
+func (c *OsxController) IsInstalled(ctx context.Context) (bool, error) {
+	_, err := os.Stat("/Applications/Couchbase Server.app")
+	if err != nil {
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func (c *OsxController) cleanupPrevious(ctx context.Context) error {

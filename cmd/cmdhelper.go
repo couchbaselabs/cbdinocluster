@@ -9,11 +9,11 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/couchbaselabs/cbdinocluster/capellacontrol"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
-	"github.com/couchbaselabs/cbdinocluster/cloudprovision"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/dockerdeploy"
+	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -78,6 +78,10 @@ func (h *CmdHelper) GetConfig(ctx context.Context) *cbdcconfig.Config {
 }
 
 func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
+	return h.GetCloudDeployer(ctx)
+}
+
+func (h *CmdHelper) GetDockerDeployer(ctx context.Context) *dockerdeploy.Deployer {
 	logger := h.GetLogger()
 	config := h.GetConfig(ctx)
 
@@ -113,7 +117,7 @@ func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
 	return deployer
 }
 
-func (h *CmdHelper) GetCloudProvisioner(ctx context.Context) *cloudprovision.Provisioner {
+func (h *CmdHelper) GetCloudDeployer(ctx context.Context) *clouddeploy.Deployer {
 	logger := h.GetLogger()
 	config := h.GetConfig(ctx)
 
@@ -133,13 +137,31 @@ func (h *CmdHelper) GetCloudProvisioner(ctx context.Context) *cloudprovision.Pro
 		logger.Fatal("failed to create controller", zap.Error(err))
 	}
 
-	prov, err := cloudprovision.NewProvisioner(&cloudprovision.NewProvisionerOptions{
-		Logger:   logger,
-		Client:   client,
-		TenantID: capellaOid,
+	defaultCloud := config.DefaultCloud
+	defaultRegion := ""
+	if defaultCloud == "aws" {
+		if config.AWS != nil {
+			defaultRegion = config.AWS.DefaultRegion
+		}
+	} else if defaultCloud == "gcp" {
+		if config.GCP != nil {
+			defaultRegion = config.GCP.DefaultRegion
+		}
+	} else if defaultCloud == "azure" {
+		if config.Azure != nil {
+			defaultRegion = config.Azure.DefaultRegion
+		}
+	}
+
+	prov, err := clouddeploy.NewDeployer(&clouddeploy.NewDeployerOptions{
+		Logger:        logger,
+		Client:        client,
+		TenantID:      capellaOid,
+		DefaultCloud:  defaultCloud,
+		DefaultRegion: defaultRegion,
 	})
 	if err != nil {
-		logger.Fatal("failed to create provisioner", zap.Error(err))
+		logger.Fatal("failed to create deployer", zap.Error(err))
 	}
 
 	// This can take a long time sometimes, so this is only run manually.
@@ -190,66 +212,17 @@ func (h *CmdHelper) IdentifyCurrentUser() string {
 	return osUser.Username
 }
 
-func (h *CmdHelper) IdentifyCluster(ctx context.Context, deployer deployment.Deployer, userInput string) (*deployment.ClusterInfo, error) {
+func (h *CmdHelper) IdentifyCluster(ctx context.Context, deployer deployment.Deployer, userInput string) (deployment.ClusterInfo, error) {
 	h.logger.Info("attempting to identify cluster", zap.String("input", userInput))
 	clusters, err := deployer.ListClusters(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list clusters")
 	}
 
-	var identifiedCluster *deployment.ClusterInfo
+	var identifiedCluster deployment.ClusterInfo
 
 	for _, cluster := range clusters {
-		if strings.HasPrefix(cluster.ClusterID, userInput) {
-			if identifiedCluster != nil {
-				return nil, errors.New("multiple clusters matched the specified identifier")
-			}
-
-			identifiedCluster = cluster
-		}
-	}
-
-	if identifiedCluster == nil {
-		return nil, errors.New("no clusters matched the specified identifier")
-	}
-
-	return identifiedCluster, nil
-}
-
-func (h *CmdHelper) IdentifyNode(ctx context.Context, cluster *deployment.ClusterInfo, userInput string) (*deployment.ClusterNodeInfo, error) {
-	h.logger.Info("attempting to identify cluster node", zap.String("input", userInput))
-
-	var identifiedNode *deployment.ClusterNodeInfo
-
-	for _, node := range cluster.Nodes {
-		if strings.HasPrefix(node.NodeID, userInput) || node.Name == userInput {
-			if identifiedNode != nil {
-				return nil, errors.New("multiple nodes matched the specified identifier")
-			}
-
-			identifiedNode = node
-		}
-	}
-
-	if identifiedNode == nil {
-		return nil, errors.New("no nodes matched the specified identifier")
-	}
-
-	return identifiedNode, nil
-}
-
-func (h *CmdHelper) IdentifyCloudCluster(ctx context.Context, prov *cloudprovision.Provisioner, userInput string) (*cloudprovision.ClusterInfo, error) {
-	h.logger.Info("attempting to identify cloud cluster", zap.String("input", userInput))
-
-	clusters, err := prov.ListClusters(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list clusters")
-	}
-
-	var identifiedCluster *cloudprovision.ClusterInfo
-
-	for _, cluster := range clusters {
-		if strings.HasPrefix(cluster.ClusterID, userInput) {
+		if strings.HasPrefix(cluster.GetID(), userInput) {
 			if identifiedCluster != nil {
 				return nil, errors.New("multiple clusters matched the specified identifier")
 			}

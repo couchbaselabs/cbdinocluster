@@ -441,6 +441,7 @@ var initCmd = &cobra.Command{
 						FromEnvironment: false,
 						AccessKey:       "",
 						SecretKey:       "",
+						DefaultRegion:   "",
 					}
 
 					awsUseEnv := false
@@ -543,12 +544,14 @@ var initCmd = &cobra.Command{
 							FromEnvironment: true,
 							AccessKey:       "",
 							SecretKey:       "",
+							DefaultRegion:   "",
 						}
 					} else {
 						curConfig.AWS = &cbdcconfig.Config_AWS{
 							FromEnvironment: false,
 							AccessKey:       awsToken,
 							SecretKey:       awsSecret,
+							DefaultRegion:   "us-west-2",
 						}
 					}
 
@@ -675,6 +678,15 @@ var initCmd = &cobra.Command{
 			}
 		}
 
+		printBaseConfig := func() {
+			fmt.Printf("  Default Cloud: %s\n", curConfig.DefaultCloud)
+			fmt.Printf("  Default Deployer: %s\n", curConfig.DefaultDeployer)
+		}
+		{
+			curConfig.DefaultCloud = "aws"
+			curConfig.DefaultDeployer = "docker"
+		}
+
 		fmt.Printf("Initialization completed!\n")
 
 		fmt.Printf("Using Docker configuration:\n")
@@ -689,6 +701,8 @@ var initCmd = &cobra.Command{
 		fmt.Printf("Using Capella configuration:\n")
 		printCapellaConfig()
 
+		fmt.Printf("Using Base configuration:\n")
+		printBaseConfig()
 	},
 }
 
@@ -705,4 +719,5 @@ func init() {
 	initCmd.Flags().String("aws-use-env", "", "Use the environment for AWS each run")
 	initCmd.Flags().String("aws-access-key", "", "AWS access key to use")
 	initCmd.Flags().String("aws-secret-key", "", "AWS secret key to use")
+	initCmd.Flags().String("aws-region", "", "AWS default region to use")
 }
