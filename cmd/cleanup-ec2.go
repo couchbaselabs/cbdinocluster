@@ -7,16 +7,28 @@ import (
 )
 
 var cleanupEc2Cmd = &cobra.Command{
-	Use:   "ec2 [flags] <region>",
+	Use:   "ec2 [flags]",
 	Short: "Cleans up any expired resources in EC2",
-	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 		awsCreds := helper.GetAWSCredentials(ctx)
+		config := helper.GetConfig(ctx)
 
-		region := args[0]
+		regionFlag, _ := cmd.Flags().GetString("def")
+
+		var region string
+		if region == "" {
+			if regionFlag != "" {
+				region = regionFlag
+			}
+		}
+		if region == "" {
+			if config.AWS != nil {
+				region = config.AWS.DefaultRegion
+			}
+		}
 
 		peCtrl := awscontrol.PrivateEndpointsController{
 			Logger:      logger,
@@ -28,10 +40,11 @@ var cleanupEc2Cmd = &cobra.Command{
 		if err != nil {
 			logger.Fatal("failed to cleanup private endpoint resource", zap.Error(err))
 		}
-
 	},
 }
 
 func init() {
 	cleanupCmd.AddCommand(cleanupEc2Cmd)
+
+	cleanupEc2Cmd.Flags().String("region", "", "The region within EC2 to clean up.")
 }
