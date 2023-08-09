@@ -6,7 +6,7 @@ import (
 )
 
 var cleanupDockerCmd = &cobra.Command{
-	Use:   "cleanup",
+	Use:   "docker",
 	Short: "Cleans up any expired resources",
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
