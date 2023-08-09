@@ -39,7 +39,10 @@ environments.
     ```
     ./cbdinocluster init
     ```
-
+  Note that on MacOS, you may need to remove the quarantine attribute with a command like this:
+    ```
+    sudo xattr -r -d com.apple.quarantine $PWD/cbdinocluster
+    ```
 ### Using cbdinocluster
 
 #### List your local clusters
