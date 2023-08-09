@@ -15,16 +15,15 @@ var allowListAddCmd = &cobra.Command{
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
-		deployer := helper.GetDeployer(ctx)
+
+		deployer, cluster, err := helper.IdentifyCluster(ctx, args[0])
+		if err != nil {
+			logger.Fatal("failed to identify cluster", zap.Error(err))
+		}
 
 		cloudDeployer, ok := deployer.(*clouddeploy.Deployer)
 		if !ok {
 			logger.Fatal("allow-lists are only supported for cloud deployer")
-		}
-
-		cluster, err := helper.IdentifyCluster(ctx, cloudDeployer, args[0])
-		if err != nil {
-			logger.Fatal("failed to identify cluster", zap.Error(err))
 		}
 
 		err = cloudDeployer.AddAllowListEntry(ctx, cluster.GetID(), args[1])

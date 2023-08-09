@@ -212,11 +212,14 @@ func (h *CmdHelper) IdentifyCurrentUser() string {
 	return osUser.Username
 }
 
-func (h *CmdHelper) IdentifyCluster(ctx context.Context, deployer deployment.Deployer, userInput string) (deployment.ClusterInfo, error) {
+func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (deployment.Deployer, deployment.ClusterInfo, error) {
 	h.logger.Info("attempting to identify cluster", zap.String("input", userInput))
+
+	deployer := h.GetDeployer(ctx)
+
 	clusters, err := deployer.ListClusters(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list clusters")
+		return nil, nil, errors.Wrap(err, "failed to list clusters")
 	}
 
 	var identifiedCluster deployment.ClusterInfo
@@ -224,7 +227,7 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, deployer deployment.Dep
 	for _, cluster := range clusters {
 		if strings.HasPrefix(cluster.GetID(), userInput) {
 			if identifiedCluster != nil {
-				return nil, errors.New("multiple clusters matched the specified identifier")
+				return nil, nil, errors.New("multiple clusters matched the specified identifier")
 			}
 
 			identifiedCluster = cluster
@@ -232,8 +235,8 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, deployer deployment.Dep
 	}
 
 	if identifiedCluster == nil {
-		return nil, errors.New("no clusters matched the specified identifier")
+		return nil, nil, errors.New("no clusters matched the specified identifier")
 	}
 
-	return identifiedCluster, nil
+	return deployer, identifiedCluster, nil
 }

@@ -16,9 +16,8 @@ var connstrCmd = &cobra.Command{
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
-		deployer := helper.GetDeployer(ctx)
 
-		cluster, err := helper.IdentifyCluster(ctx, deployer, args[0])
+		deployer, cluster, err := helper.IdentifyCluster(ctx, args[0])
 		if err != nil {
 			logger.Fatal("failed to identify cluster", zap.Error(err))
 		}
