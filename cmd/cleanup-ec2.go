@@ -16,23 +16,13 @@ var cleanupEc2Cmd = &cobra.Command{
 		awsCreds := helper.GetAWSCredentials(ctx)
 		config := helper.GetConfig(ctx)
 
-		regionFlag, _ := cmd.Flags().GetString("def")
-
-		var region string
-		if region == "" {
-			if regionFlag != "" {
-				region = regionFlag
-			}
-		}
-		if region == "" {
-			if config.AWS != nil {
-				region = config.AWS.DefaultRegion
-			}
+		if config.AWS == nil {
+			logger.Fatal("cannot cleanup ec2 without aws configuration")
 		}
 
 		peCtrl := awscontrol.PrivateEndpointsController{
 			Logger:      logger,
-			Region:      region,
+			Region:      config.AWS.Region,
 			Credentials: awsCreds,
 		}
 
@@ -45,6 +35,4 @@ var cleanupEc2Cmd = &cobra.Command{
 
 func init() {
 	cleanupCmd.AddCommand(cleanupEc2Cmd)
-
-	cleanupEc2Cmd.Flags().String("region", "", "The region within EC2 to clean up.")
 }

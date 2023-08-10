@@ -141,15 +141,15 @@ func (h *CmdHelper) GetCloudDeployer(ctx context.Context) *clouddeploy.Deployer 
 	defaultRegion := ""
 	if defaultCloud == "aws" {
 		if config.AWS != nil {
-			defaultRegion = config.AWS.DefaultRegion
+			defaultRegion = config.AWS.Region
 		}
 	} else if defaultCloud == "gcp" {
 		if config.GCP != nil {
-			defaultRegion = config.GCP.DefaultRegion
+			defaultRegion = config.GCP.Region
 		}
 	} else if defaultCloud == "azure" {
 		if config.Azure != nil {
-			defaultRegion = config.Azure.DefaultRegion
+			defaultRegion = config.Azure.Region
 		}
 	}
 

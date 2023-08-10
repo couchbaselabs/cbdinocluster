@@ -441,7 +441,7 @@ var initCmd = &cobra.Command{
 						FromEnvironment: false,
 						AccessKey:       "",
 						SecretKey:       "",
-						DefaultRegion:   "",
+						Region:          "",
 					}
 
 					awsUseEnv := false
@@ -544,14 +544,14 @@ var initCmd = &cobra.Command{
 							FromEnvironment: true,
 							AccessKey:       "",
 							SecretKey:       "",
-							DefaultRegion:   "",
+							Region:          "",
 						}
 					} else {
 						curConfig.AWS = &cbdcconfig.Config_AWS{
 							FromEnvironment: false,
 							AccessKey:       awsToken,
 							SecretKey:       awsSecret,
-							DefaultRegion:   "us-west-2",
+							Region:          "us-west-2",
 						}
 					}
 

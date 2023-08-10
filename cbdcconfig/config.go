@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const Version = 2
+const Version = 3
 
 type Config struct {
 	Docker  *Config_Docker  `yaml:"docker"`
@@ -39,15 +39,21 @@ type Config_AWS struct {
 	FromEnvironment bool   `yaml:"from-env"`
 	AccessKey       string `yaml:"access-key"`
 	SecretKey       string `yaml:"secret-key"`
-	DefaultRegion   string `yaml:"default-region"`
+	Region          string `yaml:"region"`
+
+	V2DefaultRegion string `yaml:"default-region"`
 }
 
 type Config_GCP struct {
-	DefaultRegion string `yaml:"default-region"`
+	Region string `yaml:"region"`
+
+	V2DefaultRegion string `yaml:"default-region"`
 }
 
 type Config_Azure struct {
-	DefaultRegion string `yaml:"default-region"`
+	Region string `yaml:"region"`
+
+	V2DefaultRegion string `yaml:"default-region"`
 }
 
 type Config_Capella struct {
@@ -71,9 +77,21 @@ func Upgrade(config *Config) *Config {
 		config.DefaultCloud = "aws"
 		config.DefaultDeployer = "docker"
 		if config.AWS != nil {
-			config.AWS.DefaultRegion = "us-west-2"
+			config.AWS.V2DefaultRegion = "us-west-2"
 		}
 		config.Version = 2
+	}
+
+	if config.Version < 3 {
+		if config.AWS != nil {
+			config.AWS.Region = config.AWS.V2DefaultRegion
+		}
+		if config.GCP != nil {
+			config.GCP.Region = config.GCP.V2DefaultRegion
+		}
+		if config.Azure != nil {
+			config.Azure.Region = config.Azure.V2DefaultRegion
+		}
 	}
 
 	return config
