@@ -78,7 +78,13 @@ func (h *CmdHelper) GetConfig(ctx context.Context) *cbdcconfig.Config {
 }
 
 func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
-	return h.GetCloudDeployer(ctx)
+	config := h.GetConfig(ctx)
+
+	if config.DefaultDeployer == "cloud" {
+		return h.GetCloudDeployer(ctx)
+	} else {
+		return h.GetDockerDeployer(ctx)
+	}
 }
 
 func (h *CmdHelper) GetDockerDeployer(ctx context.Context) *dockerdeploy.Deployer {
