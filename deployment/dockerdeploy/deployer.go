@@ -393,7 +393,7 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	var connstrAddrs []string
-	var mgmtAddrs []string
+	var mgmtAddr string
 	for _, node := range thisCluster.Nodes {
 		kvPort := 11210
 		mgmtPort := 8091
@@ -404,11 +404,11 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 			connstrAddrs = append(connstrAddrs, fmt.Sprintf("%s:%d", node.IPAddress, 11210))
 		}
 
-		mgmtAddrs = append(mgmtAddrs, fmt.Sprintf("%s:%d", node.IPAddress, mgmtPort))
+		mgmtAddr = fmt.Sprintf("%s:%d", node.IPAddress, mgmtPort)
 	}
 
 	connStr := fmt.Sprintf("couchbase://%s\n", strings.Join(connstrAddrs, ","))
-	mgmt := fmt.Sprintf("http://%s\n", strings.Join(mgmtAddrs, ","))
+	mgmt := fmt.Sprintf("http://%s\n", mgmtAddr)
 
 	return &deployment.ConnectInfo{
 		ConnStr: connStr,

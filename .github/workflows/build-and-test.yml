@@ -54,6 +54,7 @@ jobs:
         run: |
           ./cbdinocluster-linux connstr $CBDC_ID
           CBDC_MGMT=$(./cbdinocluster-linux mgmt $CBDC_ID)
+          echo $CBDC_MGMT
           curl $CBDC_MGMT
       - name: Cleanup Cluster
         if: always()
