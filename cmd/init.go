@@ -368,6 +368,8 @@ var initCmd = &cobra.Command{
 					}
 					if githubToken == "" {
 						if !autoConfig {
+							fmt.Printf("To access internal server builds hosted on the GitHub Package Registry,\n")
+							fmt.Printf("please provide a GitHub personal access token with 'read:packages' scope.\n")
 							fmt.Printf("What GitHub token should we use? []: ")
 							githubToken = readString("")
 						}
