@@ -145,7 +145,7 @@ var initCmd = &cobra.Command{
 						if hasColima {
 							useColima := true
 							if !autoConfig {
-								fmt.Printf("It looks like your using Colima!\n")
+								fmt.Printf("It looks like you're using Colima!\n")
 								fmt.Printf("Would you like to use Colima for containers? [Y/n]: ")
 								useColima = readBool(true)
 							}
@@ -255,7 +255,7 @@ var initCmd = &cobra.Command{
 						if isUsingColima && !hasMacVlan0 {
 							autoCreateNetwork := true
 							if !autoConfig {
-								fmt.Printf("It looks like your using Colima...")
+								fmt.Printf("It looks like you're using Colima...")
 								fmt.Printf("Did you want to create and use the macvlan0 network? [Y/n]: ")
 								autoCreateNetwork = readBool(true)
 							}
