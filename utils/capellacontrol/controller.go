@@ -499,6 +499,22 @@ func (c *Controller) UpdateClusterMeta(
 	return nil
 }
 
+type UpdateClusterSpecsRequest CreateClusterRequest_Spec
+
+func (c *Controller) UpdateClusterSpecs(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *UpdateClusterSpecsRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/specs", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type ClusterJobInfo struct {
 	JobType              string    `json:"jobType"`
 	ID                   string    `json:"id"`
