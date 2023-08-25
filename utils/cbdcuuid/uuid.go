@@ -27,7 +27,7 @@ func Parse(str string) (UUID, error) {
 		copy(uuid[:], parsedUuid)
 		return uuid, nil
 	} else if len(str) == 26 {
-		parsedUuid, err := base32.HexEncoding.WithPadding(base32.NoPadding).DecodeString(str)
+		parsedUuid, err := base32.HexEncoding.WithPadding(base32.NoPadding).DecodeString(strings.ToUpper(str))
 		if err != nil {
 			return UUID{}, errors.Wrap(err, "failed to parse uuid")
 		}
