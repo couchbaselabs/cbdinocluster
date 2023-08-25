@@ -265,15 +265,19 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 	}
 
+	deploymentProvider := ""
 	clusterProvider := ""
 	nodeProvider := ""
 	if cloudProvider == "aws" {
+		deploymentProvider = "aws"
 		clusterProvider = "aws"
 		nodeProvider = "aws"
 	} else if cloudProvider == "gcp" {
+		deploymentProvider = "gcp"
 		clusterProvider = "gcp"
 		nodeProvider = "gcp"
 	} else if cloudProvider == "azure" {
+		deploymentProvider = "azure"
 		clusterProvider = "hostedAzure"
 		nodeProvider = "azure"
 	} else {
@@ -283,7 +287,7 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	p.logger.Debug("fetching deployment options project")
 
 	deploymentOpts, err := p.client.GetProviderDeploymentOptions(ctx, p.tenantID, &capellacontrol.GetProviderDeploymentOptionsRequest{
-		Provider: clusterProvider,
+		Provider: deploymentProvider,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get deployment options")
@@ -319,7 +323,7 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 			diskSize = 0
 			diskIops = 0
 		} else if cloudProvider == "azure" {
-			instanceType = "m5.xlarge"
+			instanceType = "Standard_D4s_v5"
 			diskType = "P6"
 			diskSize = 64
 			diskIops = 240
@@ -342,6 +346,11 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 			return nil, errors.Wrap(err, "failed to generate ns server services list")
 		}
 
+		diskAutoScalingEnabled := true
+		if clusterVersion == "7.1" {
+			diskAutoScalingEnabled = false
+		}
+
 		specs = append(specs, capellacontrol.CreateClusterRequest_Spec{
 			Compute: instanceType,
 			Count:   nodeGroup.Count,
@@ -351,7 +360,7 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 				Iops:     diskIops,
 			},
 			DiskAutoScaling: capellacontrol.CreateClusterRequest_Spec_DiskScaling{
-				Enabled: true,
+				Enabled: diskAutoScalingEnabled,
 			},
 			Provider: nodeProvider,
 			Services: nsServices,
