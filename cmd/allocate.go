@@ -25,6 +25,7 @@ var allocateCmd = &cobra.Command{
 		defFile, _ := cmd.Flags().GetString("def-file")
 		purpose, _ := cmd.Flags().GetString("purpose")
 		expiry, _ := cmd.Flags().GetDuration("expiry")
+		cloudProvider, _ := cmd.Flags().GetString("cloud-provider")
 
 		var def *clusterdef.Cluster
 
@@ -83,6 +84,12 @@ var allocateCmd = &cobra.Command{
 		if expiry > 0 {
 			def.Expiry = expiry
 		}
+		if cloudProvider != "" {
+			if def.CloudCluster == nil {
+				def.CloudCluster = &clusterdef.CloudCluster{}
+			}
+			def.CloudCluster.CloudProvider = cloudProvider
+		}
 
 		logger.Info("deploying definition", zap.Any("def", def))
 
@@ -102,4 +109,5 @@ func init() {
 	allocateCmd.Flags().String("def-file", "", "The path to a file containing a cluster definition to provision.")
 	allocateCmd.Flags().String("purpose", "", "The purpose for allocating this cluster")
 	allocateCmd.Flags().Duration("expiry", 1*time.Hour, "The time to keep this cluster allocated for")
+	allocateCmd.Flags().String("cloud-provider", "", "The cloud provider to use for this cluster")
 }
