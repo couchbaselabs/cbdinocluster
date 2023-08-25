@@ -7,6 +7,8 @@ import (
 	"os/user"
 	"strings"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
@@ -207,6 +209,19 @@ func (h *CmdHelper) GetAWSCredentials(ctx context.Context) aws.Credentials {
 			SecretAccessKey: cbdcConfig.AWS.SecretKey,
 		}
 	}
+}
+
+func (h *CmdHelper) GetAzureCredentials(ctx context.Context) azcore.TokenCredential {
+	logger := h.GetLogger()
+
+	// TODO(brett19): Use the configuration here...
+
+	creds, err := azidentity.NewDefaultAzureCredential(nil)
+	if err != nil {
+		logger.Fatal("failed to fetch credentials", zap.Error(err))
+	}
+
+	return creds
 }
 
 func (h *CmdHelper) IdentifyCurrentUser() string {

@@ -3,6 +3,8 @@ package cmd
 import (
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -15,10 +17,10 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
-		awsCreds := helper.GetAWSCredentials(ctx)
 
 		shouldAutoConfig, _ := cmd.Flags().GetBool("auto")
 		instanceId, _ := cmd.Flags().GetString("instance-id")
+		vmId, _ := cmd.Flags().GetString("vm-id")
 
 		deployer, cluster, err := helper.IdentifyCluster(ctx, args[0])
 		if err != nil {
@@ -33,28 +35,34 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 		cloudCluster := cluster.(*clouddeploy.ClusterInfo)
 
 		if shouldAutoConfig {
-			if instanceId != "" {
-				logger.Fatal("must not specify both auto and instance-id")
+			if instanceId != "" || vmId != "" {
+				logger.Fatal("must not specify both auto and instance-id/vm-id")
 			}
 
-			liCtrl := awscontrol.LocalInstanceController{
+			siCtrl := cloudinstancecontrol.SelfIdentifyController{
 				Logger: logger,
 			}
 
-			localInstance, err := liCtrl.Identify(ctx)
+			selfIdentity, err := siCtrl.Identify(ctx)
 			if err != nil {
-				logger.Fatal("failed to identify local instance", zap.Error(err))
+				logger.Fatal("failed fetch self identity", zap.Error(err))
 			}
 
-			if localInstance.Region != cloudCluster.Region {
-				logger.Fatal("local instance is not in the same region as the cluster")
+			switch selfIdentity := selfIdentity.(type) {
+			case *awscontrol.LocalInstanceInfo:
+				instanceId = selfIdentity.InstanceID
+			case *azurecontrol.LocalVmInfo:
+				vmId = selfIdentity.VmID
+			default:
+				logger.Fatal("unexpected self-identity type")
 			}
+		}
 
-			instanceId = localInstance.InstanceID
-		} else {
-			if instanceId == "" {
-				logger.Fatal("must specify either auto or instance-id")
-			}
+		if instanceId == "" && vmId == "" {
+			logger.Fatal("must specify either auto or instance-id/vm-id")
+		}
+		if instanceId != "" && vmId != "" {
+			logger.Fatal("must not specify multiple of instance-id,vm-id")
 		}
 
 		pe, err := cloudDeployer.GetPrivateEndpointDetails(ctx, cloudCluster.ClusterID)
@@ -66,29 +74,68 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 			zap.String("service-name", pe.ServiceName),
 			zap.String("private-dns", pe.PrivateDNS))
 
-		peCtrl := awscontrol.PrivateEndpointsController{
-			Logger:      logger,
-			Region:      cloudCluster.Region,
-			Credentials: awsCreds,
-		}
+		if instanceId != "" {
+			awsCreds := helper.GetAWSCredentials(ctx)
 
-		vpceInfo, err := peCtrl.CreateVPCEndpoint(ctx, &awscontrol.CreateVPCEndpointOptions{
-			ClusterID:   cloudCluster.CloudClusterID,
-			ServiceName: pe.ServiceName,
-			InstanceID:  instanceId,
-		})
-		if err != nil {
-			logger.Fatal("failed to create vpc endpoint", zap.Error(err))
-		}
+			peCtrl := awscontrol.PrivateEndpointsController{
+				Logger:      logger,
+				Region:      cloudCluster.Region,
+				Credentials: awsCreds,
+			}
 
-		err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cloudCluster.ClusterID, vpceInfo.EndpointID)
-		if err != nil {
-			logger.Fatal("failed to accept private endpoint link", zap.Error(err))
-		}
+			vpceInfo, err := peCtrl.CreateVPCEndpoint(ctx, &awscontrol.CreateVPCEndpointOptions{
+				ClusterID:   cloudCluster.CloudClusterID,
+				ServiceName: pe.ServiceName,
+				InstanceID:  instanceId,
+			})
+			if err != nil {
+				logger.Fatal("failed to create vpc endpoint", zap.Error(err))
+			}
 
-		err = peCtrl.EnableVPCEndpointPrivateDNS(ctx, vpceInfo.EndpointID)
-		if err != nil {
-			logger.Fatal("failed to enable private dns on link", zap.Error(err))
+			err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cloudCluster.ClusterID, vpceInfo.EndpointID)
+			if err != nil {
+				logger.Fatal("failed to accept private endpoint link", zap.Error(err))
+			}
+
+			err = peCtrl.EnableVPCEndpointPrivateDNS(ctx, &awscontrol.EnableVPCEndpointPrivateDNSOptions{
+				VpceID: vpceInfo.EndpointID,
+			})
+			if err != nil {
+				logger.Fatal("failed to enable private dns on link", zap.Error(err))
+			}
+		} else if vmId != "" {
+			azureCreds := helper.GetAzureCredentials(ctx)
+
+			peCtrl := azurecontrol.PrivateEndpointsController{
+				Logger: logger,
+				Region: cloudCluster.Region,
+				Creds:  azureCreds,
+			}
+
+			peData, err := peCtrl.CreateVPCEndpoint(ctx, &azurecontrol.CreateVPCEndpointOptions{
+				ClusterID:    cloudCluster.ClusterID,
+				ServiceID:    pe.ServiceName,
+				VmResourceID: vmId,
+			})
+			if err != nil {
+				logger.Fatal("failed to create private endpoint", zap.Error(err))
+			}
+
+			err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cloudCluster.ClusterID, peData.PeName)
+			if err != nil {
+				logger.Fatal("failed to accept private endpoint link", zap.Error(err))
+			}
+
+			err = peCtrl.EnableVPCEndpointPrivateDNS(ctx, &azurecontrol.EnableVPCEndpointPrivateDNSOptions{
+				ClusterID:    cloudCluster.ClusterID,
+				PeResourceID: peData.PeResourceID,
+				DnsName:      pe.PrivateDNS,
+			})
+			if err != nil {
+				logger.Fatal("failed to enable private dns", zap.Error(err))
+			}
+		} else {
+			logger.Fatal("unexpectedly missing instance identifier")
 		}
 	},
 }
@@ -96,6 +143,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 func init() {
 	privateEndpointsCmd.AddCommand(privateEndpointsSetupLinkCmd)
 
-	privateEndpointsSetupLinkCmd.Flags().String("instance-id", "", "The instance id to setup the link for")
+	privateEndpointsSetupLinkCmd.Flags().String("instance-id", "", "The AWS instance id to setup the link for")
+	privateEndpointsSetupLinkCmd.Flags().String("vm-id", "", "The Azure virtual machine id to setup the link for")
 	privateEndpointsSetupLinkCmd.Flags().Bool("auto", false, "Attempt to identify the local instance")
 }

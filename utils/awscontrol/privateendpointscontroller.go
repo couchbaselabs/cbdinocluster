@@ -138,18 +138,22 @@ func (c *PrivateEndpointsController) WaitForVPCEndpointStatus(ctx context.Contex
 	return nil
 }
 
-func (c *PrivateEndpointsController) EnableVPCEndpointPrivateDNS(ctx context.Context, vpceID string) error {
+type EnableVPCEndpointPrivateDNSOptions struct {
+	VpceID string
+}
+
+func (c *PrivateEndpointsController) EnableVPCEndpointPrivateDNS(ctx context.Context, opts *EnableVPCEndpointPrivateDNSOptions) error {
 	ec2Client := c.ec2Client()
 
 	_, err := ec2Client.ModifyVpcEndpoint(ctx, &ec2.ModifyVpcEndpointInput{
-		VpcEndpointId:     aws.String(vpceID),
+		VpcEndpointId:     aws.String(opts.VpceID),
 		PrivateDnsEnabled: aws.Bool(true),
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to modify vpc endpoint")
 	}
 
-	err = c.WaitForVPCEndpointStatus(ctx, vpceID, "available")
+	err = c.WaitForVPCEndpointStatus(ctx, opts.VpceID, "available")
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for available state")
 	}
@@ -157,7 +161,9 @@ func (c *PrivateEndpointsController) EnableVPCEndpointPrivateDNS(ctx context.Con
 	return nil
 }
 
-func (c *PrivateEndpointsController) Cleanup(ctx context.Context) error {
+// cleanupVpcEndpoints lists all the vpc endpoints in the account and then removes any
+// that are tagged with Cbdc2ClusterId and which are rejected or failed.
+func (c *PrivateEndpointsController) cleanupVpcEndpoints(ctx context.Context) error {
 	ec2Client := c.ec2Client()
 
 	endpoints, err := ec2Client.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{})
@@ -191,6 +197,8 @@ func (c *PrivateEndpointsController) Cleanup(ctx context.Context) error {
 	c.Logger.Info("found vpc endpoints to remove", zap.Strings("endpoint-ids", endpointIdsToRemove))
 
 	if len(endpointIdsToRemove) > 0 {
+		c.Logger.Info("removing vpc endpoints", zap.Strings("endpoint-ids", endpointIdsToRemove))
+
 		_, err = ec2Client.DeleteVpcEndpoints(ctx, &ec2.DeleteVpcEndpointsInput{
 			VpcEndpointIds: endpointIdsToRemove,
 		})
@@ -199,6 +207,15 @@ func (c *PrivateEndpointsController) Cleanup(ctx context.Context) error {
 		}
 
 		c.Logger.Info("removed endpoints")
+	}
+
+	return nil
+}
+
+func (c *PrivateEndpointsController) Cleanup(ctx context.Context) error {
+	err := c.cleanupVpcEndpoints(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to cleanup vpc endpoints")
 	}
 
 	return nil

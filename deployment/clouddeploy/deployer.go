@@ -599,25 +599,45 @@ func (p *Deployer) GetPrivateEndpointDetails(ctx context.Context, clusterID stri
 	}, nil
 }
 
-func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID string, vpceID string) error {
+func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID string, endpointID string) error {
 	clusterInfo, err := p.getCluster(ctx, clusterID)
 	if err != nil {
 		return err
 	}
 
-	_, err = p.mgr.WaitForPrivateEndpointLink(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, vpceID)
+	// in some deployment scenarios, the endpoint-id that the user has is only the
+	// first part of the id, and the rest of the id comes from somewhere else, so we
+	// list all of the ids, and pick the one that matches.
+	peLinks, err := p.mgr.Client.ListPrivateEndpointLinks(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+	if err != nil {
+		return errors.Wrap(err, "failed to list private endpoint links")
+	}
+
+	fullEndpointId := ""
+	for _, peLink := range peLinks.Data {
+		if strings.Contains(peLink.EndpointID, endpointID) {
+			fullEndpointId = peLink.EndpointID
+			break
+		}
+	}
+
+	if fullEndpointId == "" {
+		return fmt.Errorf("failed to identify endpoint '%s'", endpointID)
+	}
+
+	_, err = p.mgr.WaitForPrivateEndpointLink(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, fullEndpointId)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for private endpoint link")
 	}
 
 	err = p.client.AcceptPrivateEndpointLink(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PrivateEndpointAcceptLinkRequest{
-		EndpointID: vpceID,
+		EndpointID: fullEndpointId,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to accept private endpoint link")
 	}
 
-	err = p.mgr.WaitForPrivateEndpointLinkState(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, vpceID, "linked")
+	err = p.mgr.WaitForPrivateEndpointLinkState(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, fullEndpointId, "linked")
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for private endpoint link to establish")
 	}
