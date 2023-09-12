@@ -65,11 +65,7 @@ func (h *CmdHelper) GetConfig(ctx context.Context) *cbdcconfig.Config {
 			}
 		}
 
-		if curConfig == nil ||
-			curConfig.Docker == nil ||
-			curConfig.GitHub == nil ||
-			curConfig.AWS == nil ||
-			curConfig.Capella == nil {
+		if curConfig == nil {
 			logger.Fatal("you must run the `init` command first")
 		}
 
@@ -145,18 +141,18 @@ func (h *CmdHelper) GetCloudDeployer(ctx context.Context) *clouddeploy.Deployer 
 		logger.Fatal("failed to create controller", zap.Error(err))
 	}
 
-	defaultCloud := config.DefaultCloud
+	defaultCloud := config.Capella.DefaultCloud
 	defaultRegion := ""
 	if defaultCloud == "aws" {
-		if config.AWS != nil {
+		if config.AWS.Region != "" {
 			defaultRegion = config.AWS.Region
 		}
 	} else if defaultCloud == "gcp" {
-		if config.GCP != nil {
+		if config.GCP.Region != "" {
 			defaultRegion = config.GCP.Region
 		}
 	} else if defaultCloud == "azure" {
-		if config.Azure != nil {
+		if config.Azure.Region != "" {
 			defaultRegion = config.Azure.Region
 		}
 	}
@@ -187,38 +183,34 @@ func (h *CmdHelper) GetAWSCredentials(ctx context.Context) aws.Credentials {
 	logger := h.GetLogger()
 	cbdcConfig := h.GetConfig(ctx)
 
-	if cbdcConfig.AWS.FromEnvironment {
-		cfg, err := config.LoadDefaultConfig(ctx)
-		if err != nil {
-			logger.Fatal("failed to load AWS config", zap.Error(err))
-		}
-
-		creds, err := cfg.Credentials.Retrieve(ctx)
-		if err != nil {
-			logger.Fatal("failed to retreive AWS credentials", zap.Error(err))
-		}
-
-		return creds
-	} else {
-		if cbdcConfig.AWS.AccessKey == "" || cbdcConfig.AWS.SecretKey == "" {
-			logger.Fatal("cannot use AWS without credentials")
-		}
-
-		return aws.Credentials{
-			AccessKeyID:     cbdcConfig.AWS.AccessKey,
-			SecretAccessKey: cbdcConfig.AWS.SecretKey,
-		}
+	if !cbdcConfig.AWS.Enabled.Value() {
+		logger.Fatal("cannot use aws when configuration is disabled")
 	}
+
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		logger.Fatal("failed to load AWS config", zap.Error(err))
+	}
+
+	creds, err := cfg.Credentials.Retrieve(ctx)
+	if err != nil {
+		logger.Fatal("failed to retreive AWS credentials", zap.Error(err))
+	}
+
+	return creds
 }
 
 func (h *CmdHelper) GetAzureCredentials(ctx context.Context) azcore.TokenCredential {
 	logger := h.GetLogger()
+	cbdcConfig := h.GetConfig(ctx)
 
-	// TODO(brett19): Use the configuration here...
+	if !cbdcConfig.Azure.Enabled.Value() {
+		logger.Fatal("cannot use azure when configuration is disabled")
+	}
 
 	creds, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
-		logger.Fatal("failed to fetch credentials", zap.Error(err))
+		logger.Fatal("failed to fetch azure credentials", zap.Error(err))
 	}
 
 	return creds

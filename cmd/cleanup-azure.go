@@ -16,13 +16,13 @@ var cleanupAzureCmd = &cobra.Command{
 		azureCreds := helper.GetAzureCredentials(ctx)
 		config := helper.GetConfig(ctx)
 
-		if config.Azure == nil {
-			logger.Fatal("cannot cleanup ec2 without aws configuration")
+		if config.Azure.Region == "" {
+			logger.Fatal("cannot cleanup azure without azure configuration")
 		}
 
 		peCtrl := azurecontrol.PrivateEndpointsController{
 			Logger: logger,
-			Region: config.AWS.Region,
+			Region: config.Azure.Region,
 			Creds:  azureCreds,
 			SubID:  "5ef34701-b858-4231-a9c1-103e4604ad8f",
 			RgName: "sdkqe-github-runners",

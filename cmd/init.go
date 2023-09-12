@@ -5,17 +5,20 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"runtime"
 	"strings"
+	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
+	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/google/go-github/v53/github"
 	"github.com/spf13/cobra"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 )
 
@@ -37,7 +40,18 @@ var initCmd = &cobra.Command{
 			curConfig = &cbdcconfig.Config{}
 		}
 
-		readString := func(defaultValue string) string {
+		readString := func(q string, defaultValue string, sensitive bool) string {
+			printableValue := defaultValue
+			if sensitive {
+				printableValue = strings.Repeat("*", len(defaultValue))
+			}
+			fmt.Printf("%s [%s]: ", q, printableValue)
+
+			if autoConfig {
+				fmt.Printf("\n")
+				return defaultValue
+			}
+
 			var str string
 			fmt.Scanf("%s", &str)
 			str = strings.TrimSpace(str)
@@ -47,9 +61,23 @@ var initCmd = &cobra.Command{
 			return str
 		}
 
-		readBool := func(defaultValue bool) bool {
+		readBool := func(q string, defaultValue bool) bool {
 			for {
-				boolStr := strings.ToLower(readString(""))
+				if defaultValue {
+					fmt.Printf("%s [Y/n]: ", q)
+				} else {
+					fmt.Printf("%s [y/N]: ", q)
+				}
+
+				if autoConfig {
+					fmt.Printf("\n")
+					return defaultValue
+				}
+
+				var str string
+				fmt.Scanf("%s", &str)
+				str = strings.TrimSpace(str)
+				boolStr := strings.ToLower(str)
 				if boolStr == "" {
 					return defaultValue
 				} else if boolStr == "y" || boolStr == "yes" {
@@ -58,7 +86,7 @@ var initCmd = &cobra.Command{
 					return false
 				}
 
-				fmt.Printf("Invalid entry, try again: ")
+				fmt.Printf("Invalid entry, try again...\n")
 			}
 		}
 
@@ -83,613 +111,749 @@ var initCmd = &cobra.Command{
 			}
 		}
 
-		printDockerConfig := func() {
-			fmt.Printf("  Host: %s\n", curConfig.Docker.Host)
-			fmt.Printf("  Network: %s\n", curConfig.Docker.Network)
-			fmt.Printf("  Forward Only: %t\n", curConfig.Docker.ForwardOnly)
+		getColimaDockerHost := func() string {
+			colimaSocketPath := path.Join(userHomePath, "/.colima/default/docker.sock")
+			fmt.Printf("Checking for Colima installation at `%s`... ", colimaSocketPath)
+			hasColima := checkFileExists(colimaSocketPath)
+			if !hasColima {
+				fmt.Printf("not found.\n")
+				return ""
+			}
+
+			fmt.Printf("found.\n")
+			return "unix://" + colimaSocketPath
+		}
+
+		getDockerDockerHost := func() string {
+			dockerSocketPath := "/var/run/docker.sock"
+			fmt.Printf("Checking for Docker installation at `%s`... ", dockerSocketPath)
+			hasDocker := checkFileExists(dockerSocketPath)
+			if !hasDocker {
+				fmt.Printf("not found.\n")
+				return ""
+			}
+
+			fmt.Printf("found.\n")
+			return "unix://" + dockerSocketPath
+		}
+
+		getGitHubUser := func(token string) string {
+			ts := oauth2.StaticTokenSource(
+				&oauth2.Token{AccessToken: token},
+			)
+			tc := oauth2.NewClient(ctx, ts)
+
+			githubClient := github.NewClient(tc)
+			user, _, err := githubClient.Users.Get(ctx, "")
+			if err != nil {
+				fmt.Printf("Failed to fetch user details with provided token:\n  %s\n", err)
+				return ""
+			}
+
+			fmt.Printf("Found user details using token: %s\n", *user.Login)
+			return *user.Login
+		}
+
+		identifySelf := func() (interface{}, error) {
+			logger, _ := zap.NewDevelopment()
+			siCtrl := cloudinstancecontrol.SelfIdentifyController{
+				Logger: logger,
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			ident, err := siCtrl.Identify(ctx)
+			cancel()
+
+			return ident, err
+		}
+
+		fmt.Printf("Attempting to self-identify as cloud instance\n")
+		cloudIdent, err := identifySelf()
+		if err != nil {
+			fmt.Printf("Failed... %s\n", err)
+		} else {
+			fmt.Printf("Success! %+v\n", cloudIdent)
+		}
+
+		awsCloudIdent, _ := cloudIdent.(*awscontrol.LocalInstanceInfo)
+		azureCloudIdent, _ := cloudIdent.(*azurecontrol.LocalVmInfo)
+
+		printGitHubConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.GitHub.Enabled.Value())
+			fmt.Printf("  Token: %s\n", strings.Repeat("*", len(curConfig.GitHub.Token)))
+			fmt.Printf("  User: %s\n", curConfig.GitHub.User)
 		}
 		{
+			fmt.Printf("-- GitHub Configuration\n")
+			fmt.Printf("This is used to access non-public server builds on the GitHub Package Registry,\n")
+			fmt.Printf("the personal access token must allow the 'read:packages' scope.\n")
+
+			flagDisableGithub, _ := cmd.Flags().GetBool("disable-github")
+			flagGithubToken, _ := cmd.Flags().GetString("github-token")
+			flagGithubUser, _ := cmd.Flags().GetString("github-user")
+			envGithubToken := os.Getenv("GITHUB_TOKEN")
+			envGithubActor := os.Getenv("GITHUB_ACTOR")
+
+			githubEnabled := true
+			githubToken := ""
+			githubUser := ""
+
+			for {
+				if flagDisableGithub {
+					fmt.Printf("GitHub disabled via flags.\n")
+					githubEnabled = false
+					break
+				}
+
+				githubEnabled = readBool(
+					"Would you like to configure Github?",
+					githubEnabled)
+				if !githubEnabled {
+					break
+				}
+
+				if flagGithubToken != "" {
+					fmt.Printf("GitHub token specified via flags:\n")
+					githubToken = flagGithubToken
+				} else {
+					githubToken = curConfig.GitHub.Token
+					if githubToken == "" && envGithubToken != "" {
+						fmt.Printf("Defaulting to GitHub token from environment.\n")
+						githubToken = envGithubToken
+					}
+
+					githubToken = readString(
+						"What GitHub token should we use?",
+						githubToken, true)
+				}
+				if githubToken == "" {
+					fmt.Printf("A GitHub token is required.\n")
+					githubEnabled = false
+					continue
+				}
+
+				if flagGithubUser != "" {
+					fmt.Printf("GitHub user specified via flags: %s\n", githubUser)
+					githubUser = flagGithubUser
+				} else {
+					fmt.Printf("Fetching GitHub user using token...\n")
+					fetchedUser := getGitHubUser(githubToken)
+
+					githubUser = curConfig.GitHub.User
+					if githubUser == "" && envGithubActor != "" {
+						fmt.Printf("Defaulting to GitHub user from environment.\n")
+						githubUser = envGithubActor
+					}
+					if githubUser == "" && fetchedUser != "" {
+						fmt.Printf("Defaulting to GitHub user fetched from API.\n")
+						githubUser = fetchedUser
+					}
+
+					githubUser = readString(
+						"What GitHub user should we use?",
+						githubUser, false)
+				}
+				if githubUser == "" {
+					fmt.Printf("The GitHub user name is required.\n")
+					githubEnabled = false
+					continue
+				}
+
+				break
+			}
+
+			curConfig.GitHub.Enabled.Set(githubEnabled)
+			curConfig.GitHub.Token = githubToken
+			curConfig.GitHub.User = githubUser
+			saveConfig()
+		}
+
+		printDockerConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.Docker.Enabled.Value())
+			fmt.Printf("  Host: %s\n", curConfig.Docker.Host)
+			fmt.Printf("  Network: %s\n", curConfig.Docker.Network)
+			fmt.Printf("  Forward Only: %t\n", curConfig.Docker.ForwardOnly.Value())
+		}
+		{
+			fmt.Printf("-- Docker Configuration\n")
+
+			flagDisableDocker, _ := cmd.Flags().GetBool("disable-docker")
 			flagDockerHost, _ := cmd.Flags().GetString("docker-host")
 			flagDockerNetwork, _ := cmd.Flags().GetString("docker-network")
 			envDockerHost := os.Getenv("DOCKER_HOST")
-			if flagDockerHost != "" || flagDockerNetwork != "" {
-				curConfig.Docker = nil
-			}
-			if curConfig.Docker != nil {
-				if autoConfig {
-					// leave the original configuration
-				} else {
-					fmt.Printf("Found previous docker configuration:\n")
-					printDockerConfig()
-					fmt.Printf("Would you like to keep these settings? [Y/n]: ")
-					if !readBool(true) {
-						curConfig.Docker = nil
-					}
+
+			dockerEnabled := true
+			dockerHost := curConfig.Docker.Host
+			dockerNetwork := curConfig.Docker.Network
+
+			for {
+				if flagDisableDocker {
+					fmt.Printf("Docker disabled via flags.\n")
+					dockerEnabled = false
+					break
 				}
-			}
-			if curConfig.Docker == nil {
-				for {
-					curConfig.Docker = &cbdcconfig.Config_Docker{
-						Host:        "",
-						Network:     "",
-						ForwardOnly: true,
-					}
 
-					dockerHost := ""
-					isUsingColima := false
-					if dockerHost == "" {
-						if flagDockerHost != "" {
-							fmt.Printf("Using flag as container engine\n")
-							dockerHost = flagDockerHost
-						}
-					}
-					if dockerHost == "" {
-						if envDockerHost != "" {
-							useEnvDocker := true
-							if !autoConfig {
-								fmt.Printf("It looks like $DOCKER_HOST was defined:\n")
-								fmt.Printf("  DOCKER_HOST: %s\n", envDockerHost)
-								fmt.Printf("Would you like to use this for containers? [Y/n]: ")
-								useEnvDocker = readBool(true)
-								fmt.Printf("Using $DOCKER_HOST as container engine\n")
-							}
-							if useEnvDocker {
-								dockerHost = envDockerHost
-							}
-						}
-					}
-					if dockerHost == "" {
-						colimaSocketPath := path.Join(userHomePath, "/.colima/default/docker.sock")
-						hasColima := checkFileExists(colimaSocketPath)
+				dockerEnabled = readBool(
+					"Would you like to configure Docker Deployments?",
+					dockerEnabled)
+				if !dockerEnabled {
+					break
+				}
 
-						if hasColima {
-							useColima := true
-							if !autoConfig {
-								fmt.Printf("It looks like you're using Colima!\n")
-								fmt.Printf("Would you like to use Colima for containers? [Y/n]: ")
-								useColima = readBool(true)
-							}
-							if useColima {
-								fmt.Printf("Using colima as container engine\n")
-								dockerHost = "unix://" + colimaSocketPath
-								isUsingColima = true
-							}
-						}
-					}
-					if dockerHost == "" {
-						dockerSocketPath := "/var/run/docker.sock"
-						hasDocker := checkFileExists(dockerSocketPath)
-
-						if hasDocker {
-							useDocker := true
-							if !autoConfig {
-								fmt.Printf("It looks like you're using Docker!\n")
-								fmt.Printf("Would you like to use Docker for containers? [Y/n]: ")
-								useDocker = readBool(true)
-							}
-							if useDocker {
-								fmt.Printf("Using docker as container engine\n")
-								dockerHost = "unix://" + dockerSocketPath
-							}
-						}
-					}
-					if dockerHost == "" {
-						if !autoConfig {
-							fmt.Printf("We failed to auto-detect a container engine...\n")
-							fmt.Printf("What docker host should we use? []: ")
-							dockerHost = readString("")
-						}
-					}
+				if flagDockerHost != "" {
+					fmt.Printf("Docker host specified via flags:\n  %s\n", flagDockerHost)
+					dockerHost = flagDockerHost
+				} else {
+					colimaDockerHost := getColimaDockerHost()
+					dockerDockerHost := getDockerDockerHost()
 
 					if dockerHost == "" {
-						fmt.Printf("Docker support disabled.\n")
-						break
+						fmt.Printf("Defaulting to docker host from environment.\n")
+						dockerHost = envDockerHost
+					}
+					if dockerHost == "" && colimaDockerHost != "" {
+						fmt.Printf("Defaulting to docker host from detected colima.\n")
+						dockerHost = colimaDockerHost
+					}
+					if dockerHost == "" && dockerDockerHost != "" {
+						fmt.Printf("Defaulting to docker host from detected docker.\n")
+						dockerHost = dockerDockerHost
 					}
 
-					fmt.Printf("Pinging the docker host to confirm it works...\n")
-					dockerCli, err := client.NewClientWithOpts(
-						client.WithHost(dockerHost),
-						client.WithAPIVersionNegotiation(),
-					)
-					if err != nil {
-						fmt.Printf("Failed to setup docker client:\n  %s\n", err)
-						if autoConfig {
-							fmt.Printf("Proceeding without docker due to auto mode...\n")
-							break
-						} else {
-							fmt.Printf("Let's try to set up docker again...\n")
-							continue
-						}
-					}
+					dockerHost = readString(
+						"What docker host should we use?",
+						dockerHost, false)
+				}
+				if dockerHost == "" {
+					fmt.Printf("A docker host to use is required...\n")
+					dockerEnabled = false
+					continue
+				}
 
-					_, err = dockerCli.Ping(ctx)
-					if err != nil {
-						fmt.Printf("Failed to ping docker:\n  %s\n", err)
-						if autoConfig {
-							fmt.Printf("Proceeding without docker due to auto mode...\n")
-							break
-						} else {
-							fmt.Printf("Let's try to set up docker again...\n")
-							continue
-						}
-					}
+				fmt.Printf("Pinging the docker host to confirm it works...\n")
+				dockerCli, err := client.NewClientWithOpts(
+					client.WithHost(dockerHost),
+					client.WithAPIVersionNegotiation(),
+				)
+				if err != nil {
+					fmt.Printf("Failed to setup docker client:\n  %s\n", err)
+					dockerEnabled = false
+					continue
+				}
 
-					fmt.Printf("Success!\n")
+				_, err = dockerCli.Ping(ctx)
+				if err != nil {
+					fmt.Printf("Failed to ping docker:\n  %s\n", err)
+					dockerEnabled = false
+					continue
+				}
 
-					// Determine if we have a macvlan0 already existing
-					hasMacVlan0 := false
+				fmt.Printf("Success!\n")
+
+				if flagDockerNetwork != "" {
+					fmt.Printf("Docker network specified via flags:\n  %s\n", flagDockerNetwork)
+					dockerNetwork = flagDockerNetwork
+				} else {
+					fmt.Printf("Listing docker networks:\n")
 					networks, _ := dockerCli.NetworkList(ctx, types.NetworkListOptions{})
+					for _, network := range networks {
+						fmt.Printf("  %s\n", network.Name)
+					}
+
+					hasMacVlan0 := false
 					for _, network := range networks {
 						if network.Name == "macvlan0" {
 							hasMacVlan0 = true
 						}
 					}
 
-					// Mark if we need to use an alternate network in order to support multiple-containers
-					needsAltNetwork := false
-					if runtime.GOOS == "darwin" {
-						needsAltNetwork = true
-					} else if runtime.GOOS == "windows" {
-						needsAltNetwork = true
-					}
+					if hasMacVlan0 {
+						fmt.Printf("Found a macvlan0 network, this is probably the one you want to use...\n")
+					} else {
+						var shouldCreateMacVlan0 bool
+						if strings.Contains(dockerHost, "colima") {
+							fmt.Printf("This appears to be colima, so auto-suggesting macvlan0 network.\n")
+							shouldCreateMacVlan0 = true
+						} else {
+							fmt.Printf("This does not appear to be colima, so not auto-suggesting macvlan0 network.\n")
+							shouldCreateMacVlan0 = false
+						}
 
-					dockerNetwork := ""
-					dockerForwardOnly := true
+						shouldCreateMacVlan0 = readBool("Should we auto-create a colima macvlan0 network?", shouldCreateMacVlan0)
+						if shouldCreateMacVlan0 {
+							fmt.Printf("Creating macvlan0 network.\n")
+							_, err := dockerCli.NetworkCreate(ctx, "macvlan0", types.NetworkCreate{
+								Driver: "macvlan",
+								IPAM: &network.IPAM{
+									Driver: "default",
+									Config: []network.IPAMConfig{
+										{
+											Subnet:  "192.168.106.0/24",
+											IPRange: "192.168.106.128/25",
+											Gateway: "192.168.106.1",
+										},
+									},
+								},
+								Options: map[string]string{
+									"parent": "col0",
+								},
+							})
+							if err != nil {
+								fmt.Printf("Looks like something went wrong creating that network:\n%s\n", err)
+							} else {
+								fmt.Printf("Autocreation of the network succeeded!\n")
+								hasMacVlan0 = true
+							}
+						}
+					}
 
 					if dockerNetwork == "" {
 						if hasMacVlan0 {
-							useMacVlan0 := true
-							if !autoConfig {
-								fmt.Printf("We found a macvlan0 network, which is probably the correct one to use.\n")
-								fmt.Printf("Did you want to use the macvlan0 network? [Y/n]: ")
-								useMacVlan0 = readBool(true)
-							}
-							if useMacVlan0 {
-								fmt.Printf("Using macvlan0 network.\n")
-								dockerNetwork = "macvlan0"
-								dockerForwardOnly = false
-							}
+							dockerNetwork = "macvlan0"
 						}
 					}
 					if dockerNetwork == "" {
-						if isUsingColima && !hasMacVlan0 {
-							autoCreateNetwork := true
-							if !autoConfig {
-								fmt.Printf("It looks like you're using Colima...")
-								fmt.Printf("Did you want to create and use the macvlan0 network? [Y/n]: ")
-								autoCreateNetwork = readBool(true)
-							}
-							if autoCreateNetwork {
-								fmt.Printf("Creating macvlan0 network.\n")
-								_, err := dockerCli.NetworkCreate(ctx, "macvlan0", types.NetworkCreate{
-									Driver: "macvlan",
-									IPAM: &network.IPAM{
-										Driver: "default",
-										Config: []network.IPAMConfig{
-											{
-												Subnet:  "192.168.106.0/24",
-												IPRange: "192.168.106.128/25",
-												Gateway: "192.168.106.1",
-											},
-										},
-									},
-									Options: map[string]string{
-										"parent": "col0",
-									},
-								})
-								if err != nil {
-									fmt.Printf("Looks like something went wrong creating that network:\n%s\n", err)
-								} else {
-									dockerNetwork = "macvlan0"
-									dockerForwardOnly = false
-								}
-							}
-						}
-					}
-					if dockerNetwork == "" {
-						if !autoConfig {
-							fmt.Printf("Which docker network should we use? [default]: ")
-							dockerNetwork = readString("default")
-
-							if !needsAltNetwork {
-								fmt.Printf("Should we enable non-forward-based containers? [Y/n]: ")
-								dockerForwardOnly = !readBool(true)
-							} else {
-								fmt.Printf("Should we enable non-forward-based containers? [y/N]: ")
-								dockerForwardOnly = !readBool(false)
-							}
-						}
+						dockerNetwork = "default"
 					}
 
-					curConfig.Docker = &cbdcconfig.Config_Docker{
-						Host:        dockerHost,
-						Network:     dockerNetwork,
-						ForwardOnly: dockerForwardOnly,
-					}
-
-					break
+					dockerNetwork = readString(
+						"What docker network should we use?",
+						dockerNetwork, false)
+				}
+				if dockerNetwork == "" {
+					fmt.Printf("The docker network to use is a required field\n")
+					dockerEnabled = false
+					continue
 				}
 
-				saveConfig()
+				break
 			}
-		}
 
-		printGitHubConfig := func() {
-			fmt.Printf("  Token: %s\n", strings.Repeat("*", len(curConfig.GitHub.Token)))
-			fmt.Printf("  User: %s\n", curConfig.GitHub.User)
-		}
-		{
-			flagGithubToken, _ := cmd.Flags().GetString("github-token")
-			envGithubToken := os.Getenv("GITHUB_TOKEN")
-
-			if flagGithubToken != "" {
-				curConfig.GitHub = nil
-			}
-			if curConfig.GitHub != nil {
-				if autoConfig {
-					// leave the original configuration
-				} else {
-					fmt.Printf("Found previous GitHub configuration:\n")
-					printGitHubConfig()
-					fmt.Printf("Would you like to keep these settings? [Y/n]: ")
-					if !readBool(true) {
-						curConfig.GitHub = nil
-					}
-				}
-			}
-			if curConfig.GitHub == nil {
-				for {
-					curConfig.GitHub = &cbdcconfig.Config_GitHub{
-						Token: "",
-						User:  "",
-					}
-
-					githubToken := ""
-					if githubToken == "" {
-						if flagGithubToken != "" {
-							fmt.Printf("Using github token from flag\n")
-							githubToken = flagGithubToken
-						}
-					}
-					if githubToken == "" {
-						if envGithubToken != "" {
-							useEnvToken := true
-							if !autoConfig {
-								fmt.Printf("It looks like $GITHUB_TOKEN was defined.\n")
-								fmt.Printf("  GITHUB_TOKEN: %s\n", strings.Repeat("*", len(envGithubToken)))
-								fmt.Printf("Would you like to use this? [Y/n]: ")
-								useEnvToken = readBool(true)
-							}
-							if useEnvToken {
-								fmt.Printf("Using github token from $GITHUB_TOKEN\n")
-								githubToken = envGithubToken
-							}
-						}
-					}
-					if githubToken == "" {
-						if !autoConfig {
-							fmt.Printf("To access internal server builds hosted on the GitHub Package Registry,\n")
-							fmt.Printf("please provide a GitHub personal access token with 'read:packages' scope.\n")
-							fmt.Printf("What GitHub token should we use? []: ")
-							githubToken = readString("")
-						}
-					}
-
-					if githubToken == "" {
-						fmt.Printf("GitHub support disabled.\n")
-						break
-					}
-
-					ts := oauth2.StaticTokenSource(
-						&oauth2.Token{AccessToken: githubToken},
-					)
-					tc := oauth2.NewClient(ctx, ts)
-
-					githubClient := github.NewClient(tc)
-					user, _, err := githubClient.Users.Get(ctx, "")
-					if err != nil {
-						fmt.Printf("Failed to fetch user details with provided token:\n  %s\n", err)
-						if autoConfig {
-							fmt.Printf("Proceeding without GitHub due to auto mode...\n")
-							break
-						} else {
-							fmt.Printf("Let's try to set up docker again...\n")
-							continue
-						}
-					}
-
-					fmt.Printf("Authenticated to GitHub as '%s'\n", *user.Login)
-
-					curConfig.GitHub = &cbdcconfig.Config_GitHub{
-						Token: githubToken,
-						User:  *user.Login,
-					}
-
-					break
-				}
-
-				saveConfig()
-			}
+			curConfig.Docker.Enabled.Set(dockerEnabled)
+			curConfig.Docker.Host = dockerHost
+			curConfig.Docker.Network = dockerNetwork
+			curConfig.Docker.ForwardOnly.Set(false)
+			saveConfig()
 		}
 
 		printAwsConfig := func() {
-			fmt.Printf("  From Environment: %t\n", curConfig.AWS.FromEnvironment)
-			fmt.Printf("  Access Key: %s\n", curConfig.AWS.AccessKey)
-			fmt.Printf("  Secret Key: %s\n", strings.Repeat("*", len(curConfig.AWS.SecretKey)))
+			fmt.Printf("  Enabled: %t\n", curConfig.AWS.Enabled.Value())
+			fmt.Printf("  Region: %s\n", curConfig.AWS.Region)
 		}
 		{
-			flagAwsUseEnv, _ := cmd.Flags().GetBool("aws-use-env")
-			flagAwsAccessKey, _ := cmd.Flags().GetString("aws-access-key")
-			flagAwsSecretKey, _ := cmd.Flags().GetString("aws-secret-key")
+			flagDisableAws, _ := cmd.Flags().GetBool("disable-aws")
+			flagAwsRegion, _ := cmd.Flags().GetString("aws-region")
+			envAwsRegion := os.Getenv("AWS_REGION")
 
-			if flagAwsUseEnv || flagAwsAccessKey != "" || flagAwsSecretKey != "" {
-				curConfig.AWS = nil
-			}
-			if curConfig.AWS != nil {
-				if autoConfig {
-					// leave the original configuration
-				} else {
-					fmt.Printf("Found previous AWS configuration:\n")
-					printAwsConfig()
-					fmt.Printf("Would you like to keep these settings? [Y/n]: ")
-					if !readBool(true) {
-						curConfig.AWS = nil
-					}
-				}
-			}
-			if curConfig.AWS == nil {
-				for {
-					curConfig.AWS = &cbdcconfig.Config_AWS{
-						FromEnvironment: false,
-						AccessKey:       "",
-						SecretKey:       "",
-						Region:          "",
-					}
+			awsEnabled := true
+			awsRegion := ""
 
-					awsUseEnv := false
-					awsToken := ""
-					awsSecret := ""
-					if awsToken == "" {
-						if flagAwsAccessKey != "" || flagAwsSecretKey != "" {
-							if flagAwsAccessKey == "" || flagAwsSecretKey == "" {
-								fmt.Printf("Must specify both aws-access-key AND aws-secret-key, skipping...")
-							} else {
-								fmt.Printf("Using aws config from flag\n")
-								awsUseEnv = false
-								awsToken = flagAwsAccessKey
-								awsSecret = flagAwsSecretKey
-							}
-						}
-					}
-					if awsToken == "" {
-						var awsCreds *aws.Credentials
-
-						fmt.Printf("Attempting to fetch credentials from AWS client...\n")
-
-						cfg, err := config.LoadDefaultConfig(ctx)
-						if err != nil {
-							fmt.Printf("Failed to load default AWS config: %s\n", err)
-						} else {
-							creds, err := cfg.Credentials.Retrieve(ctx)
-							if err != nil {
-								fmt.Printf("Failed to retreive environmental AWS credentials: %s\n", err)
-							} else {
-								fmt.Printf("It looks like we found some environmental credentials:\n")
-								fmt.Printf("  Access Key: %s\n", creds.AccessKeyID)
-								fmt.Printf("  Secret Key: %s\n", strings.Repeat("*", len(creds.SecretAccessKey)))
-
-								awsCreds = &creds
-							}
-						}
-
-						if awsCreds != nil {
-							useEnvToken := true
-							if !autoConfig {
-								fmt.Printf("Would you like to use these? [Y/n]: ")
-								useEnvToken = readBool(true)
-							}
-							if useEnvToken {
-								var useEnvEachTime bool
-
-								if awsCreds.CanExpire {
-									useEnvEachTime = true
-									if !autoConfig {
-										fmt.Printf("It appears these credentials will expire, instead of storing them\n")
-										fmt.Printf(" should we use the environment each time? [Y/n]: ")
-										useEnvEachTime = readBool(true)
-									}
-								} else {
-									useEnvEachTime = false
-									if !autoConfig {
-										fmt.Printf("Should we use the environment each time? [y/N]: ")
-										useEnvEachTime = readBool(false)
-									}
-								}
-
-								if useEnvEachTime {
-									fmt.Printf("Using environment from each run\n")
-									awsUseEnv = true
-									awsToken = "from-environment"
-									awsSecret = "from-environment"
-								} else {
-									fmt.Printf("Storing credentials from environment\n")
-									awsUseEnv = false
-									awsToken = awsCreds.AccessKeyID
-									awsSecret = awsCreds.SecretAccessKey
-								}
-							}
-						}
-					}
-					if awsToken == "" {
-						if !autoConfig {
-							fmt.Printf("What AWS Access Key should we use? []: ")
-							awsToken = readString("")
-							if awsToken != "" {
-								fmt.Printf("What AWS Secret Key should we use? []: ")
-								awsSecret = readString("")
-
-								if awsSecret == "" {
-									fmt.Printf("You must specify the secret key for the access key.  Try again...\n")
-									continue
-								}
-							}
-						}
-					}
-
-					if !awsUseEnv && (awsToken == "" || awsSecret == "") {
-						fmt.Printf("AWS support disabled.\n")
-						break
-					}
-
-					if awsUseEnv {
-						curConfig.AWS = &cbdcconfig.Config_AWS{
-							FromEnvironment: true,
-							AccessKey:       "",
-							SecretKey:       "",
-							Region:          "",
-						}
-					} else {
-						curConfig.AWS = &cbdcconfig.Config_AWS{
-							FromEnvironment: false,
-							AccessKey:       awsToken,
-							SecretKey:       awsSecret,
-							Region:          "us-west-2",
-						}
-					}
-
+			for {
+				if flagDisableAws {
+					fmt.Printf("AWS disabled via flags.\n")
+					awsEnabled = false
 					break
 				}
 
-				saveConfig()
+				awsEnabled = readBool(
+					"Would you like to enable AWS?",
+					awsEnabled)
+				if !awsEnabled {
+					break
+				}
+
+				if flagAwsRegion != "" {
+					fmt.Printf("AWS region specified via flags:\n  %s\n", flagAwsRegion)
+					awsRegion = flagAwsRegion
+				} else {
+					if awsRegion == "" && awsCloudIdent != nil {
+						fmt.Printf("Defaulting to aws region from environment.\n")
+						awsRegion = awsCloudIdent.Region
+					}
+					if awsRegion == "" && envAwsRegion != "" {
+						fmt.Printf("Defaulting to aws region from self-ident.\n")
+						awsRegion = envAwsRegion
+					}
+					if awsRegion == "" {
+						awsRegion = "us-west-2"
+					}
+
+					awsRegion = readString(
+						"What AWS region should we use?",
+						awsRegion, false)
+				}
+				if awsRegion == "" {
+					fmt.Printf("The AWS region is required.\n")
+					awsEnabled = false
+					continue
+				}
+
+				break
 			}
+
+			curConfig.AWS.Enabled.Set(awsEnabled)
+			curConfig.AWS.Region = awsRegion
+			saveConfig()
+		}
+
+		printAzureConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.Azure.Enabled.Value())
+			fmt.Printf("  Region: %s\n", curConfig.Azure.Region)
+		}
+		{
+			flagDisableAzure, _ := cmd.Flags().GetBool("disable-azure")
+			flagAzureRegion, _ := cmd.Flags().GetString("azure-region")
+			flagAzureSubID, _ := cmd.Flags().GetString("azure-sub-id")
+			flagAzureRgName, _ := cmd.Flags().GetString("azure-rg-name")
+			envAzureRegion := os.Getenv("AZURE_REGION")
+			envAzureSubID := os.Getenv("AZURE_SUBSCRIPTION_ID")
+			envAzureRgName := os.Getenv("AZURE_GROUP")
+
+			azureEnabled := true
+			azureRegion := ""
+			azureSubID := ""
+			azureRGName := ""
+
+			for {
+				if flagDisableAzure {
+					fmt.Printf("Azure disabled via flags.\n")
+					azureEnabled = false
+					break
+				}
+
+				azureEnabled = readBool(
+					"Would you like to enable Azure?",
+					azureEnabled)
+				if !azureEnabled {
+					break
+				}
+
+				if flagAzureRegion != "" {
+					fmt.Printf("Azure region specified via flags:\n  %s\n", flagAzureRegion)
+					azureRegion = flagAzureRegion
+				} else {
+					if azureRegion == "" && envAzureRegion != "" {
+						fmt.Printf("Defaulting to azure region from environment.\n")
+						azureRegion = envAzureRegion
+					}
+					if azureRegion == "" && azureCloudIdent != nil {
+						fmt.Printf("Defaulting to azure region from self-ident.\n")
+						azureRegion = azureCloudIdent.Region
+					}
+					if azureRegion == "" {
+						azureRegion = "westus2"
+					}
+
+					azureRegion = readString(
+						"What Azure region should we use?",
+						azureRegion, false)
+				}
+				if azureRegion == "" {
+					fmt.Printf("The Azure Region is required.\n")
+					azureEnabled = false
+					continue
+				}
+
+				if flagAzureSubID != "" {
+					fmt.Printf("Azure subscription id specified via flags:\n  %s\n", flagAzureSubID)
+					azureSubID = flagAzureSubID
+				} else {
+					if azureSubID == "" && envAzureSubID != "" {
+						fmt.Printf("Defaulting to azure subcription id from environment.\n")
+						azureSubID = envAzureSubID
+					}
+					if azureSubID == "" && azureCloudIdent != nil {
+						vmResInfo, _ := arm.ParseResourceID(azureCloudIdent.VmID)
+						if vmResInfo != nil {
+							fmt.Printf("Defaulting to azure subcription id from self-ident.\n")
+							azureSubID = vmResInfo.SubscriptionID
+						}
+					}
+
+					azureSubID = readString(
+						"What Azure subscription id should we use?",
+						azureSubID, false)
+				}
+				if azureSubID == "" {
+					fmt.Printf("The Azure subscription id is required.\n")
+					azureEnabled = false
+					continue
+				}
+
+				if flagAzureRgName != "" {
+					fmt.Printf("Azure resource group specified via flags:\n  %s\n", flagAzureRgName)
+					azureRGName = flagAzureRgName
+				} else {
+					if azureRGName == "" && envAzureRgName != "" {
+						fmt.Printf("Defaulting to azure resource group from environment.\n")
+						azureRGName = envAzureRgName
+					}
+					if azureRGName == "" && azureCloudIdent != nil {
+						vmResInfo, _ := arm.ParseResourceID(azureCloudIdent.VmID)
+						if vmResInfo != nil {
+							fmt.Printf("Defaulting to azure resource group from self-ident.\n")
+							azureRGName = vmResInfo.ResourceGroupName
+						}
+					}
+
+					azureRGName = readString(
+						"What Azure resource group should we use?",
+						azureRGName, false)
+				}
+				if azureRGName == "" {
+					fmt.Printf("The Azure resource group is required.\n")
+					azureEnabled = false
+					continue
+				}
+
+				break
+			}
+
+			curConfig.Azure.Enabled.Set(azureEnabled)
+			curConfig.Azure.Region = azureRegion
+			curConfig.Azure.SubID = azureSubID
+			curConfig.Azure.RGName = azureRGName
+			saveConfig()
+		}
+
+		printGcpConfig := func() {
+			fmt.Printf("  Not Yet Supported\n")
+		}
+		{
+			curConfig.GCP.Enabled.Set(false)
+			saveConfig()
 		}
 
 		printCapellaConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.Capella.Enabled.Value())
 			fmt.Printf("  Username: %s\n", curConfig.Capella.Username)
 			fmt.Printf("  Password: %s\n", strings.Repeat("*", len(curConfig.Capella.Password)))
 			fmt.Printf("  Organization ID: %s\n", curConfig.Capella.OrganizationID)
+			fmt.Printf("  Default Cloud: %s\n", curConfig.Capella.DefaultCloud)
+			fmt.Printf("  Default AWS Region: %s\n", curConfig.Capella.DefaultAwsRegion)
+			fmt.Printf("  Default Azure Region: %s\n", curConfig.Capella.DefaultAzureRegion)
+			fmt.Printf("  Default GCP Region: %s\n", curConfig.Capella.DefaultGcpRegion)
 		}
 		{
+			flagDisableCapella, _ := cmd.Flags().GetBool("disable-capella")
 			flagCapellaUser, _ := cmd.Flags().GetString("capella-user")
 			flagCapellaPass, _ := cmd.Flags().GetString("capella-pass")
 			flagCapellaOid, _ := cmd.Flags().GetString("capella-oid")
+			flagCapellaProvider, _ := cmd.Flags().GetString("capella-provider")
+			flagCapellaAwsRegion, _ := cmd.Flags().GetString("capella-aws-region")
+			flagCapellaAzureRegion, _ := cmd.Flags().GetString("capella-azure-region")
+			flagCapellaGcpRegion, _ := cmd.Flags().GetString("capella-gcp-region")
 			envCapellaUser := os.Getenv("CAPELLA_USER")
 			envCapellaPass := os.Getenv("CAPELLA_PASS")
 			envCapellaOid := os.Getenv("CAPELLA_OID")
 
-			if flagCapellaUser != "" || flagCapellaPass != "" || flagCapellaOid != "" {
-				curConfig.Capella = nil
-			}
-			if curConfig.Capella != nil {
-				if autoConfig {
-					// leave the original configuration
-				} else {
-					fmt.Printf("Found previous Capella configuration:\n")
-					printCapellaConfig()
-					fmt.Printf("Would you like to keep these settings? [Y/n]: ")
-					if !readBool(true) {
-						curConfig.Capella = nil
-					}
-				}
-			}
-			if curConfig.Capella == nil {
-				for {
-					curConfig.Capella = &cbdcconfig.Config_Capella{
-						Username:       "",
-						Password:       "",
-						OrganizationID: "",
-					}
-					saveConfig()
+			capellaEnabled := true
+			capellaUser := ""
+			capellaPass := ""
+			capellaOid := ""
+			capellaProvider := ""
+			capellaAwsRegion := ""
+			capellaAzureRegion := ""
+			capellaGcpRegion := ""
 
-					capellaUser := ""
-					capellaPass := ""
-					capellaOid := ""
-					if capellaUser == "" {
-						if flagCapellaUser != "" || flagCapellaPass != "" || flagCapellaOid != "" {
-							if flagCapellaUser == "" || flagCapellaPass == "" || flagCapellaOid == "" {
-								fmt.Printf("Must specify all three capella flags, skipping use of flags...")
-							} else {
-								fmt.Printf("Using capella config from flags\n")
-								capellaUser = flagCapellaUser
-								capellaPass = flagCapellaPass
-								capellaOid = flagCapellaOid
-							}
-						}
-					}
-					if capellaUser == "" {
-						if envCapellaUser != "" || envCapellaPass != "" || envCapellaOid != "" {
-							if envCapellaUser == "" || envCapellaPass == "" || envCapellaOid == "" {
-								fmt.Printf("Must specify all three capella env vars, skipping use of env...")
-							} else {
-								useEnvToken := true
-								if !autoConfig {
-									fmt.Printf("It looks like capella env vars were defined.\n")
-									fmt.Printf("  CAPELLA_USER: %s\n", envCapellaUser)
-									fmt.Printf("  CAPELLA_PASS: %s\n", strings.Repeat("*", len(envCapellaPass)))
-									fmt.Printf("  CAPELLA_OID: %s\n", envCapellaOid)
-									fmt.Printf("Would you like to use these? [Y/n]: ")
-									useEnvToken = readBool(true)
-								}
-								if useEnvToken {
-									fmt.Printf("Using capella credentials from env vars\n")
-									capellaUser = envCapellaUser
-									capellaPass = envCapellaPass
-									capellaOid = envCapellaOid
-								}
-							}
-						}
-					}
-					if capellaUser == "" {
-						if !autoConfig {
-							fmt.Printf("What Capella Username should we use? []: ")
-							capellaUser = readString("")
-
-							if capellaUser != "" {
-								fmt.Printf("What Capella Password should we use? []: ")
-								capellaPass = readString("")
-								if capellaPass == "" {
-									fmt.Printf("You must specify the password for that user.  Try again...\n")
-									continue
-								}
-
-								fmt.Printf("What Capella Organization ID should we use? []: ")
-								capellaOid = readString("")
-								if capellaOid == "" {
-									fmt.Printf("You must specify the organization id for that user.  Try again...\n")
-									continue
-								}
-							}
-						}
-					}
-
-					if capellaUser == "" || capellaPass == "" || capellaOid == "" {
-						fmt.Printf("Capella support disabled.\n")
-						break
-					}
-
-					curConfig.Capella = &cbdcconfig.Config_Capella{
-						Username:       capellaUser,
-						Password:       capellaPass,
-						OrganizationID: capellaOid,
-					}
-
+			for {
+				if flagDisableCapella {
+					fmt.Printf("Capella disabled via flags.\n")
+					capellaEnabled = false
 					break
 				}
 
-				saveConfig()
+				capellaEnabled = readBool(
+					"Would you like to enable Capella?",
+					capellaEnabled)
+				if !capellaEnabled {
+					break
+				}
+
+				if flagCapellaUser != "" {
+					fmt.Printf("Capella user specified via flags:\n  %s\n", flagCapellaUser)
+					capellaUser = flagCapellaUser
+				} else {
+					if capellaUser == "" && envCapellaUser != "" {
+						fmt.Printf("Defaulting to capella user from environment.\n")
+						capellaUser = envCapellaUser
+					}
+
+					capellaUser = readString(
+						"What Capella user should we use?",
+						capellaUser, false)
+				}
+				if capellaUser == "" {
+					fmt.Printf("Capella user is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaPass != "" {
+					fmt.Printf("Capella pass specified via flags.\n")
+					capellaPass = flagCapellaPass
+				} else {
+					if capellaPass == "" && envCapellaPass != "" {
+						fmt.Printf("Defaulting to capella pass from environment.\n")
+						capellaPass = envCapellaPass
+					}
+
+					capellaPass = readString(
+						"What Capella user should we use?",
+						capellaPass, true)
+				}
+				if capellaPass == "" {
+					fmt.Printf("Capella pass is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaOid != "" {
+					fmt.Printf("Capella oid specified via flags:\n  %s\n", flagCapellaOid)
+					capellaOid = flagCapellaOid
+				} else {
+					if capellaOid == "" && envCapellaOid != "" {
+						fmt.Printf("Defaulting to capella OID from environment.\n")
+						capellaOid = envCapellaOid
+					}
+
+					capellaOid = readString(
+						"What Capella OID should we use?",
+						capellaOid, false)
+				}
+				if capellaOid == "" {
+					fmt.Printf("Capella oid is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaProvider != "" {
+					fmt.Printf("Capella default provider specified via flags:\n  %s\n", flagCapellaProvider)
+					capellaProvider = flagCapellaProvider
+				} else {
+					if capellaProvider == "" {
+						// default to one of the enabled providers for locality
+						if curConfig.AWS.Enabled.Value() {
+							capellaProvider = "aws"
+						} else if curConfig.Azure.Enabled.Value() {
+							capellaProvider = "azure"
+						} else if curConfig.GCP.Enabled.Value() {
+							capellaProvider = "gcp"
+						}
+					}
+					if capellaProvider == "" {
+						capellaProvider = "aws"
+					}
+
+					capellaProvider = readString(
+						"What Capella default provider should we use?",
+						capellaProvider, false)
+				}
+				if capellaProvider == "" {
+					fmt.Printf("Capella default provider is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaAwsRegion != "" {
+					fmt.Printf("Capella default AWS region specified via flags:\n  %s\n", flagCapellaAwsRegion)
+					capellaAwsRegion = flagCapellaAwsRegion
+				} else {
+					if capellaAwsRegion == "" && curConfig.AWS.Region != "" {
+						capellaAwsRegion = curConfig.AWS.Region
+					}
+					if capellaAwsRegion == "" {
+						capellaAwsRegion = "us-west-2"
+					}
+
+					capellaAwsRegion = readString(
+						"What Capella default AWS region should we use?",
+						capellaAwsRegion, false)
+				}
+				if capellaAwsRegion == "" {
+					fmt.Printf("Capella default AWS region is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaAzureRegion != "" {
+					fmt.Printf("Capella default azure region specified via flags:\n  %s\n", flagCapellaAzureRegion)
+					capellaAzureRegion = flagCapellaAzureRegion
+				} else {
+					if capellaAzureRegion == "" && curConfig.Azure.Region != "" {
+						capellaAzureRegion = curConfig.Azure.Region
+					}
+					if capellaAzureRegion == "" {
+						capellaAzureRegion = "westus2"
+					}
+
+					capellaAzureRegion = readString(
+						"What Capella default Azure region should we use?",
+						capellaAzureRegion, false)
+				}
+				if capellaAzureRegion == "" {
+					fmt.Printf("Capella default Azure region is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaGcpRegion != "" {
+					fmt.Printf("Capella default GCP region specified via flags:\n  %s\n", flagCapellaGcpRegion)
+					capellaGcpRegion = flagCapellaGcpRegion
+				} else {
+					if capellaGcpRegion == "" && curConfig.GCP.Region != "" {
+						capellaGcpRegion = curConfig.GCP.Region
+					}
+					if capellaGcpRegion == "" {
+						capellaGcpRegion = "us-west1"
+					}
+
+					capellaGcpRegion = readString(
+						"What Capella default GCP region should we use?",
+						capellaGcpRegion, false)
+				}
+				if capellaGcpRegion == "" {
+					fmt.Printf("Capella default GCP region is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				break
 			}
+
+			curConfig.Capella.Enabled.Set(capellaEnabled)
+			curConfig.Capella.Username = capellaUser
+			curConfig.Capella.Password = capellaPass
+			curConfig.Capella.OrganizationID = capellaOid
+			curConfig.Capella.DefaultCloud = capellaProvider
+			curConfig.Capella.DefaultAwsRegion = capellaAwsRegion
+			curConfig.Capella.DefaultAzureRegion = capellaAzureRegion
+			curConfig.Capella.DefaultGcpRegion = capellaGcpRegion
+			saveConfig()
 		}
 
 		printBaseConfig := func() {
-			fmt.Printf("  Default Cloud: %s\n", curConfig.DefaultCloud)
 			fmt.Printf("  Default Deployer: %s\n", curConfig.DefaultDeployer)
 		}
 		{
-			curConfig.DefaultCloud = "aws"
-			curConfig.DefaultDeployer = "docker"
+			fmt.Printf("-- Base Configuration\n")
+
+			defaultDeployer := curConfig.DefaultDeployer
+			if defaultDeployer == "" && curConfig.Docker.Enabled.Value() {
+				defaultDeployer = "docker"
+			}
+			if defaultDeployer == "" && curConfig.Capella.Enabled.Value() {
+				defaultDeployer = "cloud"
+			}
+
+			curConfig.DefaultDeployer = defaultDeployer
+			saveConfig()
 		}
 
 		fmt.Printf("Initialization completed!\n")
+
+		fmt.Printf("Using GitHub configuration:\n")
+		printGitHubConfig()
 
 		fmt.Printf("Using Docker configuration:\n")
 		printDockerConfig()
@@ -697,8 +861,11 @@ var initCmd = &cobra.Command{
 		fmt.Printf("Using AWS configuration:\n")
 		printAwsConfig()
 
-		fmt.Printf("Using GitHub configuration:\n")
-		printGitHubConfig()
+		fmt.Printf("Using Azure configuration:\n")
+		printAzureConfig()
+
+		fmt.Printf("Using GCP configuration:\n")
+		printGcpConfig()
 
 		fmt.Printf("Using Capella configuration:\n")
 		printCapellaConfig()
@@ -712,14 +879,21 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 
 	initCmd.Flags().Bool("auto", false, "Automatically setup without any interactivity")
+	initCmd.Flags().String("disable-docker", "", "Disable Docker")
 	initCmd.Flags().String("docker-host", "", "Docker host address to use")
 	initCmd.Flags().String("docker-network", "", "Docker network to use")
+	initCmd.Flags().String("disable-github", "", "Disable GitHub")
 	initCmd.Flags().String("github-token", "", "GitHub token to use")
+	initCmd.Flags().String("github-user", "", "GitHub user to use")
+	initCmd.Flags().String("disable-capella", "", "Disable Capella")
 	initCmd.Flags().String("capella-user", "", "Capella user to use")
 	initCmd.Flags().String("capella-pass", "", "Capella pass to use")
 	initCmd.Flags().String("capella-oid", "", "Capella organization id to use")
-	initCmd.Flags().String("aws-use-env", "", "Use the environment for AWS each run")
-	initCmd.Flags().String("aws-access-key", "", "AWS access key to use")
-	initCmd.Flags().String("aws-secret-key", "", "AWS secret key to use")
+	initCmd.Flags().String("capella-provider", "", "Capella default cloud provider to use")
+	initCmd.Flags().String("capella-aws-region", "", "Capella default AWS region to use")
+	initCmd.Flags().String("capella-azure-region", "", "Capella default Azure region to use")
+	initCmd.Flags().String("capella-gcp-region", "", "Capella default GCP region to use")
+	initCmd.Flags().String("disable-aws", "", "Disable AWS")
 	initCmd.Flags().String("aws-region", "", "AWS default region to use")
+	initCmd.Flags().String("disable-azure", "", "Disable Azure")
 }

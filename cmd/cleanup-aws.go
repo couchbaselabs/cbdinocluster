@@ -16,8 +16,8 @@ var cleanupAwsCmd = &cobra.Command{
 		awsCreds := helper.GetAWSCredentials(ctx)
 		config := helper.GetConfig(ctx)
 
-		if config.AWS == nil {
-			logger.Fatal("cannot cleanup ec2 without aws configuration")
+		if config.AWS.Region == "" {
+			logger.Fatal("cannot cleanup aws without aws configuration")
 		}
 
 		peCtrl := awscontrol.PrivateEndpointsController{
