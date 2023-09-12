@@ -6,9 +6,9 @@ import (
 	"go.uber.org/zap"
 )
 
-var cleanupEc2Cmd = &cobra.Command{
-	Use:   "ec2 [flags]",
-	Short: "Cleans up any expired resources in EC2",
+var cleanupAwsCmd = &cobra.Command{
+	Use:   "aws [flags]",
+	Short: "Cleans up any expired resources in AWS",
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
@@ -34,5 +34,5 @@ var cleanupEc2Cmd = &cobra.Command{
 }
 
 func init() {
-	cleanupCmd.AddCommand(cleanupEc2Cmd)
+	cleanupCmd.AddCommand(cleanupAwsCmd)
 }
