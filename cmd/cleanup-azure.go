@@ -24,8 +24,8 @@ var cleanupAzureCmd = &cobra.Command{
 			Logger: logger,
 			Region: config.Azure.Region,
 			Creds:  azureCreds,
-			SubID:  "5ef34701-b858-4231-a9c1-103e4604ad8f",
-			RgName: "sdkqe-github-runners",
+			SubID:  config.Azure.SubID,
+			RgName: config.Azure.RGName,
 		}
 
 		err := peCtrl.Cleanup(ctx)

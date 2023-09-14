@@ -17,6 +17,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
+		config := helper.GetConfig(ctx)
 
 		shouldAutoConfig, _ := cmd.Flags().GetBool("auto")
 		instanceId, _ := cmd.Flags().GetString("instance-id")
@@ -74,9 +75,13 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 		if instanceId != "" {
 			awsCreds := helper.GetAWSCredentials(ctx)
 
+			if !config.AWS.Enabled.Value() {
+				logger.Fatal("cannot setup AWS private endpoint without AWS configuration")
+			}
+
 			peCtrl := awscontrol.PrivateEndpointsController{
 				Logger:      logger,
-				Region:      cloudCluster.Region,
+				Region:      config.AWS.Region,
 				Credentials: awsCreds,
 			}
 
@@ -103,10 +108,16 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 		} else if vmId != "" {
 			azureCreds := helper.GetAzureCredentials(ctx)
 
+			if !config.Azure.Enabled.Value() {
+				logger.Fatal("cannot setup Azure private endpoint without Azure configuration")
+			}
+
 			peCtrl := azurecontrol.PrivateEndpointsController{
 				Logger: logger,
-				Region: cloudCluster.Region,
+				Region: config.Azure.Region,
 				Creds:  azureCreds,
+				SubID:  config.Azure.SubID,
+				RgName: config.Azure.RGName,
 			}
 
 			peData, err := peCtrl.CreateVPCEndpoint(ctx, &azurecontrol.CreateVPCEndpointOptions{

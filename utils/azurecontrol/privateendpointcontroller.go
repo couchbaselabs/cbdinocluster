@@ -44,8 +44,15 @@ func (c *PrivateEndpointsController) CreateVPCEndpoint(ctx context.Context, opts
 	}
 
 	vmName := vmResInfo.Name
-	rgName := vmResInfo.ResourceGroupName
 	subId := vmResInfo.SubscriptionID
+	rgName := vmResInfo.ResourceGroupName
+
+	if c.SubID != subId {
+		return nil, errors.New("virtual machine is not in expected subscription")
+	}
+	if c.RgName != rgName {
+		return nil, errors.New("virtual machine is not in expected resource-group")
+	}
 
 	computeClient, err := armcompute.NewVirtualMachinesClient(subId, c.Creds, nil)
 	if err != nil {
@@ -61,7 +68,7 @@ func (c *PrivateEndpointsController) CreateVPCEndpoint(ctx context.Context, opts
 
 	vmLocation := *vmData.Location
 	if c.Region != vmLocation {
-		return nil, errors.New("virtual machine is not in same region")
+		return nil, errors.New("virtual machine is not in expected region")
 	}
 
 	if len(vmData.Properties.NetworkProfile.NetworkInterfaces) < 1 {
