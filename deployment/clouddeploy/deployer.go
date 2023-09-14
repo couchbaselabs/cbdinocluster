@@ -228,16 +228,19 @@ type NewClusterOptions struct {
 func (p *Deployer) buildCreateSpecs(
 	ctx context.Context,
 	cloudProvider string,
-	clusterVersion string,
 	nodeGrps []*clusterdef.NodeGroup,
 ) ([]capellacontrol.CreateClusterRequest_Spec, error) {
 	nodeProvider := ""
+	diskAutoExpansionEnabled := false
 	if cloudProvider == "aws" {
 		nodeProvider = "aws"
+		diskAutoExpansionEnabled = true
 	} else if cloudProvider == "gcp" {
 		nodeProvider = "gcp"
+		diskAutoExpansionEnabled = false
 	} else if cloudProvider == "azure" {
 		nodeProvider = "azure"
+		diskAutoExpansionEnabled = false
 	} else {
 		return nil, errors.New("invalid cloud provider for setup info")
 	}
@@ -284,11 +287,6 @@ func (p *Deployer) buildCreateSpecs(
 			return nil, errors.Wrap(err, "failed to generate ns server services list")
 		}
 
-		diskAutoScalingEnabled := true
-		if clusterVersion == "7.1" {
-			diskAutoScalingEnabled = false
-		}
-
 		specs = append(specs, capellacontrol.CreateClusterRequest_Spec{
 			Compute: instanceType,
 			Count:   nodeGroup.Count,
@@ -298,7 +296,7 @@ func (p *Deployer) buildCreateSpecs(
 				Iops:     diskIops,
 			},
 			DiskAutoScaling: capellacontrol.CreateClusterRequest_Spec_DiskScaling{
-				Enabled: diskAutoScalingEnabled,
+				Enabled: diskAutoExpansionEnabled,
 			},
 			Provider: nodeProvider,
 			Services: nsServices,
@@ -311,10 +309,9 @@ func (p *Deployer) buildCreateSpecs(
 func (p *Deployer) buildModifySpecs(
 	ctx context.Context,
 	cloudProvider string,
-	clusterVersion string,
 	nodeGrps []*clusterdef.NodeGroup,
 ) ([]capellacontrol.UpdateClusterSpecsRequest_Spec, error) {
-	createSpecs, err := p.buildCreateSpecs(ctx, cloudProvider, clusterVersion, nodeGrps)
+	createSpecs, err := p.buildCreateSpecs(ctx, cloudProvider, nodeGrps)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build the create specs")
 	}
@@ -444,7 +441,6 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	specs, err := p.buildCreateSpecs(
 		ctx,
 		cloudProvider,
-		clusterVersion,
 		def.NodeGroups)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to build cluster specs")
@@ -513,12 +509,10 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	cloudProjectID := clusterInfo.Cluster.Project.Id
 	cloudClusterID := clusterInfo.Cluster.Id
 	cloudProvider := clusterInfo.Cluster.Provider.Name
-	clusterVersion := clusterInfo.Cluster.Config.Version
 
 	newSpecs, err := d.buildModifySpecs(
 		ctx,
 		cloudProvider,
-		clusterVersion,
 		def.NodeGroups)
 	if err != nil {
 		return errors.Wrap(err, "failed to build cluster specs")

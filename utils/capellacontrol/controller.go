@@ -362,15 +362,15 @@ type ClusterInfo struct {
 	ModifiedByUserID string              `json:"modifiedByUserID"`
 	Name             string              `json:"name"`
 	// Package
-	PlaygroundDisabled bool                 `json:"playgroundDisabled"`
-	Project            ClusterInfo_Project  `json:"project"`
-	Provider           ClusterInfo_Provider `json:"provider"`
-	// Services
-	Status         ClusterInfo_Status `json:"status"`
-	TenantId       string             `json:"tenantId"`
-	UpsertedAt     time.Time          `json:"upsertedAt"`
-	UpsertedUserID string             `json:"upsertedUserID"`
-	Version        int                `json:"version"`
+	PlaygroundDisabled bool                  `json:"playgroundDisabled"`
+	Project            ClusterInfo_Project   `json:"project"`
+	Provider           ClusterInfo_Provider  `json:"provider"`
+	Services           []ClusterInfo_Service `json:"services"`
+	Status             ClusterInfo_Status    `json:"status"`
+	TenantId           string                `json:"tenantId"`
+	UpsertedAt         time.Time             `json:"upsertedAt"`
+	UpsertedUserID     string                `json:"upsertedUserID"`
+	Version            int                   `json:"version"`
 }
 
 type ClusterInfo_Config struct {
@@ -393,6 +393,36 @@ type ClusterInfo_Provider struct {
 	DeliveryMethod string `json:"deliveryMethod"`
 	Name           string `json:"name"`
 	Region         string `json:"region"`
+}
+
+type ClusterInfo_Service struct {
+	Compute         ClusterInfo_Service_Compute     `json:"compute"`
+	Count           int                             `json:"count"`
+	Disk            ClusterInfo_Service_Disk        `json:"disk"`
+	DiskAutoScaling ClusterInfo_Service_DiskScaling `json:"diskAutoScaling"`
+	Services        []ClusterInfo_Service_Service   `json:"services"`
+}
+
+type ClusterInfo_Service_Compute struct {
+	Type       string `json:"type"`
+	MemoryInGB int    `json:"memoryInGb"`
+	Cpu        int    `json:"cpu"`
+}
+
+type ClusterInfo_Service_Disk struct {
+	Type           string `json:"type"`
+	SizeInGb       int    `json:"sizeInGb"`
+	Iops           int    `json:"iops"`
+	ThroughputMBPS int    `json:"throughputMbps"`
+}
+
+type ClusterInfo_Service_DiskScaling struct {
+	Enabled bool `json:"enabled"`
+}
+
+type ClusterInfo_Service_Service struct {
+	Type                 string `json:"type"`
+	MemoryAllocationInMB int    `json:"memoryAllocationInMb"`
 }
 
 type ClusterInfo_Status struct {
@@ -587,8 +617,22 @@ type GetProviderDeploymentOptionsResponse struct {
 	// deliveryMethods
 	// plans
 	// projects
+	Provider       GetProviderDeploymentOptionsResponse_Provider       `json:"provider"`
 	ServerVersions GetProviderDeploymentOptionsResponse_ServerVersions `json:"serverVersions"`
 	SuggestedCidr  string                                              `json:"suggestedCidr"`
+}
+
+type GetProviderDeploymentOptionsResponse_Provider struct {
+	AutoExpansion GetProviderDeploymentOptionsResponse_Provider_AutoExpansion `json:"autoExpansion"`
+	DisplayName   string                                                      `json:"displayName"`
+	// eligibility
+	Key string `json:"key"`
+	// regions
+	// services
+}
+
+type GetProviderDeploymentOptionsResponse_Provider_AutoExpansion struct {
+	Enabled bool `json:"enabled"`
 }
 
 type GetProviderDeploymentOptionsResponse_ServerVersions struct {
