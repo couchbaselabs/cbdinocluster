@@ -37,7 +37,9 @@ var initCmd = &cobra.Command{
 
 		curConfig, _ := cbdcconfig.Load(ctx)
 		if curConfig == nil {
-			curConfig = &cbdcconfig.Config{}
+			curConfig = &cbdcconfig.Config{
+				Version: cbdcconfig.Version,
+			}
 		}
 
 		readString := func(q string, defaultValue string, sensitive bool) string {
