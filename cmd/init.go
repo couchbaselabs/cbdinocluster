@@ -9,6 +9,10 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
@@ -490,6 +494,25 @@ var initCmd = &cobra.Command{
 					continue
 				}
 
+				awsCfg, err := config.LoadDefaultConfig(ctx)
+				if err != nil {
+					fmt.Printf("Failed to loads AWS environment: %s\n", err)
+					awsEnabled = false
+					continue
+				}
+
+				ec2Client := ec2.New(ec2.Options{
+					Region:      awsRegion,
+					Credentials: awsCfg.Credentials,
+				})
+
+				_, err = ec2Client.DescribeInstances(ctx, nil)
+				if err != nil {
+					fmt.Printf("Failed to execute command (list instances) with AWS credentials: %s\n", err)
+					awsEnabled = false
+					continue
+				}
+
 				break
 			}
 
@@ -604,6 +627,24 @@ var initCmd = &cobra.Command{
 				}
 				if azureRGName == "" {
 					fmt.Printf("The Azure resource group is required.\n")
+					azureEnabled = false
+					continue
+				}
+
+				azureCreds, err := azidentity.NewDefaultAzureCredential(nil)
+				if err != nil {
+					fmt.Printf("Failed to loads Azure environment credentials: %s\n", err)
+					azureEnabled = false
+					continue
+				}
+
+				computeClient, err := armcompute.NewVirtualMachinesClient(azureSubID, azureCreds, nil)
+				if err == nil {
+					pager := computeClient.NewListPager(azureRGName, nil)
+					_, err = pager.NextPage(ctx)
+				}
+				if err != nil {
+					fmt.Printf("Failed to execute command (list vms) with Azure credentials: %s\n", err)
 					azureEnabled = false
 					continue
 				}
