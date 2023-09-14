@@ -120,7 +120,7 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 	return nil
 }
 
-func (m *NodeManager) Rebalance(ctx context.Context) error {
+func (m *NodeManager) Rebalance(ctx context.Context, ejectedNodeOtps []string) error {
 	c := m.Controller()
 
 	nodeOtps, err := c.ListNodeOTPs(ctx)
@@ -129,7 +129,8 @@ func (m *NodeManager) Rebalance(ctx context.Context) error {
 	}
 
 	err = c.BeginRebalance(ctx, &BeginRebalanceOptions{
-		KnownNodeOTPs: nodeOtps,
+		KnownNodeOTPs:   nodeOtps,
+		EjectedNodeOTPs: ejectedNodeOtps,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to start rebalance")

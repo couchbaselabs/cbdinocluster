@@ -1,22 +1,26 @@
 package clusterdef
 
 type NodeGroup struct {
-	Count int `yaml:"count"`
+	// Count specifies the number of nodes of this type to create.
+	Count int `yaml:"count,omitempty"`
 
-	Version  string    `yaml:"version"`
-	Services []Service `json:"services"`
+	// ForceNew forces new nodes to be provisioned instead of reusing
+	// any existing nodes when doing modifications.
+	ForceNew bool `yaml:"force-new,omitempty"`
 
-	*DockerNodeGroup
-	*CloudNodeGroup
+	Version  string    `yaml:"version,omitempty"`
+	Services []Service `yaml:"services,omitempty"`
+
+	Docker DockerNodeGroup `yaml:"docker,omitempty"`
+	Cloud  CloudNodeGroup  `yaml:"cloud,omitempty"`
 }
 
 type DockerNodeGroup struct {
-	Name string `yaml:"name"`
 }
 
 type CloudNodeGroup struct {
-	InstanceType string `yaml:"instance-type"`
-	DiskType     string `yaml:"disk-type"`
-	DiskSize     int    `yaml:"disk-size"`
-	DiskIops     int    `yaml:"disk-iops"`
+	InstanceType string `yaml:"instance-type,omitempty"`
+	DiskType     string `yaml:"disk-type,omitempty"`
+	DiskSize     int    `yaml:"disk-size,omitempty"`
+	DiskIops     int    `yaml:"disk-iops,omitempty"`
 }

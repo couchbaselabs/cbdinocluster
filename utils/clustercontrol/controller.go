@@ -259,6 +259,36 @@ func (c *Controller) AddNode(ctx context.Context, opts *AddNodeOptions) error {
 	return c.doFormPost(ctx, path, form, true, nil)
 }
 
+type LocalInfo struct {
+	OTPNode  string
+	Services []string
+}
+
+func (c *Controller) GetLocalInfo(ctx context.Context) (*LocalInfo, error) {
+	var resp struct {
+		Nodes []struct {
+			ThisNode bool     `json:"thisNode"`
+			OTPNode  string   `json:"otpNode"`
+			Services []string `json:"services"`
+		} `json:"nodes"`
+	}
+	err := c.doGet(ctx, "/pools/default", &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, node := range resp.Nodes {
+		if node.ThisNode {
+			return &LocalInfo{
+				OTPNode:  node.OTPNode,
+				Services: node.Services,
+			}, nil
+		}
+	}
+
+	return nil, errors.New("no node was marked as this node")
+}
+
 func (c *Controller) ListNodeOTPs(ctx context.Context) ([]string, error) {
 	var resp struct {
 		Nodes []struct {
@@ -279,12 +309,14 @@ func (c *Controller) ListNodeOTPs(ctx context.Context) ([]string, error) {
 }
 
 type BeginRebalanceOptions struct {
-	KnownNodeOTPs []string
+	KnownNodeOTPs   []string
+	EjectedNodeOTPs []string
 }
 
 func (c *Controller) BeginRebalance(ctx context.Context, opts *BeginRebalanceOptions) error {
 	form := make(url.Values)
 	form.Add("knownNodes", strings.Join(opts.KnownNodeOTPs, ","))
+	form.Add("ejectedNodes", strings.Join(opts.EjectedNodeOTPs, ","))
 
 	return c.doFormPost(ctx, "/controller/rebalance", form, true, nil)
 }

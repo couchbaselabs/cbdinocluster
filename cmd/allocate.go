@@ -6,9 +6,59 @@ import (
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
+	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
+
+func fetchClusterDef(
+	simpleStr, defStr, defPath string,
+) (*clusterdef.Cluster, error) {
+	onlyOneDefErr := errors.New("must specify only one form of cluster definition")
+
+	if simpleStr != "" {
+		if defStr != "" || defPath != "" {
+			return nil, onlyOneDefErr
+		}
+
+		shortDef, err := clusterdef.FromShortString(simpleStr)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse definition short string")
+		}
+
+		return shortDef, nil
+	} else if defStr != "" {
+		if simpleStr != "" || defPath != "" {
+			return nil, onlyOneDefErr
+		}
+
+		parsedDef, err := clusterdef.Parse([]byte(defStr))
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse cluster definition")
+		}
+
+		return parsedDef, nil
+	} else if defPath != "" {
+		if simpleStr != "" || defStr != "" {
+			return nil, onlyOneDefErr
+		}
+
+		defFileBytes, err := os.ReadFile(defPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to read cluster definition file")
+		}
+
+		parsedDef, err := clusterdef.Parse(defFileBytes)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse cluster definition from file")
+		}
+
+		return parsedDef, nil
+	}
+
+	return nil, errors.New("must specify at least one form of cluster definition")
+}
 
 var allocateCmd = &cobra.Command{
 	Use:     "allocate [flags] [definition-tag | --def | --def-file]",
@@ -19,63 +69,24 @@ var allocateCmd = &cobra.Command{
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
-		deployer := helper.GetDeployer(ctx)
 
 		defStr, _ := cmd.Flags().GetString("def")
 		defFile, _ := cmd.Flags().GetString("def-file")
 		purpose, _ := cmd.Flags().GetString("purpose")
 		expiry, _ := cmd.Flags().GetDuration("expiry")
+		deployerName, _ := cmd.Flags().GetString("deployer")
 		cloudProvider, _ := cmd.Flags().GetString("cloud-provider")
 
 		var def *clusterdef.Cluster
 
+		simpleDefStr := ""
 		if len(args) >= 1 {
-			if def != nil {
-				logger.Fatal("must specify only a single tag, definition or definition file")
-			}
-
-			shortDef, err := clusterdef.FromShortString(args[0])
-			if err != nil {
-				logger.Fatal("failed to parse definition short string",
-					zap.Error(err))
-			}
-
-			def = shortDef
+			simpleDefStr = args[0]
 		}
 
-		if defStr != "" {
-			if def != nil {
-				logger.Fatal("must specify only a single tag, definition or definition file")
-			}
-
-			parsedDef, err := clusterdef.Parse([]byte(defStr))
-			if err != nil {
-				logger.Fatal("failed to parse cluster definition", zap.Error(err))
-			}
-
-			def = parsedDef
-		}
-
-		if defFile != "" {
-			if def != nil {
-				logger.Fatal("must specify only a single tag, definition or definition file")
-			}
-
-			defFileBytes, err := os.ReadFile(defFile)
-			if err != nil {
-				logger.Fatal("failed to read definition file '%s': %s", zap.Error(err), zap.String("file", defFile))
-			}
-
-			parsedDef, err := clusterdef.Parse(defFileBytes)
-			if err != nil {
-				logger.Fatal("failed to parse cluster definition from file", zap.Error(err), zap.String("file", defFile))
-			}
-
-			def = parsedDef
-		}
-
-		if def == nil {
-			logger.Fatal("must specify a definition tag, definition or definition file")
+		def, err := fetchClusterDef(simpleDefStr, defStr, defFile)
+		if err != nil {
+			logger.Fatal("failed to get definition", zap.Error(err))
 		}
 
 		if purpose != "" {
@@ -84,14 +95,21 @@ var allocateCmd = &cobra.Command{
 		if expiry > 0 {
 			def.Expiry = expiry
 		}
+		if deployerName != "" {
+			def.Deployer = deployerName
+		}
 		if cloudProvider != "" {
-			if def.CloudCluster == nil {
-				def.CloudCluster = &clusterdef.CloudCluster{}
-			}
-			def.CloudCluster.CloudProvider = cloudProvider
+			def.Cloud.CloudProvider = cloudProvider
 		}
 
 		logger.Info("deploying definition", zap.Any("def", def))
+
+		var deployer deployment.Deployer
+		if def.Deployer == "" {
+			deployer = helper.GetDefaultDeployer(ctx)
+		} else {
+			deployer = helper.GetDeployerByName(ctx, def.Deployer)
+		}
 
 		cluster, err := deployer.NewCluster(ctx, def)
 		if err != nil {
@@ -109,5 +127,6 @@ func init() {
 	allocateCmd.Flags().String("def-file", "", "The path to a file containing a cluster definition to provision.")
 	allocateCmd.Flags().String("purpose", "", "The purpose for allocating this cluster")
 	allocateCmd.Flags().Duration("expiry", 1*time.Hour, "The time to keep this cluster allocated for")
+	allocateCmd.Flags().String("deployer", "", "The name of the deployer to use")
 	allocateCmd.Flags().String("cloud-provider", "", "The cloud provider to use for this cluster")
 }

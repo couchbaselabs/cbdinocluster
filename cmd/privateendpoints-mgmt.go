@@ -22,10 +22,7 @@ var privateEndpointsMgmtCmd = &cobra.Command{
 
 		waitVisible, _ := cmd.Flags().GetBool("wait-visible")
 
-		deployer, cluster, err := helper.IdentifyCluster(ctx, args[0])
-		if err != nil {
-			logger.Fatal("failed to identify cluster", zap.Error(err))
-		}
+		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		cloudDeployer, ok := deployer.(*clouddeploy.Deployer)
 		if !ok {

@@ -14,3 +14,12 @@ func Parse(data []byte) (*Cluster, error) {
 
 	return parsedDef, nil
 }
+
+func Stringify(cluster *Cluster) (string, error) {
+	bytes, err := yaml.Marshal(cluster)
+	if err != nil {
+		return "", errors.Wrap(err, "yaml serialization failed")
+	}
+
+	return string(bytes), nil
+}

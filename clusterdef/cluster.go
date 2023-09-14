@@ -3,29 +3,30 @@ package clusterdef
 import "time"
 
 type Cluster struct {
-	Name    string        `yaml:"name"`
-	Expiry  time.Duration `yaml:"expiry"`
-	Purpose string        `yaml:"purpose"`
+	Deployer string `yaml:"deployer,omitempty"`
 
-	NodeGroups []*NodeGroup `yaml:"nodes"`
+	Expiry  time.Duration `yaml:"expiry,omitempty"`
+	Purpose string        `yaml:"purpose,omitempty"`
 
-	*DockerCluster
-	*CloudCluster
+	NodeGroups []*NodeGroup `yaml:"nodes,omitempty"`
+
+	Docker DockerCluster `yaml:"docker,omitempty"`
+	Cloud  CloudCluster  `yaml:"cloud,omitempty"`
 }
 
 type DockerCluster struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
 
-	KvMemoryMB       int `yaml:"kv-memory"`
-	IndexMemoryMB    int `yaml:"index-memory"`
-	FtsMemoryMB      int `yaml:"fts-memory"`
-	CbasMemoryMB     int `yaml:"cbas-memory"`
-	EventingMemoryMB int `yaml:"eventing-memory"`
+	KvMemoryMB       int `yaml:"kv-memory,omitempty"`
+	IndexMemoryMB    int `yaml:"index-memory,omitempty"`
+	FtsMemoryMB      int `yaml:"fts-memory,omitempty"`
+	CbasMemoryMB     int `yaml:"cbas-memory,omitempty"`
+	EventingMemoryMB int `yaml:"eventing-memory,omitempty"`
 }
 
 type CloudCluster struct {
-	CloudProvider string `yaml:"cloud-provider"`
-	Region        string `yaml:"region"`
-	Cidr          string `yaml:"cidr"`
+	CloudProvider string `yaml:"cloud-provider,omitempty"`
+	Region        string `yaml:"region,omitempty"`
+	Cidr          string `yaml:"cidr,omitempty"`
 }

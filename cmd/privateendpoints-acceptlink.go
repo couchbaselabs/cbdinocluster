@@ -15,17 +15,14 @@ var privateEndpointsAcceptLinkCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
-		deployer, cluster, err := helper.IdentifyCluster(ctx, args[0])
-		if err != nil {
-			logger.Fatal("failed to identify cluster", zap.Error(err))
-		}
+		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		cloudDeployer, ok := deployer.(*clouddeploy.Deployer)
 		if !ok {
 			logger.Fatal("allow-lists are only supported for cloud deployer")
 		}
 
-		err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cluster.GetID(), args[1])
+		err := cloudDeployer.AcceptPrivateEndpointLink(ctx, cluster.GetID(), args[1])
 		if err != nil {
 			logger.Fatal("failed to accept private endpoints link", zap.Error(err))
 		}

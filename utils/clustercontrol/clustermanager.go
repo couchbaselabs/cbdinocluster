@@ -83,7 +83,7 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 
 		m.Logger.Info("initiating rebalance")
 
-		err = firstNodeMgr.Rebalance(ctx)
+		err = firstNodeMgr.Rebalance(ctx, nil)
 		if err != nil {
 			return errors.Wrap(err, "failed to start rebalance")
 		}

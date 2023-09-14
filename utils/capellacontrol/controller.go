@@ -349,18 +349,18 @@ func (c *Controller) DeleteProject(
 }
 
 type ClusterInfo struct {
-	Config ClusterInfo_Config `json:"config"`
-	// Connect
-	CreatedAt        time.Time `json:"createdAt"`
-	CreatedBy        string    `json:"createdBy"`
-	CreatedByUserID  string    `json:"createdByUserID"`
-	Description      string    `json:"description"`
-	HasOnOffSchedule bool      `json:"hasOnOffSchedule"`
-	Id               string    `json:"id"`
-	ModifiedAt       time.Time `json:"modifiedAt"`
-	ModifiedBy       string    `json:"modifiedBy"`
-	ModifiedByUserID string    `json:"modifiedByUserID"`
-	Name             string    `json:"name"`
+	Config           ClusterInfo_Config  `json:"config"`
+	Connect          ClusterInfo_Connect `json:"connect"`
+	CreatedAt        time.Time           `json:"createdAt"`
+	CreatedBy        string              `json:"createdBy"`
+	CreatedByUserID  string              `json:"createdByUserID"`
+	Description      string              `json:"description"`
+	HasOnOffSchedule bool                `json:"hasOnOffSchedule"`
+	Id               string              `json:"id"`
+	ModifiedAt       time.Time           `json:"modifiedAt"`
+	ModifiedBy       string              `json:"modifiedBy"`
+	ModifiedByUserID string              `json:"modifiedByUserID"`
+	Name             string              `json:"name"`
 	// Package
 	PlaygroundDisabled bool                 `json:"playgroundDisabled"`
 	Project            ClusterInfo_Project  `json:"project"`
@@ -378,6 +378,10 @@ type ClusterInfo_Config struct {
 	CustomImports bool   `json:"customImports"`
 	SingleAz      bool   `json:"singleAz"`
 	Version       string `json:"version"`
+}
+
+type ClusterInfo_Connect struct {
+	Srv string `json:"srv"`
 }
 
 type ClusterInfo_Project struct {
@@ -499,7 +503,35 @@ func (c *Controller) UpdateClusterMeta(
 	return nil
 }
 
-type UpdateClusterSpecsRequest CreateClusterRequest_Spec
+type UpdateClusterSpecsRequest_Spec struct {
+	Compute         UpdateClusterSpecsRequest_Spec_Compute     `json:"compute"`
+	Count           int                                        `json:"count"`
+	Disk            UpdateClusterSpecsRequest_Spec_Disk        `json:"disk"`
+	DiskAutoScaling UpdateClusterSpecsRequest_Spec_DiskScaling `json:"diskAutoScaling"`
+	Services        []UpdateClusterSpecsRequest_Spec_Service   `json:"services"`
+}
+
+type UpdateClusterSpecsRequest_Spec_Compute struct {
+	Type string `json:"type"`
+}
+
+type UpdateClusterSpecsRequest_Spec_Disk struct {
+	Type     string `json:"type"`
+	SizeInGb int    `json:"sizeInGb"`
+	Iops     int    `json:"iops"`
+}
+
+type UpdateClusterSpecsRequest_Spec_DiskScaling struct {
+	Enabled bool `json:"enabled"`
+}
+
+type UpdateClusterSpecsRequest_Spec_Service struct {
+	Type string `json:"type"`
+}
+
+type UpdateClusterSpecsRequest struct {
+	Specs []UpdateClusterSpecsRequest_Spec `json:"specs"`
+}
 
 func (c *Controller) UpdateClusterSpecs(
 	ctx context.Context,

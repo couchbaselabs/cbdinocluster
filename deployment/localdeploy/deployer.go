@@ -61,6 +61,14 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	return nil, nil
 }
 
+func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*clusterdef.Cluster, error) {
+	return nil, errors.New("localdeploy does not support fetching the cluster definition")
+}
+
+func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
+	return errors.New("localdeploy does not support cluster modification")
+}
+
 func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	if clusterID != "a" {
 		return errors.New("invalid cluster-id")

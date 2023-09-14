@@ -26,15 +26,16 @@ type Controller struct {
 }
 
 type NodeInfo struct {
-	ContainerID string
-	NodeID      string
-	ClusterID   string
-	Name        string
-	Creator     string
-	Owner       string
-	Purpose     string
-	Expiry      time.Time
-	IPAddress   string
+	ContainerID          string
+	NodeID               string
+	ClusterID            string
+	Name                 string
+	Creator              string
+	Owner                string
+	Purpose              string
+	Expiry               time.Time
+	IPAddress            string
+	InitialServerVersion string
 }
 
 func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
@@ -43,6 +44,7 @@ func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
 	nodeName := container.Labels["com.couchbase.dyncluster.node_name"]
 	creator := container.Labels["com.couchbase.dyncluster.creator"]
 	purpose := container.Labels["com.couchbase.dyncluster.purpose"]
+	initialServerVersion := container.Labels["com.couchbase.dyncluster.initial_server_version"]
 
 	// If there is no cluster ID specified, this is not a cbdyncluster container
 	if clusterID == "" {
@@ -55,15 +57,16 @@ func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
 	}
 
 	return &NodeInfo{
-		ContainerID: container.ID,
-		NodeID:      nodeID,
-		ClusterID:   clusterID,
-		Name:        nodeName,
-		Creator:     creator,
-		Owner:       "",
-		Purpose:     purpose,
-		Expiry:      time.Time{},
-		IPAddress:   pickedNetwork.IPAddress,
+		ContainerID:          container.ID,
+		NodeID:               nodeID,
+		ClusterID:            clusterID,
+		Name:                 nodeName,
+		Creator:              creator,
+		Owner:                "",
+		Purpose:              purpose,
+		Expiry:               time.Time{},
+		IPAddress:            pickedNetwork.IPAddress,
+		InitialServerVersion: initialServerVersion,
 	}
 }
 
@@ -86,7 +89,6 @@ func (c *Controller) ListNodes(ctx context.Context) ([]*NodeInfo, error) {
 		if node != nil {
 			nodeState, err := c.ReadNodeState(ctx, node.ContainerID)
 			if err == nil && nodeState != nil {
-				node.Owner = nodeState.Owner
 				node.Expiry = nodeState.Expiry
 			}
 
@@ -98,12 +100,10 @@ func (c *Controller) ListNodes(ctx context.Context) ([]*NodeInfo, error) {
 }
 
 type DockerNodeState struct {
-	Owner  string
 	Expiry time.Time
 }
 
 type DockerNodeStateJson struct {
-	Owner  string
 	Expiry time.Time
 }
 
@@ -111,7 +111,6 @@ func (c *Controller) WriteNodeState(ctx context.Context, containerID string, sta
 	c.Logger.Debug("writing node state", zap.String("container", containerID), zap.Any("state", state))
 
 	jsonState := &DockerNodeStateJson{
-		Owner:  state.Owner,
 		Expiry: state.Expiry,
 	}
 
@@ -178,18 +177,16 @@ func (c *Controller) ReadNodeState(ctx context.Context, containerID string) (*Do
 	}
 
 	return &DockerNodeState{
-		Owner:  nodeStateJson.Owner,
 		Expiry: nodeStateJson.Expiry,
 	}, nil
 }
 
 type DeployNodeOptions struct {
-	Creator   string
-	Name      string
-	Purpose   string
-	Expiry    time.Duration
-	ClusterID string
-	Image     *ImageRef
+	Purpose            string
+	Expiry             time.Duration
+	ClusterID          string
+	Image              *ImageRef
+	ImageServerVersion string
 }
 
 func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*NodeInfo, error) {
@@ -203,11 +200,10 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
 		Image: def.Image.ImagePath,
 		Labels: map[string]string{
-			"com.couchbase.dyncluster.creator":    def.Creator,
-			"com.couchbase.dyncluster.cluster_id": def.ClusterID,
-			"com.couchbase.dyncluster.purpose":    def.Purpose,
-			"com.couchbase.dyncluster.node_id":    nodeID,
-			"com.couchbase.dyncluster.node_name":  def.Name,
+			"com.couchbase.dyncluster.cluster_id":             def.ClusterID,
+			"com.couchbase.dyncluster.purpose":                def.Purpose,
+			"com.couchbase.dyncluster.node_id":                nodeID,
+			"com.couchbase.dyncluster.initial_server_version": def.ImageServerVersion,
 		},
 		// same effect as ntp
 		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
@@ -232,7 +228,6 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 	expiryTime := time.Now().Add(def.Expiry)
 
 	err = c.WriteNodeState(ctx, containerID, &DockerNodeState{
-		Owner:  def.Creator,
 		Expiry: expiryTime,
 	})
 	if err != nil {

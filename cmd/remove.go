@@ -15,12 +15,9 @@ var removeCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
-		deployer, cluster, err := helper.IdentifyCluster(ctx, args[0])
-		if err != nil {
-			logger.Fatal("failed to identify cluster", zap.Error(err))
-		}
+		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
-		err = deployer.RemoveCluster(ctx, cluster.GetID())
+		err := deployer.RemoveCluster(ctx, cluster.GetID())
 		if err != nil {
 			logger.Fatal("failed to remove cluster", zap.Error(err))
 		}
