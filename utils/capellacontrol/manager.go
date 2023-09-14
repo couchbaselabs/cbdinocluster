@@ -52,11 +52,11 @@ func (m *Manager) WaitForClusterState(
 			return fmt.Errorf("cluster disappeared during wait for '%s' state", desiredState)
 		}
 
-		if clusterStatus != desiredState {
-			m.Logger.Info("waiting for cluster status...",
-				zap.String("current", clusterStatus),
-				zap.String("desired", desiredState))
+		m.Logger.Info("waiting for cluster status...",
+			zap.String("current", clusterStatus),
+			zap.String("desired", desiredState))
 
+		if clusterStatus != desiredState {
 			time.Sleep(10 * time.Second)
 			continue
 		}
@@ -79,11 +79,11 @@ func (m *Manager) WaitForPrivateEndpointsEnabled(
 			return errors.Wrap(err, "failed to list private endpoint links")
 		}
 
-		if pe.Data.Status != desiredState {
-			m.Logger.Info("waiting for private endpoints to enable...",
-				zap.String("currentState", pe.Data.Status),
-				zap.String("desiredState", desiredState))
+		m.Logger.Info("waiting for private endpoints to enable...",
+			zap.String("currentState", pe.Data.Status),
+			zap.String("desiredState", desiredState))
 
+		if pe.Data.Status != desiredState {
 			time.Sleep(10 * time.Second)
 			continue
 		}
@@ -117,6 +117,9 @@ func (m *Manager) WaitForPrivateEndpointLink(
 			time.Sleep(1 * time.Second)
 			continue
 		}
+
+		m.Logger.Info("found!",
+			zap.String("vpce-id", vpceID))
 
 		return foundLink, nil
 	}
@@ -163,11 +166,11 @@ func (m *Manager) WaitForPrivateEndpointLinkState(
 			return fmt.Errorf("link disappeared during wait for '%s' state", desiredState)
 		}
 
-		if linkStatus != desiredState {
-			m.Logger.Info("waiting for private endpoint link status...",
-				zap.String("current", linkStatus),
-				zap.String("desired", desiredState))
+		m.Logger.Info("waiting for private endpoint link status...",
+			zap.String("current", linkStatus),
+			zap.String("desired", desiredState))
 
+		if linkStatus != desiredState {
 			time.Sleep(5 * time.Second)
 			continue
 		}

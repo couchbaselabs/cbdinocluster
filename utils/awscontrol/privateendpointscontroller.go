@@ -123,11 +123,11 @@ func (c *PrivateEndpointsController) WaitForVPCEndpointStatus(ctx context.Contex
 			return fmt.Errorf("endpoint disappeared during wait for '%s' state", desiredState)
 		}
 
-		if endpointStatus != desiredState {
-			c.Logger.Info("waiting for private endpoint status...",
-				zap.String("current", endpointStatus),
-				zap.String("desired", desiredState))
+		c.Logger.Info("waiting for private endpoint status...",
+			zap.String("current", endpointStatus),
+			zap.String("desired", desiredState))
 
+		if endpointStatus != desiredState {
 			time.Sleep(5 * time.Second)
 			continue
 		}
