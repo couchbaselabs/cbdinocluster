@@ -315,7 +315,7 @@ func (c *PrivateEndpointsController) cleanupPrivateEndpoints(ctx context.Context
 			peConnection := peLink.Properties.ManualPrivateLinkServiceConnections[0]
 			peConnState := peConnection.Properties.PrivateLinkServiceConnectionState
 
-			if *peConnState.Status != "Rejected" {
+			if *peConnState.Status != "Rejected" && *peConnState.Status != "Disconnected" {
 				// this connection is still active
 				continue
 			}
