@@ -881,13 +881,7 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 
 	curTime := time.Now()
 	for _, cluster := range clusters {
-		if cluster.Cluster == nil {
-			continue
-		}
-
 		if !cluster.Meta.Expiry.After(curTime) {
-			// in order to avoid blocking people trying to do work while
-			// we cleanup old clusters, we only delete the cluster here
 			p.logger.Info("removing cluster",
 				zap.String("cluster-id", cluster.Meta.ID.String()))
 
