@@ -82,6 +82,35 @@ func NewController(ctx context.Context, opts *ControllerOptions) (*Controller, e
 	}, nil
 }
 
+type capellaError struct {
+	ErrorName string `json:"error"`
+	ErrorType string `json:"errorType"`
+	Message   string `json:"message"`
+	FullText  string
+}
+
+var _ error = capellaError{}
+
+func (e capellaError) Error() string {
+	return fmt.Sprintf("capella error Error:%s, ErrorType:%s Message:%s Full:%s",
+		e.ErrorName, e.ErrorType, e.Message, e.FullText)
+}
+
+type requestError struct {
+	StatusCode int
+	Cause      error
+}
+
+var _ error = requestError{}
+
+func (e requestError) Error() string {
+	return fmt.Sprintf("request error (status: %d): %s", e.StatusCode, e.Cause)
+}
+
+func (e requestError) Unwrap() error {
+	return e.Cause
+}
+
 func (c *Controller) doReq(
 	ctx context.Context,
 	req *http.Request,
@@ -97,7 +126,14 @@ func (c *Controller) doReq(
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bytes, _ := io.ReadAll(resp.Body)
 
-		return fmt.Errorf("non-200 status code encountered: %d %s", resp.StatusCode, bytes)
+		var parsedErr capellaError
+		_ = json.Unmarshal(bytes, &parsedErr)
+		parsedErr.FullText = string(bytes)
+
+		return &requestError{
+			StatusCode: resp.StatusCode,
+			Cause:      &parsedErr,
+		}
 	}
 
 	if out != nil {
@@ -122,26 +158,23 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 		if err != nil {
 			// If the error contains 'Unauthorized' and we are using basic credentials
 			// for JWT authentication, we refresh the token when this happens
-			if strings.Contains(err.Error(), "Unauthorized") {
-				basicAuth, _ := c.auth.(*BasicCredentials)
-				if basicAuth != nil {
-					c.logger.Debug("received unauthenticated error with basic credentials, refreshing jwt",
-						zap.Error(err))
+			var capellaErr *capellaError
+			if errors.As(err, &capellaErr) {
+				if capellaErr.ErrorName == "Unauthorized" {
+					basicAuth, _ := c.auth.(*BasicCredentials)
+					if basicAuth != nil {
+						c.logger.Debug("received unauthenticated error with basic credentials, refreshing jwt",
+							zap.Error(err))
 
-					reauthErr := c.updateJwtToken(ctx, basicAuth)
-					if reauthErr != nil {
-						return errors.Wrap(err,
-							fmt.Sprintf("failed to update JWT token after failed request: %s", reauthErr))
+						reauthErr := c.updateJwtToken(ctx, basicAuth)
+						if reauthErr != nil {
+							return errors.Wrap(err,
+								fmt.Sprintf("failed to update JWT token after failed request: %s", reauthErr))
+						}
+
+						continue
 					}
-
-					continue
 				}
-			}
-
-			// If this is an authentication error, we don't retry and instead just return it
-			// TODO(brett19): Make the error typed so we can handle it without string parsing...
-			if strings.Contains(err.Error(), "401") {
-				return err
 			}
 
 			if retryNum == maxRetries {
@@ -244,7 +277,7 @@ func (c *Controller) updateJwtToken(ctx context.Context, auth *BasicCredentials)
 
 		req.SetBasicAuth(auth.Username, auth.Password)
 		return req, nil
-	}, 10, &resp)
+	}, 3, &resp)
 	if err != nil {
 		return err
 	}
