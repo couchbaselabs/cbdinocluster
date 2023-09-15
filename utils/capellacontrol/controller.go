@@ -112,12 +112,58 @@ func (c *Controller) doReq(
 }
 
 func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.Request, error), maxRetries int, out interface{}) error {
-	req, err := makeReq()
-	if err != nil {
-		return errors.Wrap(err, "failed to build request")
-	}
+	for retryNum := 0; ; retryNum++ {
+		req, err := makeReq()
+		if err != nil {
+			return errors.Wrap(err, "failed to build request")
+		}
 
-	return c.doReq(ctx, req, out)
+		err = c.doReq(ctx, req, out)
+		if err != nil {
+			// If the error contains 'Unauthorized' and we are using basic credentials
+			// for JWT authentication, we refresh the token when this happens
+			if strings.Contains(err.Error(), "Unauthorized") {
+				basicAuth, _ := c.auth.(*BasicCredentials)
+				if basicAuth != nil {
+					c.logger.Debug("received unauthenticated error with basic credentials, refreshing jwt",
+						zap.Error(err))
+
+					reauthErr := c.updateJwtToken(ctx, basicAuth)
+					if reauthErr != nil {
+						return errors.Wrap(err,
+							fmt.Sprintf("failed to update JWT token after failed request: %s", reauthErr))
+					}
+
+					continue
+				}
+			}
+
+			// If this is an authentication error, we don't retry and instead just return it
+			// TODO(brett19): Make the error typed so we can handle it without string parsing...
+			if strings.Contains(err.Error(), "401") {
+				return err
+			}
+
+			if retryNum == maxRetries {
+				c.logger.Debug("request failed, exhausted retries",
+					zap.Error(err),
+					zap.Int("retryNum", retryNum),
+					zap.Int("maxRetries", maxRetries))
+				return err
+			}
+
+			retryTime := time.Duration(500+retryNum*100) * time.Millisecond
+			c.logger.Debug("request failed, retrying",
+				zap.Error(err),
+				zap.Duration("retryTime", retryTime),
+				zap.Int("retryNum", retryNum),
+				zap.Int("maxRetries", maxRetries))
+			time.Sleep(retryTime)
+			continue
+		}
+
+		return nil
+	}
 }
 
 func (c *Controller) doBasicReq(
@@ -157,6 +203,7 @@ func (c *Controller) doBasicReq(
 		switch auth := c.auth.(type) {
 		case *BasicCredentials:
 			if auth.jwtToken == "" {
+				c.logger.Debug("refreshing jwt token")
 				err = c.updateJwtToken(ctx, auth)
 				if err != nil {
 					return nil, errors.Wrap(err, "failed to update jwt token")
