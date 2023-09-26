@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/user"
@@ -363,4 +365,9 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 	logger.Fatal("failed to identify cluster using specified identifier",
 		zap.String("identifier", userInput))
 	return "", nil, nil
+}
+
+func (h *CmdHelper) OutputJson(value interface{}) {
+	out, _ := json.Marshal(value)
+	fmt.Printf("%s\n", out)
 }

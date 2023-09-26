@@ -27,6 +27,27 @@ type ConnectInfo struct {
 	Mgmt    string
 }
 
+type UserInfo struct {
+	Username string
+	CanRead  bool
+	CanWrite bool
+}
+
+type CreateUserOptions struct {
+	Username string
+	Password string
+	CanRead  bool
+	CanWrite bool
+}
+
+type BucketInfo struct {
+	Name string
+}
+
+type CreateBucketOptions struct {
+	Name string
+}
+
 type Deployer interface {
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
 	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
@@ -36,4 +57,10 @@ type Deployer interface {
 	RemoveAll(ctx context.Context) error
 	Cleanup(ctx context.Context) error
 	GetConnectInfo(ctx context.Context, clusterID string) (*ConnectInfo, error)
+	ListUsers(ctx context.Context, clusterID string) ([]UserInfo, error)
+	CreateUser(ctx context.Context, clusterID string, opts *CreateUserOptions) error
+	DeleteUser(ctx context.Context, clusterID string, username string) error
+	ListBuckets(ctx context.Context, clusterID string) ([]BucketInfo, error)
+	CreateBucket(ctx context.Context, clusterID string, opts *CreateBucketOptions) error
+	DeleteBucket(ctx context.Context, clusterID string, bucketName string) error
 }

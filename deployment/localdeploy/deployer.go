@@ -101,3 +101,27 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		Mgmt:    "http://127.0.0.1:8091",
 	}, nil
 }
+
+func (d *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
+	return nil, errors.New("localdeploy does not support user modification")
+}
+
+func (d *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deployment.CreateUserOptions) error {
+	return errors.New("localdeploy does not support user management")
+}
+
+func (d *Deployer) DeleteUser(ctx context.Context, clusterID string, username string) error {
+	return errors.New("localdeploy does not support user management")
+}
+
+func (d *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
+	return nil, errors.New("localdeploy does not support bucket management")
+}
+
+func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
+	return errors.New("localdeploy does not support user management")
+}
+
+func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
+	return errors.New("localdeploy does not support user management")
+}

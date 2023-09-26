@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/go-querystring/query"
 	"github.com/pkg/errors"
 )
 
@@ -29,7 +30,7 @@ func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bytes, _ := io.ReadAll(resp.Body)
 
 		return fmt.Errorf("non-200 status code encountered: %d %s", resp.StatusCode, bytes)
@@ -88,7 +89,14 @@ func (c *Controller) doGet(ctx context.Context, path string, out interface{}) er
 	}, maxRetries, out)
 }
 
-func (c *Controller) doFormPost(ctx context.Context, path string, data url.Values, allowRetries bool, out interface{}) error {
+func (c *Controller) doDelete(ctx context.Context, path string, out interface{}) error {
+	maxRetries := 10
+	return c.doRetriableReq(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodDelete, c.Endpoint+path, nil)
+	}, maxRetries, out)
+}
+
+func (c *Controller) doFormReq(ctx context.Context, method string, path string, data url.Values, allowRetries bool, out interface{}) error {
 	encodedData := data.Encode()
 
 	maxRetries := 10
@@ -97,7 +105,7 @@ func (c *Controller) doFormPost(ctx context.Context, path string, data url.Value
 	}
 
 	return c.doRetriableReq(ctx, func() (*http.Request, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Endpoint+path, strings.NewReader(encodedData))
+		req, err := http.NewRequestWithContext(ctx, method, c.Endpoint+path, strings.NewReader(encodedData))
 		if err != nil {
 			return nil, err
 		}
@@ -106,6 +114,14 @@ func (c *Controller) doFormPost(ctx context.Context, path string, data url.Value
 
 		return req, nil
 	}, maxRetries, out)
+}
+
+func (c *Controller) doFormPost(ctx context.Context, path string, data url.Values, allowRetries bool, out interface{}) error {
+	return c.doFormReq(ctx, http.MethodPost, path, data, allowRetries, out)
+}
+
+func (c *Controller) doFormPut(ctx context.Context, path string, data url.Values, allowRetries bool, out interface{}) error {
+	return c.doFormReq(ctx, http.MethodPut, path, data, allowRetries, out)
 }
 
 func (c *Controller) Ping(ctx context.Context) error {
@@ -342,4 +358,135 @@ func (c *Controller) ListTasks(ctx context.Context) ([]*Task, error) {
 	}
 
 	return tasks, nil
+}
+
+type ListUsersRequest struct {
+	Order    string `url:"order"`
+	PageSize int    `url:"pageSize"`
+	SortBy   string `url:"sortBy"`
+}
+
+type ListUsersResponse struct {
+	Total int `json:"total"`
+	// links
+	// skipped
+	Users []ListUsersResponse_User `json:"users"`
+}
+
+type ListUsersResponse_User struct {
+	ID     string                        `json:"id"`
+	Domain string                        `json:"domain"`
+	Roles  []ListUsersResponse_User_Role `json:"roles"`
+	// groups
+	// external_groups
+	Name               string `json:"name"`
+	Uuid               string `json:"uuid"`
+	PasswordChangeDate string `json:"password_change_date"`
+}
+
+type ListUsersResponse_User_Role struct {
+	Role           string                               `json:"role"`
+	BucketName     string                               `json:"bucket_name"`
+	ScopeName      string                               `json:"scope_name"`
+	CollectionName string                               `json:"collection_name"`
+	Origins        []ListUsersResponse_User_Role_Origin `json:"origins"`
+}
+
+type ListUsersResponse_User_Role_Origin struct {
+	Type string `json:"type"`
+}
+
+func (c *Controller) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error) {
+	resp := &ListUsersResponse{}
+
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/settings/rbac/users?%s", form.Encode())
+	err := c.doGet(ctx, path, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+type CreateUserRequest struct {
+	Roles    []string `url:"roles,comma"`
+	Name     string   `url:"name"`
+	Groups   []string `url:"groups,comma"`
+	Password string   `url:"password"`
+}
+
+func (c *Controller) CreateUser(ctx context.Context, username string, req *CreateUserRequest) error {
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/settings/rbac/users/local/%s", username)
+	err := c.doFormPut(ctx, path, form, true, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) DeleteUser(ctx context.Context, username string) error {
+	path := fmt.Sprintf("/settings/rbac/users/local/%s", username)
+	err := c.doDelete(ctx, path, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type ListBucketsResponse_Bucket struct {
+	Name string `json:"name"`
+}
+
+func (c *Controller) ListBuckets(ctx context.Context) ([]ListBucketsResponse_Bucket, error) {
+	var resp []ListBucketsResponse_Bucket
+
+	path := "/pools/default/buckets"
+	err := c.doGet(ctx, path, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+type CreateBucketRequest struct {
+	Name                   string `url:"name"`
+	BucketType             string `url:"bucketType"`
+	StorageBackend         string `url:"storageBackend"`
+	AutoCompactionDefined  bool   `url:"autoCompactionDefined"`
+	EvictionPolicy         string `url:"evictionPolicy"`
+	ThreadsNumber          int    `url:"threadsNumber"`
+	ReplicaNumber          int    `url:"replicaNumber"`
+	DurabilityMinLevel     string `url:"durabilityMinLevel"`
+	CompressionMode        string `url:"compressionMode"`
+	MaxTTL                 int    `url:"maxTTL"`
+	ReplicaIndex           int    `url:"replicaIndex"`
+	ConflictResolutionType string `url:"conflictResolutionType"`
+	RamQuotaMB             int    `url:"ramQuotaMB"`
+	FlushEnabled           bool   `url:"flushEnabled,int"`
+}
+
+func (c *Controller) CreateBucket(ctx context.Context, req *CreateBucketRequest) error {
+	form, _ := query.Values(req)
+	path := "/pools/default/buckets"
+	err := c.doFormPost(ctx, path, form, true, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) DeleteBucket(ctx context.Context, bucketName string) error {
+	path := fmt.Sprintf("/pools/default/buckets/%s", bucketName)
+	err := c.doDelete(ctx, path, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

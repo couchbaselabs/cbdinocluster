@@ -595,7 +595,7 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 	return nil
 }
 
-func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
+func (d *Deployer) getCluster(ctx context.Context, clusterID string) (*ClusterInfo, error) {
 	clusters, err := d.listClusters(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list nodes")
@@ -609,6 +609,15 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 	if thisCluster == nil {
 		return nil, errors.New("failed to find cluster")
+	}
+
+	return thisCluster, nil
+}
+
+func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
+	thisCluster, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster info")
 	}
 
 	var connstrAddrs []string
@@ -670,6 +679,166 @@ func (d *Deployer) DestroyAllResources(ctx context.Context) error {
 		if err != nil {
 			return errors.Wrap(err, "failed to remove")
 		}
+	}
+
+	return nil
+}
+
+func (d *Deployer) getController(ctx context.Context, clusterID string) (*clustercontrol.NodeManager, error) {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster info")
+	}
+
+	nodeCtrl := &clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:8091", clusterInfo.Nodes[0].IPAddress),
+	}
+
+	return nodeCtrl, nil
+}
+
+func (d *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	resp, err := controller.Controller().ListUsers(ctx, &clustercontrol.ListUsersRequest{
+		Order:    "asc",
+		PageSize: 100,
+		SortBy:   "id",
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list users")
+	}
+
+	var users []deployment.UserInfo
+	for _, user := range resp.Users {
+		canRead := false
+		canWrite := false
+		for _, perm := range user.Roles {
+			if perm.Role == "admin" {
+				canWrite = true
+				canRead = true
+			} else if perm.Role == "data_reader" {
+				canRead = true
+			}
+		}
+
+		users = append(users, deployment.UserInfo{
+			Username: user.ID,
+			CanRead:  canRead,
+			CanWrite: canWrite,
+		})
+	}
+
+	return users, nil
+}
+
+func (d *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deployment.CreateUserOptions) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	var roles []string
+	if opts.CanWrite {
+		roles = append(roles, "admin")
+	} else if opts.CanRead {
+		roles = append(roles,
+			"ro_admin",
+			"analytics_reader",
+			"data_reader[*]",
+			"views_reader[*]",
+			"query_select[*]",
+			"fts_searcher[*]")
+	}
+
+	err = controller.Controller().CreateUser(ctx, opts.Username, &clustercontrol.CreateUserRequest{
+		Name:     "",
+		Password: opts.Password,
+		Roles:    roles,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create user")
+	}
+
+	return nil
+}
+
+func (d *Deployer) DeleteUser(ctx context.Context, clusterID string, username string) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	err = controller.Controller().DeleteUser(ctx, username)
+	if err != nil {
+		return errors.Wrap(err, "failed to delete user")
+	}
+
+	return nil
+}
+
+func (d *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	resp, err := controller.Controller().ListBuckets(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list buckets")
+	}
+
+	var buckets []deployment.BucketInfo
+	for _, bucket := range resp {
+		buckets = append(buckets, deployment.BucketInfo{
+			Name: bucket.Name,
+		})
+	}
+
+	return buckets, nil
+}
+
+func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	err = controller.Controller().CreateBucket(ctx, &clustercontrol.CreateBucketRequest{
+		Name:                   opts.Name,
+		BucketType:             "membase",
+		StorageBackend:         "couchstore",
+		AutoCompactionDefined:  false,
+		EvictionPolicy:         "valueOnly",
+		ThreadsNumber:          3,
+		ReplicaNumber:          1,
+		DurabilityMinLevel:     "none",
+		CompressionMode:        "passive",
+		MaxTTL:                 0,
+		ReplicaIndex:           0,
+		ConflictResolutionType: "seqno",
+		RamQuotaMB:             256,
+		FlushEnabled:           false,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create bucket")
+	}
+
+	return nil
+}
+
+func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	err = controller.Controller().DeleteBucket(ctx, bucketName)
+	if err != nil {
+		return errors.Wrap(err, "failed to delete bucket")
 	}
 
 	return nil

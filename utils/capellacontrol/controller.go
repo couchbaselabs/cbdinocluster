@@ -156,6 +156,10 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 
 		err = c.doReq(ctx, req, out)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+
 			// If the error contains 'Unauthorized' and we are using basic credentials
 			// for JWT authentication, we refresh the token when this happens
 			var capellaErr *capellaError
@@ -937,4 +941,144 @@ func (c *Controller) AcceptPrivateEndpointLink(
 	}
 
 	return err
+}
+
+type UserInfo struct {
+	ID          string                         `json:"ID"`
+	Name        string                         `json:"name"`
+	Permissions map[string]UserInfo_Permission `json:"permissions"`
+}
+
+type UserInfo_Permission struct {
+	Buckets []string `json:"buckets"`
+}
+
+type ListUsersResponse PagedResourceResponse[*UserInfo]
+
+func (c *Controller) ListUsers(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *PaginatedRequest,
+) (*ListUsersResponse, error) {
+	resp := &ListUsersResponse{}
+
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/users?%s",
+		tenantID, projectID, clusterID, form.Encode())
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+type CreateUserRequest struct {
+	Name        string                                  `json:"name"`
+	Password    string                                  `json:"password"`
+	Permissions map[string]CreateUserRequest_Permission `json:"permissions"`
+}
+
+type CreateUserRequest_Permission struct {
+	Buckets []string `json:"buckets,omitempty"`
+}
+
+func (c *Controller) CreateUser(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *CreateUserRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/users", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (c *Controller) DeleteUser(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	userId string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/users/%s",
+		tenantID, projectID, clusterID,
+		userId)
+	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type ListBucketsResponse struct {
+	Buckets         Resource[[]Resource[ListBucketsResponse_Bucket]] `json:"buckets"`
+	FreeMemoryInMb  int                                              `json:"freeMemoryInMb"`
+	MaxReplicas     int                                              `json:"maxReplicas"`
+	TotalMemoryInMb int                                              `json:"totalMemoryInMb"`
+}
+
+type ListBucketsResponse_Bucket struct {
+	Name string `json:"name"`
+	// ...
+}
+
+func (c *Controller) ListBuckets(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) (*ListBucketsResponse, error) {
+	resp := &ListBucketsResponse{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/buckets", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+type CreateBucketRequest struct {
+	// backupSchedule
+	BucketConflictResolution string `json:"bucketConflictResolution"`
+	DurabilityLevel          string `json:"durabilityLevel"`
+	Flush                    bool   `json:"flush"`
+	MemoryAllocationInMB     int    `json:"memoryAllocationInMb"`
+	Name                     string `json:"name"`
+	Replicas                 int    `json:"replicas"`
+	StorageBackend           string `json:"storageBackend"`
+	// timeToLive
+	Type string `json:"type"`
+}
+
+func (c *Controller) CreateBucket(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *CreateBucketRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/buckets", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (c *Controller) DeleteBucket(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	bucketId string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/buckets/%s",
+		tenantID, projectID, clusterID,
+		bucketId)
+	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

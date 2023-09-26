@@ -2,6 +2,7 @@ package clouddeploy
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"time"
@@ -887,6 +888,167 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 
 			p.removeCluster(ctx, cluster)
 		}
+	}
+
+	return nil
+}
+
+func (p *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+		Page:          1,
+		PerPage:       1000,
+		SortBy:        "name",
+		SortDirection: "asc",
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list users")
+	}
+
+	var users []deployment.UserInfo
+	for _, user := range resp.Data {
+		canRead := false
+		canWrite := false
+		for permName, _ := range user.Data.Permissions {
+			if permName == "data_writer" {
+				canWrite = true
+			} else if permName == "data_reader" {
+				canRead = true
+			}
+		}
+
+		users = append(users, deployment.UserInfo{
+			Username: user.Data.Name,
+			CanRead:  canRead,
+			CanWrite: canWrite,
+		})
+	}
+
+	return users, nil
+}
+
+func (p *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deployment.CreateUserOptions) error {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	perms := make(map[string]capellacontrol.CreateUserRequest_Permission)
+
+	if opts.CanRead {
+		perms["data_reader"] = capellacontrol.CreateUserRequest_Permission{}
+	}
+	if opts.CanWrite {
+		perms["data_writer"] = capellacontrol.CreateUserRequest_Permission{}
+	}
+
+	err = p.mgr.Client.CreateUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateUserRequest{
+		Name:        opts.Username,
+		Password:    opts.Password,
+		Permissions: perms,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create user")
+	}
+
+	return nil
+}
+
+func (p *Deployer) DeleteUser(ctx context.Context, clusterID string, username string) error {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+		Page:          1,
+		PerPage:       1000,
+		SortBy:        "name",
+		SortDirection: "asc",
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to list users")
+	}
+
+	userId := ""
+	for _, user := range resp.Data {
+		if user.Data.Name == username {
+			userId = user.Data.ID
+			break
+		}
+	}
+	if userId == "" {
+		return errors.New("failed to find user by username")
+	}
+
+	err = p.mgr.Client.DeleteUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, userId)
+	if err != nil {
+		return errors.Wrap(err, "failed to delete user")
+	}
+
+	return nil
+}
+
+func (p *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := p.mgr.Client.ListBuckets(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list buckets")
+	}
+
+	var buckets []deployment.BucketInfo
+	for _, bucket := range resp.Buckets.Data {
+		buckets = append(buckets, deployment.BucketInfo{
+			Name: bucket.Data.Name,
+		})
+	}
+
+	return buckets, nil
+}
+
+func (p *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	err = p.mgr.Client.CreateBucket(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateBucketRequest{
+		BucketConflictResolution: "seqno",
+		DurabilityLevel:          "none",
+		Flush:                    false,
+		MemoryAllocationInMB:     256,
+		Name:                     opts.Name,
+		Replicas:                 1,
+		StorageBackend:           "couchstore",
+		Type:                     "couchbase",
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create bucket")
+	}
+
+	return nil
+}
+
+func (p *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	// we can infer the bucket id by name right now
+	bucketId := base64.StdEncoding.EncodeToString([]byte(bucketName))
+
+	err = p.mgr.Client.DeleteBucket(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, bucketId)
+	if err != nil {
+		return errors.Wrap(err, "failed to delete bucket")
 	}
 
 	return nil

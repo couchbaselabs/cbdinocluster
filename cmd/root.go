@@ -26,4 +26,5 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Turns on verbose logging")
+	rootCmd.PersistentFlags().Bool("json", false, "Turns on JSON output for supported commands")
 }
