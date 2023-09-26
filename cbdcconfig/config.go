@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const Version = 4
+const Version = 5
 
 type StringBool string
 
@@ -94,6 +94,7 @@ type Config_Azure struct {
 
 type Config_Capella struct {
 	Enabled        StringBool `yaml:"enabled"`
+	Endpoint       string     `yaml:"endpoint"`
 	Username       string     `yaml:"username"`
 	Password       string     `yaml:"password"`
 	OrganizationID string     `yaml:"organization-id"`
@@ -118,9 +119,9 @@ func Upgrade(config *Config) *Config {
 	if config.Version < 2 {
 		config._DefaultCloud = "aws"
 		config.DefaultDeployer = "docker"
-		config.AWS._DefaultRegion = "us-west-2"
-		config.Azure._DefaultRegion = "westus2"
-		config.GCP._DefaultRegion = "us-west1"
+		config.AWS._DefaultRegion = DEFAULT_AWS_REGION
+		config.Azure._DefaultRegion = DEFAULT_AZURE_REGION
+		config.GCP._DefaultRegion = DEFAULT_GCP_REGION
 		config.Version = 2
 	}
 
@@ -132,6 +133,10 @@ func Upgrade(config *Config) *Config {
 
 	if config.Version < 4 {
 		config.Capella.DefaultCloud = config._DefaultCloud
+	}
+
+	if config.Version < 5 {
+		config.Capella.Endpoint = DEFAULT_CAPELLA_ENDPOINT
 	}
 
 	return config

@@ -481,7 +481,7 @@ var initCmd = &cobra.Command{
 						awsRegion = envAwsRegion
 					}
 					if awsRegion == "" {
-						awsRegion = "us-west-2"
+						awsRegion = cbdcconfig.DEFAULT_AWS_REGION
 					}
 
 					awsRegion = readString(
@@ -566,7 +566,7 @@ var initCmd = &cobra.Command{
 						azureRegion = azureCloudIdent.Region
 					}
 					if azureRegion == "" {
-						azureRegion = "westus2"
+						azureRegion = cbdcconfig.DEFAULT_AZURE_REGION
 					}
 
 					azureRegion = readString(
@@ -669,6 +669,7 @@ var initCmd = &cobra.Command{
 
 		printCapellaConfig := func() {
 			fmt.Printf("  Enabled: %t\n", curConfig.Capella.Enabled.Value())
+			fmt.Printf("  Endpoint: %s\n", curConfig.Capella.Endpoint)
 			fmt.Printf("  Username: %s\n", curConfig.Capella.Username)
 			fmt.Printf("  Password: %s\n", strings.Repeat("*", len(curConfig.Capella.Password)))
 			fmt.Printf("  Organization ID: %s\n", curConfig.Capella.OrganizationID)
@@ -679,6 +680,7 @@ var initCmd = &cobra.Command{
 		}
 		{
 			flagDisableCapella, _ := cmd.Flags().GetBool("disable-capella")
+			flagCapellaEndpoint, _ := cmd.Flags().GetString("capella-endpoint")
 			flagCapellaUser, _ := cmd.Flags().GetString("capella-user")
 			flagCapellaPass, _ := cmd.Flags().GetString("capella-pass")
 			flagCapellaOid, _ := cmd.Flags().GetString("capella-oid")
@@ -686,11 +688,13 @@ var initCmd = &cobra.Command{
 			flagCapellaAwsRegion, _ := cmd.Flags().GetString("capella-aws-region")
 			flagCapellaAzureRegion, _ := cmd.Flags().GetString("capella-azure-region")
 			flagCapellaGcpRegion, _ := cmd.Flags().GetString("capella-gcp-region")
+			envCapellaEndpoint := os.Getenv("CAPELLA_ENDPOINT")
 			envCapellaUser := os.Getenv("CAPELLA_USER")
 			envCapellaPass := os.Getenv("CAPELLA_PASS")
 			envCapellaOid := os.Getenv("CAPELLA_OID")
 
 			capellaEnabled := true
+			capellaEndpoint := ""
 			capellaUser := ""
 			capellaPass := ""
 			capellaOid := ""
@@ -711,6 +715,28 @@ var initCmd = &cobra.Command{
 					capellaEnabled)
 				if !capellaEnabled {
 					break
+				}
+
+				if flagCapellaEndpoint != "" {
+					fmt.Printf("Capella endpoint specified via flags:\n  %s\n", flagCapellaEndpoint)
+					capellaEndpoint = flagCapellaEndpoint
+				} else {
+					if capellaEndpoint == "" && envCapellaEndpoint != "" {
+						fmt.Printf("Defaulting to capella endpoint from environment.\n")
+						capellaEndpoint = envCapellaEndpoint
+					}
+					if capellaEndpoint == "" {
+						capellaEndpoint = cbdcconfig.DEFAULT_CAPELLA_ENDPOINT
+					}
+
+					capellaEndpoint = readString(
+						"What Capella endpoint should we use?",
+						capellaEndpoint, false)
+				}
+				if capellaEndpoint == "" {
+					fmt.Printf("Capella endpoint is required.\n")
+					capellaEnabled = false
+					continue
 				}
 
 				if flagCapellaUser != "" {
@@ -785,7 +811,7 @@ var initCmd = &cobra.Command{
 						}
 					}
 					if capellaProvider == "" {
-						capellaProvider = "aws"
+						capellaProvider = cbdcconfig.DEFAULT_CAPELLA_PROVIDER
 					}
 
 					capellaProvider = readString(
@@ -806,7 +832,7 @@ var initCmd = &cobra.Command{
 						capellaAwsRegion = curConfig.AWS.Region
 					}
 					if capellaAwsRegion == "" {
-						capellaAwsRegion = "us-west-2"
+						capellaAwsRegion = cbdcconfig.DEFAULT_AWS_REGION
 					}
 
 					capellaAwsRegion = readString(
@@ -827,7 +853,7 @@ var initCmd = &cobra.Command{
 						capellaAzureRegion = curConfig.Azure.Region
 					}
 					if capellaAzureRegion == "" {
-						capellaAzureRegion = "westus2"
+						capellaAzureRegion = cbdcconfig.DEFAULT_AZURE_REGION
 					}
 
 					capellaAzureRegion = readString(
@@ -848,7 +874,7 @@ var initCmd = &cobra.Command{
 						capellaGcpRegion = curConfig.GCP.Region
 					}
 					if capellaGcpRegion == "" {
-						capellaGcpRegion = "us-west1"
+						capellaGcpRegion = cbdcconfig.DEFAULT_GCP_REGION
 					}
 
 					capellaGcpRegion = readString(
@@ -929,6 +955,7 @@ func init() {
 	initCmd.Flags().String("github-token", "", "GitHub token to use")
 	initCmd.Flags().String("github-user", "", "GitHub user to use")
 	initCmd.Flags().String("disable-capella", "", "Disable Capella")
+	initCmd.Flags().String("capella-endpoint", "", "Capella endpoint to use")
 	initCmd.Flags().String("capella-user", "", "Capella user to use")
 	initCmd.Flags().String("capella-pass", "", "Capella pass to use")
 	initCmd.Flags().String("capella-oid", "", "Capella organization id to use")

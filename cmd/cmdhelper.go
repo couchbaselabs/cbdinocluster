@@ -122,13 +122,14 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 		return nil, nil
 	}
 
+	capellaEndpoint := config.Capella.Endpoint
 	capellaUser := config.Capella.Username
 	capellaPass := config.Capella.Password
 	capellaOid := config.Capella.OrganizationID
 
 	client, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
 		Logger:   logger,
-		Endpoint: "https://api.cloud.couchbase.com",
+		Endpoint: capellaEndpoint,
 		Auth: &capellacontrol.BasicCredentials{
 			Username: capellaUser,
 			Password: capellaPass,
