@@ -7,10 +7,9 @@ import (
 )
 
 var bucketsAddCmd = &cobra.Command{
-	Use:     "add",
-	Aliases: []string{"ls"},
-	Short:   "Adds a new bucket",
-	Args:    cobra.MinimumNArgs(2),
+	Use:   "add",
+	Short: "Adds a new bucket",
+	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
