@@ -129,14 +129,17 @@ func Upgrade(config *Config) *Config {
 		config.AWS.Region = config.AWS._DefaultRegion
 		config.GCP.Region = config.GCP._DefaultRegion
 		config.Azure.Region = config.Azure._DefaultRegion
+		config.Version = 3
 	}
 
 	if config.Version < 4 {
 		config.Capella.DefaultCloud = config._DefaultCloud
+		config.Version = 4
 	}
 
 	if config.Version < 5 {
 		config.Capella.Endpoint = DEFAULT_CAPELLA_ENDPOINT
+		config.Version = 5
 	}
 
 	return config
