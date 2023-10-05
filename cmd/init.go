@@ -891,6 +891,7 @@ var initCmd = &cobra.Command{
 			}
 
 			curConfig.Capella.Enabled.Set(capellaEnabled)
+			curConfig.Capella.Endpoint = capellaEndpoint
 			curConfig.Capella.Username = capellaUser
 			curConfig.Capella.Password = capellaPass
 			curConfig.Capella.OrganizationID = capellaOid
