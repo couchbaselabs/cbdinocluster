@@ -807,6 +807,11 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		return errors.Wrap(err, "failed to get cluster controller")
 	}
 
+	ramQuotaMb := 256
+	if opts.RamQuotaMB > 0 {
+		ramQuotaMb = opts.RamQuotaMB
+	}
+
 	err = controller.Controller().CreateBucket(ctx, &clustercontrol.CreateBucketRequest{
 		Name:                   opts.Name,
 		BucketType:             "membase",
@@ -820,7 +825,7 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		MaxTTL:                 0,
 		ReplicaIndex:           0,
 		ConflictResolutionType: "seqno",
-		RamQuotaMB:             256,
+		RamQuotaMB:             ramQuotaMb,
 		FlushEnabled:           false,
 	})
 	if err != nil {

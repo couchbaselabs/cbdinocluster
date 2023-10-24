@@ -18,10 +18,13 @@ var bucketsAddCmd = &cobra.Command{
 		clusterID := args[0]
 		bucketName := args[1]
 
+		ramQuotaMB, _ := cmd.Flags().GetInt("ram-quota-mb")
+
 		_, deployer, cluster := helper.IdentifyCluster(ctx, clusterID)
 
 		err := deployer.CreateBucket(ctx, cluster.GetID(), &deployment.CreateBucketOptions{
-			Name: bucketName,
+			Name:       bucketName,
+			RamQuotaMB: ramQuotaMB,
 		})
 		if err != nil {
 			logger.Fatal("failed to create bucket", zap.Error(err))
@@ -31,4 +34,6 @@ var bucketsAddCmd = &cobra.Command{
 
 func init() {
 	bucketsCmd.AddCommand(bucketsAddCmd)
+
+	bucketsAddCmd.Flags().Int("ram-quota-mb", 0, "The amount of RAM to provide for the bucket.")
 }

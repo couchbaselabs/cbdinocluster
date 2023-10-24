@@ -45,7 +45,8 @@ type BucketInfo struct {
 }
 
 type CreateBucketOptions struct {
-	Name string
+	Name       string
+	RamQuotaMB int
 }
 
 type Deployer interface {
