@@ -273,14 +273,27 @@ func (p *Deployer) buildCreateSpecs(
 			return nil, errors.New("invalid cloud provider specified")
 		}
 
-		services := nodeGroup.Services
-		if len(services) == 0 {
-			services = []clusterdef.Service{
-				clusterdef.KvService,
-				clusterdef.IndexService,
-				clusterdef.QueryService,
-				clusterdef.SearchService,
-			}
+		if nodeGroup.Cloud.InstanceType != "" {
+			instanceType = nodeGroup.Cloud.InstanceType
+		}
+		if nodeGroup.Cloud.DiskType != "" {
+			diskType = nodeGroup.Cloud.DiskType
+		}
+		if nodeGroup.Cloud.DiskSize != 0 {
+			diskSize = nodeGroup.Cloud.DiskSize
+		}
+		if nodeGroup.Cloud.DiskIops != 0 {
+			diskIops = nodeGroup.Cloud.DiskIops
+		}
+
+		services := []clusterdef.Service{
+			clusterdef.KvService,
+			clusterdef.IndexService,
+			clusterdef.QueryService,
+			clusterdef.SearchService,
+		}
+		if len(nodeGroup.Services) > 0 {
+			services = nodeGroup.Services
 		}
 
 		nsServices, err := clusterdef.ServicesToNsServices(services)
