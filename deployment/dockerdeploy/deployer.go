@@ -848,3 +848,19 @@ func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 
 	return nil
 }
+
+func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	resp, err := controller.Controller().GetTrustedCAs(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get trusted CAs")
+	}
+
+	lastCert := (*resp)[len(*resp)-1]
+
+	return strings.TrimSpace(lastCert.Pem), nil
+}

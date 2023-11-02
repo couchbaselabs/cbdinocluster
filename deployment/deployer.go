@@ -64,4 +64,5 @@ type Deployer interface {
 	ListBuckets(ctx context.Context, clusterID string) ([]BucketInfo, error)
 	CreateBucket(ctx context.Context, clusterID string, opts *CreateBucketOptions) error
 	DeleteBucket(ctx context.Context, clusterID string, bucketName string) error
+	GetCertificate(ctx context.Context, clusterID string) (string, error)
 }
