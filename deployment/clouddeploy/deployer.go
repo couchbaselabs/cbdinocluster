@@ -926,7 +926,7 @@ func (p *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deploymen
 	for _, user := range resp.Data {
 		canRead := false
 		canWrite := false
-		for permName, _ := range user.Data.Permissions {
+		for permName := range user.Data.Permissions {
 			if permName == "data_writer" {
 				canWrite = true
 			} else if permName == "data_reader" {
@@ -1070,4 +1070,20 @@ func (p *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 	}
 
 	return nil
+}
+
+func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := p.mgr.Client.GetTrustedCAs(ctx, clusterInfo.Cluster.Id)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get trusted CAs")
+	}
+
+	lastCert := (*resp)[len(*resp)-1]
+
+	return strings.TrimSpace(lastCert.Pem), nil
 }

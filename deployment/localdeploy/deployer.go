@@ -125,3 +125,7 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
 	return errors.New("localdeploy does not support user management")
 }
+
+func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
+	return "", errors.New("localdeploy does not support getting the CA certificate")
+}

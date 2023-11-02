@@ -1082,3 +1082,28 @@ func (c *Controller) DeleteBucket(
 
 	return nil
 }
+
+type GetTrustedCAsResponse []GetTrustedCAsResponse_Certificate
+
+type GetTrustedCAsResponse_Certificate struct {
+	ID        int    `json:"id"`
+	Subject   string `json:"subject"`
+	NotBefore string `json:"notBefore"`
+	NotAfter  string `json:"notAfter"`
+	Pem       string `json:"pem"`
+}
+
+func (c *Controller) GetTrustedCAs(
+	ctx context.Context,
+	clusterID string,
+) (*GetTrustedCAsResponse, error) {
+	resp := &GetTrustedCAsResponse{}
+
+	path := fmt.Sprintf("/v2/databases/%s/proxy/pools/default/trustedCAs", clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}

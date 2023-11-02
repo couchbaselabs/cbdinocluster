@@ -490,3 +490,25 @@ func (c *Controller) DeleteBucket(ctx context.Context, bucketName string) error 
 
 	return nil
 }
+
+type GetTrustedCAsResponse []GetTrustedCAsResponse_Certificate
+
+type GetTrustedCAsResponse_Certificate struct {
+	ID        int    `json:"id"`
+	Subject   string `json:"subject"`
+	NotBefore string `json:"notBefore"`
+	NotAfter  string `json:"notAfter"`
+	Pem       string `json:"pem"`
+}
+
+func (c *Controller) GetTrustedCAs(ctx context.Context) (*GetTrustedCAsResponse, error) {
+	resp := &GetTrustedCAsResponse{}
+
+	path := "/pools/default/trustedCAs"
+	err := c.doGet(ctx, path, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
