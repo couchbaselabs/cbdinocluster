@@ -34,7 +34,7 @@ func FromShortString(shortStr string) (*Cluster, error) {
 		return &Cluster{
 			NodeGroups: []*NodeGroup{
 				{
-					Count:   3,
+					Count:   1,
 					Version: defVersion,
 					Services: []Service{
 						KvService,
