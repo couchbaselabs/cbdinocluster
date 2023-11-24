@@ -49,6 +49,15 @@ type CreateBucketOptions struct {
 	RamQuotaMB int
 }
 
+type ScopeInfo struct {
+	Name        string
+	Collections []CollectionInfo
+}
+
+type CollectionInfo struct {
+	Name string
+}
+
 type Deployer interface {
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
 	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
@@ -65,4 +74,10 @@ type Deployer interface {
 	CreateBucket(ctx context.Context, clusterID string, opts *CreateBucketOptions) error
 	DeleteBucket(ctx context.Context, clusterID string, bucketName string) error
 	GetCertificate(ctx context.Context, clusterID string) (string, error)
+	ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error)
+	ListCollections(ctx context.Context, clusterID string, bucketName string) ([]ScopeInfo, error)
+	CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error
+	CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
+	DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error
+	DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
 }
