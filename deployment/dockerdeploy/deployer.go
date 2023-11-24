@@ -2,11 +2,14 @@ package dockerdeploy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/couchbase/gocbcorex"
+	"github.com/couchbase/gocbcorex/cbmgmtx"
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
@@ -697,6 +700,35 @@ func (d *Deployer) getController(ctx context.Context, clusterID string) (*cluste
 	return nodeCtrl, nil
 }
 
+func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName string) (*gocbcorex.Agent, error) {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster info")
+	}
+
+	httpEndpoint := fmt.Sprintf("%s:8091", clusterInfo.Nodes[0].IPAddress)
+	memdEndpoint := fmt.Sprintf("%s:11210", clusterInfo.Nodes[0].IPAddress)
+
+	agent, err := gocbcorex.CreateAgent(ctx, gocbcorex.AgentOptions{
+		Logger:     d.logger.Named("agent"),
+		TLSConfig:  nil,
+		BucketName: bucketName,
+		Authenticator: &gocbcorex.PasswordAuthenticator{
+			Username: "Administrator",
+			Password: "password",
+		},
+		SeedConfig: gocbcorex.SeedConfig{
+			HTTPAddrs: []string{httpEndpoint},
+			MemdAddrs: []string{memdEndpoint},
+		},
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create gocbcorex agent")
+	}
+
+	return agent, nil
+}
+
 func (d *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
 	controller, err := d.getController(ctx, clusterID)
 	if err != nil {
@@ -863,4 +895,141 @@ func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 	lastCert := (*resp)[len(*resp)-1]
 
 	return strings.TrimSpace(lastCert.Pem), nil
+}
+
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	results, err := agent.Query(ctx, &gocbcorex.QueryOptions{
+		Statement: query,
+	})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to execute query")
+	}
+
+	rows := make([]json.RawMessage, 0)
+	for results.HasMoreRows() {
+		row, err := results.ReadRow()
+		if err != nil {
+			return "", errors.Wrap(err, "failed to read row")
+		}
+
+		rows = append(rows, row)
+	}
+
+	rowsBytes, err := json.Marshal(rows)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to serialize rows")
+	}
+
+	return string(rowsBytes), nil
+}
+
+func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	manifest, err := agent.GetCollectionManifest(ctx, &cbmgmtx.GetCollectionManifestOptions{
+		BucketName: bucketName,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to fetch collection manifest")
+	}
+
+	var scopes []deployment.ScopeInfo
+	for _, scope := range manifest.Scopes {
+		var collections []deployment.CollectionInfo
+		for _, collection := range scope.Collections {
+			collections = append(collections, deployment.CollectionInfo{
+				Name: collection.Name,
+			})
+		}
+		scopes = append(scopes, deployment.ScopeInfo{
+			Name:        scope.Name,
+			Collections: collections,
+		})
+	}
+
+	return scopes, nil
+}
+
+func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	_, err = agent.CreateScope(ctx, &cbmgmtx.CreateScopeOptions{
+		BucketName: bucketName,
+		ScopeName:  scopeName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create scope")
+	}
+
+	return nil
+}
+
+func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	_, err = agent.CreateCollection(ctx, &cbmgmtx.CreateCollectionOptions{
+		BucketName:     bucketName,
+		ScopeName:      scopeName,
+		CollectionName: collectionName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create collection")
+	}
+
+	return nil
+}
+
+func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	_, err = agent.DeleteScope(ctx, &cbmgmtx.DeleteScopeOptions{
+		BucketName: bucketName,
+		ScopeName:  scopeName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to delete scope")
+	}
+
+	return nil
+}
+
+func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	_, err = agent.DeleteCollection(ctx, &cbmgmtx.DeleteCollectionOptions{
+		BucketName:     bucketName,
+		ScopeName:      scopeName,
+		CollectionName: collectionName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to delete collection")
+	}
+
+	return nil
 }

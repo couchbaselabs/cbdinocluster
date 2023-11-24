@@ -126,6 +126,30 @@ func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 	return errors.New("localdeploy does not support user management")
 }
 
-func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
+func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("localdeploy does not support getting the CA certificate")
+}
+
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
+	return "", errors.New("localdeploy does not support executing queries")
+}
+
+func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {
+	return nil, errors.New("localdeploy does not support getting collections")
+}
+
+func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
+	return errors.New("localdeploy does not support creating scopes")
+}
+
+func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
+	return errors.New("localdeploy does not support creating collections")
+}
+
+func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
+	return errors.New("localdeploy does not support deleting scopes")
+}
+
+func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
+	return errors.New("localdeploy does not support deleting collections")
 }
