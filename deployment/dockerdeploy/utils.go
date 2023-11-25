@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 
 	"github.com/docker/docker/api/types"
@@ -74,6 +75,40 @@ func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 		default:
 			logger.Debug("docker pull output", zap.String("text", streamMsg.Status))
 		}
+	}
+
+	return nil
+}
+
+func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, containerID string, cmd []string) error {
+	execID, err := cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
+		AttachStdout: true,
+		AttachStderr: true,
+		Cmd:          cmd,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create exec")
+	}
+
+	resp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	if err != nil {
+		return errors.Wrap(err, "failed to start exec")
+	}
+
+	scanner := bufio.NewScanner(resp.Reader)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		logger.Debug("docker exec output", zap.String("text", line))
+	}
+
+	res, err := cli.ContainerExecInspect(ctx, execID.ID)
+	if err != nil {
+		return errors.Wrap(err, "failed to inspect exec")
+	}
+
+	if res.ExitCode != 0 {
+		return fmt.Errorf("failed to execute process (exit code: %d)", res.ExitCode)
 	}
 
 	return nil
