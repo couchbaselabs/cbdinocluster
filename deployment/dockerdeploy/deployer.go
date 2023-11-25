@@ -1033,3 +1033,50 @@ func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucke
 
 	return nil
 }
+
+func (d *Deployer) getNode(ctx context.Context, clusterID, nodeID string) (*NodeInfo, error) {
+	nodes, err := d.controller.ListNodes(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list nodes")
+	}
+
+	var foundNode *NodeInfo
+	for _, node := range nodes {
+		if node.ClusterID == clusterID && node.NodeID == nodeID {
+			foundNode = node
+		}
+	}
+	if foundNode == nil {
+		return nil, fmt.Errorf("failed to find node with id `%s`", nodeID)
+	}
+
+	return foundNode, nil
+}
+
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, true)
+	if err != nil {
+		return errors.Wrap(err, "failed to block traffic")
+	}
+
+	return nil
+}
+
+func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, false)
+	if err != nil {
+		return errors.Wrap(err, "failed to allow traffic")
+	}
+
+	return nil
+}

@@ -310,3 +310,90 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 
 	return nil
 }
+
+func (c *Controller) execCmd(ctx context.Context, containerID string, cmd []string) error {
+	c.Logger.Debug("executing cmd",
+		zap.String("containerID", containerID),
+		zap.Strings("cmd", cmd))
+
+	return dockerExecAndPipe(ctx, c.Logger, c.DockerCli, containerID, cmd)
+}
+
+func (c *Controller) execIptables(ctx context.Context, containerID string, args []string) error {
+	err := c.execCmd(ctx, containerID, append([]string{"iptables"}, args...))
+	if err != nil {
+		// if the iptables command fails initially, we attempt to install iptables first
+		c.Logger.Debug("failed to execute iptables, attempting to install")
+
+		err := c.execCmd(ctx, containerID, []string{"apt-get", "update"})
+		if err != nil {
+			return errors.Wrap(err, "failed to update apt")
+		}
+
+		err = c.execCmd(ctx, containerID, []string{"apt-get", "-y", "install", "iptables"})
+		if err != nil {
+			return errors.Wrap(err, "failed to install iptables")
+		}
+
+		// try it again after installing iptables
+		err = c.execCmd(ctx, containerID, append([]string{"iptables"}, args...))
+		if err != nil {
+			return errors.Wrap(err, "failed to execute iptables command")
+		}
+	}
+
+	return nil
+}
+
+func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, blocked bool) error {
+	logger := c.Logger.With(zap.String("container", containerID))
+	logger.Debug("setting up traffic control", zap.Bool("blocked", blocked))
+
+	netInfo, err := c.DockerCli.NetworkInspect(ctx, c.NetworkName, types.NetworkInspectOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to inspect network")
+	}
+
+	if len(netInfo.IPAM.Config) < 1 {
+		return errors.New("more than one ipam config, cannot identify node subnet")
+	}
+	ipamConfig := netInfo.IPAM.Config[0]
+
+	gatewayIP := ipamConfig.Gateway
+	ipRange := ipamConfig.Subnet
+	if ipamConfig.IPRange != "" {
+		ipRange = ipamConfig.IPRange
+	}
+
+	if ipRange == "" || gatewayIP == "" {
+		return errors.New("failed to identify subnet or gateway ip")
+	}
+
+	err = c.execIptables(ctx, containerID, []string{"-F"})
+	if err != nil {
+		return errors.Wrap(err, "failed to clear iptables")
+	}
+
+	if blocked {
+		// reject from the rest of that subnet
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", ipRange, "-j", "DROP"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create iptables rule")
+		}
+
+		// always accept from the gateway
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", gatewayIP, "-j", "ACCEPT"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create iptables rule")
+		}
+	}
+
+	err = c.execIptables(ctx, containerID, []string{"-S"})
+	if err != nil {
+		c.Logger.Debug("failed to print iptables state", zap.Error(err))
+	}
+
+	logger.Debug("traffic control has been set up!")
+
+	return nil
+}

@@ -153,3 +153,11 @@ func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName
 func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
 	return errors.New("localdeploy does not support deleting collections")
 }
+
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("localdeploy does not support traffic control")
+}
+
+func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("localdeploy does not support traffic control")
+}

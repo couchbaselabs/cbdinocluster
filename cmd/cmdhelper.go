@@ -368,6 +368,58 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 	return "", nil, nil
 }
 
+func (h *CmdHelper) IdentifyNode(
+	ctx context.Context,
+	cluster deployment.ClusterInfo,
+	userInput string,
+) deployment.ClusterNodeInfo {
+	logger := h.GetLogger()
+	logger.Info("attempting to identify node",
+		zap.String("clusterId", cluster.GetID()),
+		zap.String("input", userInput))
+
+	nodes := cluster.GetNodes()
+
+	// check if we have an id exact match
+	for _, node := range nodes {
+		if node.GetID() == userInput {
+			return node
+		}
+	}
+
+	// check if we have an resource id exact match
+	for _, node := range nodes {
+		if node.GetResourceID() == userInput {
+			return node
+		}
+	}
+
+	// check if we have an IP exact match
+	for _, node := range nodes {
+		if node.GetIPAddress() == userInput {
+			return node
+		}
+	}
+
+	// check if we have an id partial match
+	for _, node := range nodes {
+		if strings.HasPrefix(node.GetID(), userInput) {
+			return node
+		}
+	}
+
+	// check if we have a resource id partial match
+	for _, node := range nodes {
+		if strings.HasPrefix(node.GetResourceID(), userInput) {
+			return node
+		}
+	}
+
+	logger.Fatal("failed to identify node using specified identifier",
+		zap.String("identifier", userInput))
+	return nil
+}
+
 func (h *CmdHelper) OutputJson(value interface{}) {
 	out, _ := json.Marshal(value)
 	fmt.Printf("%s\n", out)

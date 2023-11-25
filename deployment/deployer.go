@@ -80,4 +80,6 @@ type Deployer interface {
 	CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
 	DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error
 	DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
+	BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
+	AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
 }
