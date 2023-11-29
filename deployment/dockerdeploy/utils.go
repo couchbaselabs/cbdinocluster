@@ -84,13 +84,16 @@ func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 	execID, err := cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
 		AttachStdout: true,
 		AttachStderr: true,
+		Tty:          true,
 		Cmd:          cmd,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create exec")
 	}
 
-	resp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{})
+	resp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{
+		Tty: true,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to start exec")
 	}
