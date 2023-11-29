@@ -337,24 +337,96 @@ func (c *Controller) BeginRebalance(ctx context.Context, opts *BeginRebalanceOpt
 	return c.doFormPost(ctx, "/controller/rebalance", form, true, nil)
 }
 
-type Task struct {
-	Status string
+type BeginLogsCollectionOptions struct {
+	Nodes             []string `url:"nodes,comma"`
+	LogRedactionLevel string   `url:"logRedactionLevel"`
 }
 
-func (c *Controller) ListTasks(ctx context.Context) ([]*Task, error) {
-	var resp []struct {
+func (c *Controller) BeginLogsCollection(ctx context.Context, opts *BeginLogsCollectionOptions) error {
+	form, _ := query.Values(opts)
+	return c.doFormPost(ctx, "/controller/startLogsCollection", form, true, nil)
+}
+
+type Task interface {
+	GetStatus() string
+	GetType() string
+}
+
+type GenericTask struct {
+	Status string
+	Type   string
+}
+
+func (t GenericTask) GetStatus() string { return t.Status }
+func (t GenericTask) GetType() string   { return t.Type }
+
+type CollectLogsTask struct {
+	GenericTask
+	PerNode map[string]CollectLogsTask_PerNode
+}
+
+type CollectLogsTask_PerNode struct {
+	Status string
+	Path   string
+}
+
+func (c *Controller) ListTasks(ctx context.Context) ([]Task, error) {
+	type genericTaskJson struct {
 		Status string `json:"status"`
+		Type   string `json:"type"`
 	}
+	type clusterLogsCollectionTaskJson struct {
+		genericTaskJson
+		Node    string `json:"node"`
+		PerNode map[string]struct {
+			Status string `json:"status"`
+			Path   string `json:"path"`
+		} `json:"perNode"`
+		Progress                 int    `json:"progress"`
+		Ts                       string `json:"ts"`
+		RecommendedRefreshPeriod int    `json:"recommendedRefreshPeriod"`
+		CancelURI                string `json:"cancelURI"`
+	}
+
+	var resp []json.RawMessage
 	err := c.doGet(ctx, "/pools/default/tasks", &resp)
 	if err != nil {
 		return nil, err
 	}
 
-	tasks := make([]*Task, len(resp))
-	for statusIdx, status := range resp {
-		tasks[statusIdx] = &Task{
-			Status: status.Status,
+	tasks := make([]Task, len(resp))
+	for taskIdx, taskJson := range resp {
+		var baseTask genericTaskJson
+		err := json.Unmarshal(taskJson, &baseTask)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to unmarshal task")
 		}
+
+		var outTask Task
+		if baseTask.Type == "clusterLogsCollection" {
+			var task clusterLogsCollectionTaskJson
+			err := json.Unmarshal(taskJson, &task)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to unmarshal clusterLogsCollection task")
+			}
+
+			perNode := make(map[string]CollectLogsTask_PerNode)
+			for nodeId, nodeInfo := range task.PerNode {
+				perNode[nodeId] = CollectLogsTask_PerNode{
+					Status: nodeInfo.Status,
+					Path:   nodeInfo.Path,
+				}
+			}
+
+			outTask = CollectLogsTask{
+				GenericTask: GenericTask(task.genericTaskJson),
+				PerNode:     perNode,
+			}
+		} else {
+			outTask = GenericTask(baseTask)
+		}
+
+		tasks[taskIdx] = outTask
 	}
 
 	return tasks, nil

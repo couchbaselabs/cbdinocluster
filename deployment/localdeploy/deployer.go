@@ -161,3 +161,7 @@ func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeI
 func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
 	return errors.New("localdeploy does not support traffic control")
 }
+
+func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
+	return nil, errors.New("localdeploy does not support log collection")
+}

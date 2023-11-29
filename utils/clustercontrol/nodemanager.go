@@ -150,7 +150,10 @@ func (m *NodeManager) WaitForNoRunningTasks(ctx context.Context) error {
 
 		hasRunningTask := false
 		for _, task := range tasks {
-			if task.Status != "notRunning" {
+			taskStatus := task.GetStatus()
+			if taskStatus != "notRunning" &&
+				taskStatus != "completed" &&
+				taskStatus != "cancelled" {
 				hasRunningTask = true
 			}
 		}
@@ -164,4 +167,65 @@ func (m *NodeManager) WaitForNoRunningTasks(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (m *NodeManager) WaitForTaskRunning(ctx context.Context, taskType string) error {
+	c := m.Controller()
+
+	for {
+		tasks, err := c.ListTasks(ctx)
+		if err != nil {
+			return errors.Wrap(err, "failed to fetch list of tasks")
+		}
+
+		hasRunningTask := false
+		for _, task := range tasks {
+			if task.GetType() == taskType && task.GetStatus() == "running" {
+				hasRunningTask = true
+			}
+		}
+
+		if !hasRunningTask {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		break
+	}
+
+	return nil
+}
+
+// waits for log collection and returns a map of otp -> log path
+func (m *NodeManager) WaitForLogCollection(ctx context.Context) (map[string]string, error) {
+	c := m.Controller()
+
+	for {
+		tasks, err := c.ListTasks(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to fetch list of tasks")
+		}
+
+		var foundLogTask *CollectLogsTask
+		for _, task := range tasks {
+			if logTask, ok := task.(CollectLogsTask); ok {
+				foundLogTask = &logTask
+			}
+		}
+		if foundLogTask == nil {
+			return nil, errors.New("failed to find log collection task")
+		}
+
+		if foundLogTask.Status != "completed" {
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		paths := make(map[string]string)
+		for nodeId, nodeInfo := range foundLogTask.PerNode {
+			paths[nodeId] = nodeInfo.Path
+		}
+
+		return paths, nil
+	}
 }
