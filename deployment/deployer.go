@@ -82,4 +82,5 @@ type Deployer interface {
 	DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
 	BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
 	AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
+	CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error)
 }

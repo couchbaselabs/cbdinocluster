@@ -1,9 +1,13 @@
 package dockerdeploy
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -18,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
 )
 
@@ -1079,4 +1084,113 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 	}
 
 	return nil
+}
+
+func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
+	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster info")
+	}
+
+	if len(clusterInfo.Nodes) == 0 {
+		return nil, errors.New("cannot collection logs from a cluster with no nodes")
+	}
+
+	nodeCtrl := clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:8091", clusterInfo.Nodes[0].IPAddress),
+	}
+
+	nodeOtps, err := nodeCtrl.Controller().ListNodeOTPs(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list nodes")
+	}
+
+	d.logger.Info("beginning log collection", zap.Strings("nodes", nodeOtps))
+
+	err = nodeCtrl.Controller().BeginLogsCollection(ctx, &clustercontrol.BeginLogsCollectionOptions{
+		Nodes:             nodeOtps,
+		LogRedactionLevel: "none",
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to begin log collection")
+	}
+
+	d.logger.Info("waiting for log collection to start")
+
+	err = nodeCtrl.WaitForTaskRunning(ctx, "clusterLogsCollection")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to wait for log collection to start")
+	}
+
+	d.logger.Info("waiting for log collection to complete (this can take a _long_ time)")
+
+	logPaths, err := nodeCtrl.WaitForLogCollection(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to wait for log collection to complete")
+	}
+
+	nodeInfoFromIp := func(ipAddress string) *deployedNodeInfo {
+		for _, nodeInfo := range clusterInfo.Nodes {
+			if nodeInfo.IPAddress == ipAddress {
+				return nodeInfo
+			}
+		}
+		return nil
+	}
+
+	var destPaths []string
+	for nodeId, filePath := range logPaths {
+		otpParts := strings.Split(nodeId, "@")
+		if len(otpParts) != 2 {
+			return nil, errors.New("unexpected node otp format")
+		}
+		ipAddress := otpParts[1]
+
+		nodeInfo := nodeInfoFromIp(ipAddress)
+		if nodeInfo == nil {
+			return nil, fmt.Errorf("failed to find node for ip %s", ipAddress)
+		}
+		containerId := nodeInfo.ContainerID
+
+		fileName := path.Base(filePath)
+		destFilePath := path.Join(destPath, fileName)
+
+		if !d.logger.Level().Enabled(zapcore.DebugLevel) {
+			d.logger.Info("downloading log from node",
+				zap.String("node", nodeId))
+		} else {
+			d.logger.Info("downloading log from node",
+				zap.String("node", nodeId),
+				zap.String("ipAddress", ipAddress),
+				zap.String("container", containerId),
+				zap.String("srcPath", filePath),
+				zap.String("destPath", destFilePath))
+		}
+
+		resp, _, err := d.dockerCli.CopyFromContainer(ctx, containerId, filePath)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to copy from container")
+		}
+		defer resp.Close()
+
+		tarRdr := tar.NewReader(resp)
+		_, err = tarRdr.Next()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse transmitted file")
+		}
+
+		fileWrt, err := os.Create(destFilePath)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to open destination file for writing")
+		}
+
+		_, err = io.Copy(fileWrt, tarRdr)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to copy container file to local disk")
+		}
+
+		destPaths = append(destPaths, destFilePath)
+	}
+
+	return destPaths, nil
 }
