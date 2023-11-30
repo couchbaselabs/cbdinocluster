@@ -2,8 +2,11 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -141,6 +144,26 @@ var initCmd = &cobra.Command{
 
 			fmt.Printf("found.\n")
 			return "unix://" + dockerSocketPath
+		}
+
+		getColimaAddress := func() string {
+			fmt.Printf("Attempting to fetch colima instance data.\n")
+			out, err := exec.Command("colima", "ls", "-j").Output()
+			if err != nil {
+				fmt.Printf("failed to execute colima: %s", err)
+				return ""
+			}
+
+			var instance struct {
+				Address string `json:"address"`
+			}
+			err = json.Unmarshal(out, &instance)
+			if err != nil {
+				fmt.Printf("failed to unmarshal colima response: %s", err)
+				return ""
+			}
+
+			return instance.Address
 		}
 
 		getGitHubUser := func(token string) string {
@@ -366,57 +389,68 @@ var initCmd = &cobra.Command{
 						fmt.Printf("  %s\n", network.Name)
 					}
 
-					hasMacVlan0 := false
+					hasDinoNet := false
 					for _, network := range networks {
-						if network.Name == "macvlan0" {
-							hasMacVlan0 = true
+						if network.Name == "dinonet" {
+							hasDinoNet = true
 						}
 					}
 
-					if hasMacVlan0 {
-						fmt.Printf("Found a macvlan0 network, this is probably the one you want to use...\n")
+					if hasDinoNet {
+						fmt.Printf("Found a dinonet network, this is probably the one you want to use...\n")
 					} else {
-						var shouldCreateMacVlan0 bool
-						if strings.Contains(dockerHost, "colima") {
-							fmt.Printf("This appears to be colima, so auto-suggesting macvlan0 network.\n")
-							shouldCreateMacVlan0 = true
+						if !strings.Contains(dockerHost, "colima") {
+							fmt.Printf("This does not appear to be colima, cannot auto-create dinonet network.\n")
 						} else {
-							fmt.Printf("This does not appear to be colima, so not auto-suggesting macvlan0 network.\n")
-							shouldCreateMacVlan0 = false
-						}
+							fmt.Printf("This appears to be colima, attempting to identify network information.\n")
 
-						shouldCreateMacVlan0 = readBool("Should we auto-create a colima macvlan0 network?", shouldCreateMacVlan0)
-						if shouldCreateMacVlan0 {
-							fmt.Printf("Creating macvlan0 network.\n")
-							_, err := dockerCli.NetworkCreate(ctx, "macvlan0", types.NetworkCreate{
-								Driver: "macvlan",
-								IPAM: &network.IPAM{
-									Driver: "default",
-									Config: []network.IPAMConfig{
-										{
-											Subnet:  "192.168.106.0/24",
-											IPRange: "192.168.106.128/25",
-											Gateway: "192.168.106.1",
-										},
-									},
-								},
-								Options: map[string]string{
-									"parent": "col0",
-								},
-							})
-							if err != nil {
-								fmt.Printf("Looks like something went wrong creating that network:\n%s\n", err)
+							colimaAddress := getColimaAddress()
+							fmt.Printf("Identified colima address of `%s`\n", colimaAddress)
+
+							colimaIP := net.ParseIP(colimaAddress).To4()
+							if colimaIP == nil {
+								fmt.Printf("Network identification failed, cannot auto-create dinonet network...")
 							} else {
-								fmt.Printf("Autocreation of the network succeeded!\n")
-								hasMacVlan0 = true
-								dockerNetwork = "macvlan0"
+								subnet := fmt.Sprintf("%d.%d.%d.0/24", colimaIP[0], colimaIP[1], colimaIP[2])
+								ipRange := fmt.Sprintf("%d.%d.%d.128/25", colimaIP[0], colimaIP[1], colimaIP[2])
+								gateway := fmt.Sprintf("%d.%d.%d.1", colimaIP[0], colimaIP[1], colimaIP[2])
+
+								shouldCreateDinoNet := readBool("Should we auto-create a colima dinonet network?", true)
+								if shouldCreateDinoNet {
+									fmt.Printf("Creating dinonet network (subnet: %s, %s, %s).\n",
+										subnet, ipRange, gateway)
+
+									_, err := dockerCli.NetworkCreate(ctx, "dinonet", types.NetworkCreate{
+										Driver: "ipvlan",
+										IPAM: &network.IPAM{
+											Driver: "default",
+											Config: []network.IPAMConfig{
+												{
+													Subnet:  subnet,
+													IPRange: ipRange,
+													Gateway: gateway,
+												},
+											},
+										},
+										Options: map[string]string{
+											"parent": "col0",
+										},
+									})
+									if err != nil {
+										fmt.Printf("Looks like something went wrong creating that network:\n%s\n", err)
+									} else {
+										fmt.Printf("Autocreation of the network succeeded!\n")
+										hasDinoNet = true
+										dockerNetwork = "dinonet"
+									}
+								}
 							}
 						}
 					}
 
 					if dockerNetwork == "" {
-						if hasMacVlan0 {
-							dockerNetwork = "macvlan0"
+						if hasDinoNet {
+							dockerNetwork = "dinonet"
 						}
 					}
 					if dockerNetwork == "" {
