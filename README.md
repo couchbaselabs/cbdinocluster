@@ -77,12 +77,25 @@ _Dependancies_ steps above, followed by running `cbdinocluster init` again.
 Reinitializing dinocluster will maintain your existing configuration, but will
 apply the neccessary colima configurations that were lost during the recreation.
 
+#### High Performance Virtualization
+
+Mac OS X 13+ supports a built in virtualization hypervisor which significantly
+improves performance compared to the typical QEMU emulation. This can be enabled
+using the options described below to your `colima start` command. If you've
+previously run `colima start`, it will be neccessary to follow the
+_Resetting Colima_ steps above to change these options.
+
+```
+colima start --network-address --cpu 4 --memory 6 --arch aarch64 --vm-type=vz --vz-rosetta
+```
+
 #### x86_64 Images
 
 Prior to Couchbase Server 7.1, our docker containers were not built for
-arm64, making it impossible to run them inside a arm64 colima instance.
-You can add the `--arch x86_64` option to `colima start` in this case to
-force colima to run in a virtualized `x86_64` environment. This option will
-incur a performance penalty due to virtualization, but will enable the execution
-of these older version. If you've previously run `colima start`, it will be
-neccessary to follow the _Resetting Colima_ steps above to change these options.
+arm64. On a typical colima instance, these do not run properly due to
+the massive performance impact of emulating amd64. Using the method
+mentioned in the _High Performance Virtualization_, we enable Apple's
+Rosetta virtualization which allows these instances to execute at nearly
+native speed. Note that due to a bug in Apple's hypervisor framework,
+some Couchbase Server images using old kernels will panic and fail to
+start, this is fixed in Mac OS X 13.5+.
