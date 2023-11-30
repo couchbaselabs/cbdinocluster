@@ -409,6 +409,7 @@ var initCmd = &cobra.Command{
 							} else {
 								fmt.Printf("Autocreation of the network succeeded!\n")
 								hasMacVlan0 = true
+								dockerNetwork = "macvlan0"
 							}
 						}
 					}
