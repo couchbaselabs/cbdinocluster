@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -34,14 +33,11 @@ func (p *DockerHubImageProvider) GetImage(ctx context.Context, def *ImageDef) (*
 	}
 
 	dhImagePath := fmt.Sprintf("couchbase:%s", serverVersion)
-	p.Logger.Debug("identified docker image to pull", zap.String("image", dhImagePath))
+	p.Logger.Debug("identified dockerhub image to pull", zap.String("image", dhImagePath))
 
-	err := dockerPullAndPipe(ctx, p.Logger, p.DockerCli, dhImagePath, types.ImagePullOptions{})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to pull from dockerhub registry")
-	}
-
-	return &ImageRef{
+	return MultiArchImagePuller{
+		Logger:    p.Logger,
+		DockerCli: p.DockerCli,
 		ImagePath: dhImagePath,
-	}, nil
+	}.Pull(ctx)
 }

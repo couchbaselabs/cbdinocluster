@@ -51,14 +51,12 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 	p.Logger.Debug("pulling image from ghcr")
 
 	ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", serverVersion)
-	err := dockerPullAndPipe(ctx, p.Logger, p.DockerCli, ghcrImagePath, types.ImagePullOptions{
-		RegistryAuth: p.genGhcrAuthStr(),
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to pull from ghcr registry")
-	}
+	p.Logger.Debug("identified ghcr image to pull", zap.String("image", ghcrImagePath))
 
-	return &ImageRef{
-		ImagePath: ghcrImagePath,
-	}, nil
+	return MultiArchImagePuller{
+		Logger:       p.Logger,
+		DockerCli:    p.DockerCli,
+		RegistryAuth: p.genGhcrAuthStr(),
+		ImagePath:    ghcrImagePath,
+	}.Pull(ctx)
 }
