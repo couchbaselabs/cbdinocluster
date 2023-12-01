@@ -116,6 +116,14 @@ var allocateCmd = &cobra.Command{
 			logger.Fatal("cluster deployment failed", zap.Error(err))
 		}
 
+		// for humans using dino-cluster, we print some helpful info if available
+		connectInfo, _ := deployer.GetConnectInfo(ctx, cluster.GetID())
+		if connectInfo != nil {
+			logger.Info("cluster deployed",
+				zap.String("mgmt", connectInfo.Mgmt),
+				zap.String("connstr", connectInfo.ConnStr))
+		}
+
 		fmt.Printf("%s\n", cluster.GetID())
 	},
 }
