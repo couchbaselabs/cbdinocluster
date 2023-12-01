@@ -54,15 +54,20 @@ type SetupOneNodeClusterOptions struct {
 func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNodeClusterOptions) error {
 	c := m.Controller()
 
-	err := c.NodeInit(ctx, &NodeInitOptions{
-		Hostname: "127.0.0.1",
-		Afamily:  "ipv4",
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to setup services")
-	}
+	// While Couchbase Server 7.0+ seems to invoke this as part of cluster initialization
+	// it does not appear to be neccessary for a properly functioning cluster, and it is
+	// not supported on 6.6 and before, so it's just disabled here.
+	/*
+		err := c.NodeInit(ctx, &NodeInitOptions{
+			Hostname: "127.0.0.1",
+			Afamily:  "ipv4",
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to perform nodeInit")
+		}
+	*/
 
-	err = c.UpdateDefaultPool(ctx, &UpdateDefaultPoolOptions{
+	err := c.UpdateDefaultPool(ctx, &UpdateDefaultPoolOptions{
 		ClusterName:           "test-cluster",
 		KvMemoryQuotaMB:       opts.KvMemoryQuotaMB,
 		IndexMemoryQuotaMB:    opts.IndexMemoryQuotaMB,
