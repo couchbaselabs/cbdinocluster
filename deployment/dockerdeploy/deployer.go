@@ -1194,3 +1194,11 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 
 	return destPaths, nil
 }
+
+func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
+	return d.imageProvider.ListImages(ctx)
+}
+
+func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
+	return d.imageProvider.SearchImages(ctx, version)
+}

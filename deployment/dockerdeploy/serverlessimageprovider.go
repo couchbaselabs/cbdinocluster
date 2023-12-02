@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/tarhelper"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/client"
@@ -123,4 +124,12 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 	return &ImageRef{
 		ImagePath: fullTagPath,
 	}, nil
+}
+
+func (p *ServerlessImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
+	return []deployment.Image{}, nil
+}
+
+func (p *ServerlessImageProvider) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
+	return []deployment.Image{}, nil
 }

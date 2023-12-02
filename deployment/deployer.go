@@ -58,6 +58,11 @@ type CollectionInfo struct {
 	Name string
 }
 
+type Image struct {
+	Source string
+	Name   string
+}
+
 type Deployer interface {
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
 	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
@@ -83,4 +88,6 @@ type Deployer interface {
 	BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
 	AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
 	CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error)
+	ListImages(ctx context.Context) ([]Image, error)
+	SearchImages(ctx context.Context, version string) ([]Image, error)
 }

@@ -3,6 +3,7 @@ package dockerdeploy
 import (
 	"context"
 
+	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -17,7 +18,7 @@ type HybridImageProvider struct {
 
 var _ ImageProvider = (*HybridImageProvider)(nil)
 
-func (p *HybridImageProvider) GetImage(ctx context.Context, def *ImageDef) (*ImageRef, error) {
+func (p *HybridImageProvider) getProviders() []ImageProvider {
 	dhProvider := &DockerHubImageProvider{
 		Logger:    p.Logger,
 		DockerCli: p.DockerCli,
@@ -44,12 +45,16 @@ func (p *HybridImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Ima
 		BaseImageProvider: ghcrProvider,
 	}
 
-	allProviders := []ImageProvider{
+	return []ImageProvider{
 		dhProvider,
 		ghcrProvider,
 		dhServerlessProvider,
 		ghcrServerlessProvider,
 	}
+}
+
+func (p *HybridImageProvider) GetImage(ctx context.Context, def *ImageDef) (*ImageRef, error) {
+	allProviders := p.getProviders()
 
 	for _, provider := range allProviders {
 		image, err := provider.GetImage(ctx, def)
@@ -62,4 +67,38 @@ func (p *HybridImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Ima
 	}
 
 	return nil, errors.New("all providers failed to provide the image")
+}
+
+func (p *HybridImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
+	allProviders := p.getProviders()
+
+	var images []deployment.Image
+	for _, provider := range allProviders {
+		providerImages, err := provider.ListImages(ctx)
+		if err != nil {
+			p.Logger.Debug("hybrid provider variant failed to list images", zap.Error(err))
+			continue
+		}
+
+		images = append(images, providerImages...)
+	}
+
+	return images, nil
+}
+
+func (p *HybridImageProvider) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
+	allProviders := p.getProviders()
+
+	var images []deployment.Image
+	for _, provider := range allProviders {
+		providerImages, err := provider.SearchImages(ctx, version)
+		if err != nil {
+			p.Logger.Debug("hybrid provider variant failed to search images", zap.Error(err))
+			continue
+		}
+
+		images = append(images, providerImages...)
+	}
+
+	return images, nil
 }

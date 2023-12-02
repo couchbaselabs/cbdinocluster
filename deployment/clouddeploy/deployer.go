@@ -1123,3 +1123,11 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
 	return nil, errors.New("clouddeploy does not support log collection")
 }
+
+func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
+	return nil, errors.New("clouddeploy does not support image listing")
+}
+
+func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
+	return nil, errors.New("clouddeploy does not support image search")
+}

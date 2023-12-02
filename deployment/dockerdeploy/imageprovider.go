@@ -3,6 +3,7 @@ package dockerdeploy
 import (
 	"context"
 
+	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"golang.org/x/mod/semver"
 )
 
@@ -19,6 +20,8 @@ type ImageRef struct {
 
 type ImageProvider interface {
 	GetImage(ctx context.Context, def *ImageDef) (*ImageRef, error)
+	ListImages(ctx context.Context) ([]deployment.Image, error)
+	SearchImages(ctx context.Context, version string) ([]deployment.Image, error)
 }
 
 func CompareImageDefs(a, b *ImageDef) int {
