@@ -2,6 +2,7 @@ package localdeploy
 
 import (
 	"context"
+	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -63,6 +64,10 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*clusterdef.Cluster, error) {
 	return nil, errors.New("localdeploy does not support fetching the cluster definition")
+}
+
+func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, newExpiryTime time.Time) error {
+	return errors.New("localdeploy does not support updating expiry")
 }
 
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {

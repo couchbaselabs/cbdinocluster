@@ -311,6 +311,22 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 	return nil
 }
 
+func (c *Controller) UpdateExpiry(ctx context.Context, containerID string, newExpiryTime time.Time) error {
+	state, err := c.ReadNodeState(ctx, containerID)
+	if err != nil {
+		return errors.Wrap(err, "failed read existing node state")
+	}
+
+	state.Expiry = newExpiryTime
+
+	err = c.WriteNodeState(ctx, containerID, state)
+	if err != nil {
+		return errors.Wrap(err, "failed write updated node state")
+	}
+
+	return nil
+}
+
 func (c *Controller) execCmd(ctx context.Context, containerID string, cmd []string) error {
 	c.Logger.Debug("executing cmd",
 		zap.String("containerID", containerID),

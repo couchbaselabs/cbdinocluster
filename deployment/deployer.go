@@ -67,6 +67,7 @@ type Deployer interface {
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
 	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
 	GetDefinition(ctx context.Context, clusterID string) (*clusterdef.Cluster, error)
+	UpdateClusterExpiry(ctx context.Context, clusterID string, newExpiryTime time.Time) error
 	ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error
 	RemoveCluster(ctx context.Context, clusterID string) error
 	RemoveAll(ctx context.Context) error

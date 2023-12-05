@@ -514,6 +514,30 @@ func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*cluste
 	return nil, errors.New("clouddeploy does not support fetching the cluster definition")
 }
 
+func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, newExpiryTime time.Time) error {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	metaData := clusterInfo.Meta
+	metaData.Expiry = newExpiryTime
+	newProjectName := metaData.String()
+
+	_, err = d.client.UpdateProject(
+		ctx,
+		d.tenantID,
+		clusterInfo.Cluster.Project.Id,
+		&capellacontrol.UpdateProjectRequest{
+			Name: newProjectName,
+		})
+	if err != nil {
+		return errors.Wrap(err, "failed to update cluster")
+	}
+
+	return nil
+}
+
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {

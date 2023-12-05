@@ -429,6 +429,26 @@ func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*cluste
 	}, nil
 }
 
+func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, newExpiryTime time.Time) error {
+	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster info")
+	}
+
+	if len(clusterInfo.Nodes) == 0 {
+		return errors.New("cannot modify a cluster with no nodes")
+	}
+
+	for _, node := range clusterInfo.Nodes {
+		err := d.controller.UpdateExpiry(ctx, node.ContainerID, newExpiryTime)
+		if err != nil {
+			return errors.Wrap(err, "failed to update node expiry")
+		}
+	}
+
+	return nil
+}
+
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
 	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
 	if err != nil {
