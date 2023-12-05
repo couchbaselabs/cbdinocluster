@@ -178,6 +178,10 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 	logger.Info("identified available deployers",
 		zap.Strings("deployers", maps.Keys(out)))
 
+	if len(out) == 0 {
+		logger.Fatal("you have no deployers configured, try running the `init` command.")
+	}
+
 	return out
 }
 
