@@ -45,8 +45,9 @@ type BucketInfo struct {
 }
 
 type CreateBucketOptions struct {
-	Name       string
-	RamQuotaMB int
+	Name         string
+	RamQuotaMB   int
+	FlushEnabled bool
 }
 
 type ScopeInfo struct {

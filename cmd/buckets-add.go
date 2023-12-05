@@ -19,12 +19,14 @@ var bucketsAddCmd = &cobra.Command{
 		bucketName := args[1]
 
 		ramQuotaMB, _ := cmd.Flags().GetInt("ram-quota-mb")
+		flushEnabled, _ := cmd.Flags().GetBool("flush-enabled")
 
 		_, deployer, cluster := helper.IdentifyCluster(ctx, clusterID)
 
 		err := deployer.CreateBucket(ctx, cluster.GetID(), &deployment.CreateBucketOptions{
-			Name:       bucketName,
-			RamQuotaMB: ramQuotaMB,
+			Name:         bucketName,
+			RamQuotaMB:   ramQuotaMB,
+			FlushEnabled: flushEnabled,
 		})
 		if err != nil {
 			logger.Fatal("failed to create bucket", zap.Error(err))
@@ -36,4 +38,5 @@ func init() {
 	bucketsCmd.AddCommand(bucketsAddCmd)
 
 	bucketsAddCmd.Flags().Int("ram-quota-mb", 0, "The amount of RAM to provide for the bucket.")
+	bucketsAddCmd.Flags().Bool("flush-enabled", false, "Whether flush is enabled on the bucket.")
 }

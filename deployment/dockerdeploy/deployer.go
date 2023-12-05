@@ -883,7 +883,7 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		ReplicaIndex:           0,
 		ConflictResolutionType: "seqno",
 		RamQuotaMB:             ramQuotaMb,
-		FlushEnabled:           false,
+		FlushEnabled:           opts.FlushEnabled,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create bucket")
