@@ -470,7 +470,7 @@ var initCmd = &cobra.Command{
 						}
 					}
 					if dockerNetwork == "" {
-						dockerNetwork = "default"
+						dockerNetwork = "bridge"
 					}
 
 					dockerNetwork = readString(
