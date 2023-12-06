@@ -23,10 +23,15 @@ var refreshCmd = &cobra.Command{
 			logger.Fatal("failed to parse expiry time", zap.Error(err))
 		}
 
+		newExpiryTime := time.Time{}
+		if newExpiryDura > 0 {
+			newExpiryTime = time.Now().Add(newExpiryDura)
+		}
+
 		err = deployer.UpdateClusterExpiry(
 			ctx,
 			cluster.GetID(),
-			time.Now().Add(newExpiryDura))
+			newExpiryTime)
 		if err != nil {
 			logger.Fatal("failed to remove cluster", zap.Error(err))
 		}

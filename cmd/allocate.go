@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -69,11 +68,13 @@ var allocateCmd = &cobra.Command{
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
+		config := helper.GetConfig(ctx)
 
 		defStr, _ := cmd.Flags().GetString("def")
 		defFile, _ := cmd.Flags().GetString("def-file")
 		purpose, _ := cmd.Flags().GetString("purpose")
 		expiry, _ := cmd.Flags().GetDuration("expiry")
+		expiryIsSet := cmd.Flags().Changed("expiry")
 		deployerName, _ := cmd.Flags().GetString("deployer")
 		cloudProvider, _ := cmd.Flags().GetString("cloud-provider")
 
@@ -92,8 +93,10 @@ var allocateCmd = &cobra.Command{
 		if purpose != "" {
 			def.Purpose = purpose
 		}
-		if expiry > 0 {
+		if expiryIsSet {
 			def.Expiry = expiry
+		} else if def.Expiry == 0 {
+			def.Expiry = config.DefaultExpiry
 		}
 		if deployerName != "" {
 			def.Deployer = deployerName
@@ -134,7 +137,7 @@ func init() {
 	allocateCmd.Flags().String("def", "", "The cluster definition you wish to provision.")
 	allocateCmd.Flags().String("def-file", "", "The path to a file containing a cluster definition to provision.")
 	allocateCmd.Flags().String("purpose", "", "The purpose for allocating this cluster")
-	allocateCmd.Flags().Duration("expiry", 1*time.Hour, "The time to keep this cluster allocated for")
+	allocateCmd.Flags().Duration("expiry", 0, "The time to keep this cluster allocated for")
 	allocateCmd.Flags().String("deployer", "", "The name of the deployer to use")
 	allocateCmd.Flags().String("cloud-provider", "", "The cloud provider to use for this cluster")
 }

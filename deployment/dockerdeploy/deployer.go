@@ -91,7 +91,7 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 		cluster.Creator = node.Creator
 		cluster.Owner = node.Owner
 		cluster.Purpose = node.Purpose
-		if node.Expiry.After(cluster.Expiry) {
+		if !node.Expiry.IsZero() && node.Expiry.After(cluster.Expiry) {
 			cluster.Expiry = node.Expiry
 		}
 		cluster.Nodes = append(cluster.Nodes, &ClusterNodeInfo{
@@ -680,7 +680,7 @@ func (d *Deployer) Cleanup(ctx context.Context) error {
 
 	curTime := time.Now()
 	for _, node := range nodes {
-		if !node.Expiry.After(curTime) {
+		if !node.Expiry.IsZero() && !node.Expiry.After(curTime) {
 			d.logger.Info("removing node",
 				zap.String("id", node.NodeID),
 				zap.String("container", node.ContainerID))

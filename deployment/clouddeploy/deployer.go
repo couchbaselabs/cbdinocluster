@@ -371,9 +371,14 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 	clusterID := cbdcuuid.New()
 
+	expiryTime := time.Time{}
+	if def.Expiry > 0 {
+		expiryTime = time.Now().Add(def.Expiry)
+	}
+
 	metaData := stringclustermeta.MetaData{
 		ID:     clusterID,
-		Expiry: time.Now().Add(def.Expiry),
+		Expiry: expiryTime,
 	}
 	projectName := metaData.String()
 
@@ -919,7 +924,7 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 
 	curTime := time.Now()
 	for _, cluster := range clusters {
-		if !cluster.Meta.Expiry.After(curTime) {
+		if !cluster.Meta.Expiry.IsZero() && !cluster.Meta.Expiry.After(curTime) {
 			p.logger.Info("removing cluster",
 				zap.String("cluster-id", cluster.Meta.ID.String()))
 

@@ -225,7 +225,10 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		return nil, errors.Wrap(err, "failed to start container")
 	}
 
-	expiryTime := time.Now().Add(def.Expiry)
+	expiryTime := time.Time{}
+	if def.Expiry > 0 {
+		expiryTime = time.Now().Add(def.Expiry)
+	}
 
 	err = c.WriteNodeState(ctx, containerID, &DockerNodeState{
 		Expiry: expiryTime,

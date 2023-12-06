@@ -62,10 +62,16 @@ var listCmd = &cobra.Command{
 			deployerName := clusterInfo.DeployerName
 			cluster := clusterInfo.Info
 
+			expiry := cluster.GetExpiry()
+			expiryStr := "none"
+			if !expiry.IsZero() {
+				expiryStr = time.Until(cluster.GetExpiry()).Round(time.Second).String()
+			}
+
 			fmt.Printf("  %s [State: %s, Timeout: %s, Deployer: %s]\n",
 				cluster.GetID(),
 				cluster.GetState(),
-				time.Until(cluster.GetExpiry()).Round(time.Second),
+				expiryStr,
 				deployerName)
 			for _, node := range cluster.GetNodes() {
 				fmt.Printf("    %-16s  %-20s %-20s %s\n",

@@ -36,6 +36,8 @@ var initCmd = &cobra.Command{
 		ctx := context.Background()
 
 		autoConfig, _ := cmd.Flags().GetBool("auto")
+		nociConfig, _ := cmd.Flags().GetBool("noci")
+		ciConfig := autoConfig && !nociConfig
 
 		userHomePath, err := os.UserHomeDir()
 		if err != nil {
@@ -96,6 +98,20 @@ var initCmd = &cobra.Command{
 				}
 
 				fmt.Printf("Invalid entry, try again...\n")
+			}
+		}
+
+		readDuration := func(q string, defaultValue time.Duration) time.Duration {
+			for {
+				str := readString(q, defaultValue.String(), false)
+
+				dura, err := time.ParseDuration(str)
+				if err != nil {
+					fmt.Printf("Invalid entry, try again...\n")
+					continue
+				}
+
+				return dura
 			}
 		}
 
@@ -939,6 +955,7 @@ var initCmd = &cobra.Command{
 
 		printBaseConfig := func() {
 			fmt.Printf("  Default Deployer: %s\n", curConfig.DefaultDeployer)
+			fmt.Printf("  Default Expiry: %s\n", curConfig.DefaultExpiry.String())
 		}
 		{
 			fmt.Printf("-- Base Configuration\n")
@@ -957,6 +974,19 @@ var initCmd = &cobra.Command{
 					defaultDeployer, false)
 
 				curConfig.DefaultDeployer = defaultDeployer
+			}
+
+			{
+				var defaultExpiry time.Duration
+				if ciConfig {
+					defaultExpiry = 1 * time.Hour
+				}
+
+				defaultExpiry = readDuration(
+					"What cluster expiry should we use by default?",
+					defaultExpiry)
+
+				curConfig.DefaultExpiry = defaultExpiry
 			}
 
 			saveConfig()
@@ -991,6 +1021,7 @@ func init() {
 	rootCmd.AddCommand(initCmd)
 
 	initCmd.Flags().Bool("auto", false, "Automatically setup without any interactivity")
+	initCmd.Flags().Bool("noci", false, "Disable CI mode when using --auto")
 	initCmd.Flags().Bool("disable-docker", false, "Disable Docker")
 	initCmd.Flags().String("docker-host", "", "Docker host address to use")
 	initCmd.Flags().String("docker-network", "", "Docker network to use")

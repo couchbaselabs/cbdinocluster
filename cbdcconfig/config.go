@@ -4,12 +4,13 @@ import (
 	"context"
 	"os"
 	"path"
+	"time"
 
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v3"
 )
 
-const Version = 5
+const Version = 6
 
 type StringBool string
 
@@ -50,7 +51,8 @@ type Config struct {
 	Azure   Config_Azure   `yaml:"azure"`
 	Capella Config_Capella `yaml:"capella"`
 
-	DefaultDeployer string `yaml:"default-deployer"`
+	DefaultDeployer string        `yaml:"default-deployer"`
+	DefaultExpiry   time.Duration `yaml:"default-expiry"`
 
 	_DefaultCloud string `yaml:"default-cloud"`
 }
@@ -140,6 +142,11 @@ func Upgrade(config *Config) *Config {
 	if config.Version < 5 {
 		config.Capella.Endpoint = DEFAULT_CAPELLA_ENDPOINT
 		config.Version = 5
+	}
+
+	if config.Version < 6 {
+		config.DefaultExpiry = 0
+		config.Version = 6
 	}
 
 	return config
