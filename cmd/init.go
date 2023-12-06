@@ -943,15 +943,22 @@ var initCmd = &cobra.Command{
 		{
 			fmt.Printf("-- Base Configuration\n")
 
-			defaultDeployer := curConfig.DefaultDeployer
-			if defaultDeployer == "" && curConfig.Docker.Enabled.Value() {
-				defaultDeployer = "docker"
-			}
-			if defaultDeployer == "" && curConfig.Capella.Enabled.Value() {
-				defaultDeployer = "cloud"
+			{
+				defaultDeployer := curConfig.DefaultDeployer
+				if defaultDeployer == "" && curConfig.Docker.Enabled.Value() {
+					defaultDeployer = "docker"
+				}
+				if defaultDeployer == "" && curConfig.Capella.Enabled.Value() {
+					defaultDeployer = "cloud"
+				}
+
+				defaultDeployer = readString(
+					"What deployer should we use by default?",
+					defaultDeployer, false)
+
+				curConfig.DefaultDeployer = defaultDeployer
 			}
 
-			curConfig.DefaultDeployer = defaultDeployer
 			saveConfig()
 		}
 
