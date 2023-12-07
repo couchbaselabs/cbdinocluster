@@ -66,6 +66,19 @@ environments.
 ./cbdinocluster rm {{CLUSTER_ID}}
 ```
 
+#### Create a bucket named `default`
+
+```
+./cbdinocluster buckets add {{CLUSTER_ID}} default --ram-quota-mb=100 --flush-enabled=true
+```
+
+#### Create a collection in the default scope on the bucket named `default`
+
+```
+./cbdinocluster collections add {{CLUSTER_ID}} default _default test
+```
+
+
 ### Advanced Usage
 
 #### Resetting Colima
