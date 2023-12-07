@@ -84,8 +84,7 @@ To avoid constantly copying and pasting IDs in terminal, it is recommended to us
 
 ```
 ~ $ cbdinocluster ps
-2023-12-07T12:48:11.728-0800	INFO	logger initialized
-2023-12-07T12:48:11.729-0800	INFO	identified available deployers	{"deployers": ["docker"]}
+...
 Clusters:
   4f9e6625-6f48-4866-bab9-076ae5f57052 [State: ready, Timeout: none, Deployer: docker]
     a20294bf-44fc-4a6f-b019-a005d2fbf16b                       192.168.107.130      af3dcbd5...
@@ -98,9 +97,7 @@ cbdinocluster commands.
 
 ```
 ~ $ cbdinocluster connstr 4
-2023-12-07T12:48:15.507-0800	INFO	logger initialized
-2023-12-07T12:48:15.507-0800	INFO	attempting to identify cluster	{"input": "4"}
-2023-12-07T12:48:15.507-0800	INFO	identified available deployers	{"deployers": ["docker"]}
+...
 couchbase://192.168.107.130,192.168.107.128,192.168.107.129
 ```
 
