@@ -187,6 +187,7 @@ type DeployNodeOptions struct {
 	ClusterID          string
 	Image              *ImageRef
 	ImageServerVersion string
+	EnvVars            map[string]string
 }
 
 func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*NodeInfo, error) {
@@ -196,6 +197,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 	logger.Debug("deploying node", zap.Any("def", def))
 
 	containerName := "cbdynnode-" + nodeID
+
+	var envVars []string
+	for varName, varValue := range def.EnvVars {
+		envVars = append(envVars, fmt.Sprintf("%s=%s", varName, varValue))
+	}
 
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
 		Image: def.Image.ImagePath,
@@ -207,6 +213,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		},
 		// same effect as ntp
 		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
+		Env:     envVars,
 	}, &container.HostConfig{
 		AutoRemove:  true,
 		NetworkMode: container.NetworkMode(c.NetworkName),

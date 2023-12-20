@@ -202,6 +202,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 				Image:              image,
 				ImageServerVersion: nodeGrp.Version,
 				Expiry:             def.Expiry,
+				EnvVars:            nodeGrp.Docker.EnvVars,
 			}
 
 			nodeOpts = append(nodeOpts, deployOpts)
@@ -558,6 +559,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 				Image:              image,
 				ImageServerVersion: nodeGrp.Version,
 				Expiry:             def.Expiry,
+				EnvVars:            nodeGrp.Docker.EnvVars,
 			}
 
 			d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
