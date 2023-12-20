@@ -253,56 +253,6 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 	leaveNodesAfterReturn = true
 
-	kvMemoryQuotaMB := 256
-	indexMemoryQuotaMB := 256
-	ftsMemoryQuotaMB := 256
-	cbasMemoryQuotaMB := 1024
-	eventingMemoryQuotaMB := 256
-	username := "Administrator"
-	password := "password"
-	if def.Docker.KvMemoryMB > 0 {
-		kvMemoryQuotaMB = def.Docker.KvMemoryMB
-	}
-	if def.Docker.IndexMemoryMB > 0 {
-		indexMemoryQuotaMB = def.Docker.IndexMemoryMB
-	}
-	if def.Docker.FtsMemoryMB > 0 {
-		ftsMemoryQuotaMB = def.Docker.FtsMemoryMB
-	}
-	if def.Docker.CbasMemoryMB > 0 {
-		cbasMemoryQuotaMB = def.Docker.CbasMemoryMB
-	}
-	if def.Docker.EventingMemoryMB > 0 {
-		eventingMemoryQuotaMB = def.Docker.EventingMemoryMB
-	}
-	if def.Docker.Username != "" {
-		username = def.Docker.Username
-	}
-	if def.Docker.Password != "" {
-		password = def.Docker.Password
-	}
-
-	if kvMemoryQuotaMB < 256 {
-		d.logger.Warn("kv memory must be at least 256, adjusting it...")
-		kvMemoryQuotaMB = 256
-	}
-	if indexMemoryQuotaMB < 256 {
-		d.logger.Warn("index memory must be at least 256, adjusting it...")
-		indexMemoryQuotaMB = 256
-	}
-	if ftsMemoryQuotaMB < 256 {
-		d.logger.Warn("fts memory must be at least 256, adjusting it...")
-		ftsMemoryQuotaMB = 256
-	}
-	if cbasMemoryQuotaMB < 1024 {
-		d.logger.Warn("cbas memory must be at least 1024, adjusting it...")
-		cbasMemoryQuotaMB = 1024
-	}
-	if eventingMemoryQuotaMB < 256 {
-		d.logger.Warn("eventing memory must be at least 256, adjusting it...")
-		eventingMemoryQuotaMB = 256
-	}
-
 	var setupNodeOpts []*clustercontrol.SetupNewClusterNodeOptions
 	for nodeIdx, node := range nodes {
 		nodeGrp := nodeNodeGrps[nodeIdx]
@@ -326,6 +276,89 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 			Address:  node.IPAddress,
 			Services: nsServices,
 		})
+	}
+
+	var clusterServices []clusterdef.Service
+	for _, node := range setupNodeOpts {
+		for _, serviceName := range node.Services {
+			service := clusterdef.Service(serviceName)
+			if !slices.Contains(clusterServices, service) {
+				clusterServices = append(clusterServices, service)
+			}
+		}
+	}
+
+	kvMemoryQuotaMB := 256
+	indexMemoryQuotaMB := 256
+	ftsMemoryQuotaMB := 256
+	cbasMemoryQuotaMB := 1024
+	eventingMemoryQuotaMB := 256
+	username := "Administrator"
+	password := "password"
+
+	hasKvService := slices.Contains(clusterServices, clusterdef.KvService)
+	hasIndexService := slices.Contains(clusterServices, clusterdef.IndexService)
+	hasFtsService := slices.Contains(clusterServices, clusterdef.SearchService)
+	hasAnalyticsService := slices.Contains(clusterServices, clusterdef.AnalyticsService)
+	hasEventingService := slices.Contains(clusterServices, clusterdef.EventingService)
+
+	if !hasKvService {
+		kvMemoryQuotaMB = 0
+	}
+	if !hasIndexService {
+		indexMemoryQuotaMB = 0
+	}
+	if !hasFtsService {
+		ftsMemoryQuotaMB = 0
+	}
+	if !hasAnalyticsService {
+		cbasMemoryQuotaMB = 0
+	}
+	if !hasEventingService {
+		eventingMemoryQuotaMB = 0
+	}
+
+	if def.Docker.KvMemoryMB > 0 {
+		kvMemoryQuotaMB = def.Docker.KvMemoryMB
+	}
+	if def.Docker.IndexMemoryMB > 0 {
+		indexMemoryQuotaMB = def.Docker.IndexMemoryMB
+	}
+	if def.Docker.FtsMemoryMB > 0 {
+		ftsMemoryQuotaMB = def.Docker.FtsMemoryMB
+	}
+	if def.Docker.CbasMemoryMB > 0 {
+		cbasMemoryQuotaMB = def.Docker.CbasMemoryMB
+	}
+	if def.Docker.EventingMemoryMB > 0 {
+		eventingMemoryQuotaMB = def.Docker.EventingMemoryMB
+	}
+	if def.Docker.Username != "" {
+		username = def.Docker.Username
+	}
+	if def.Docker.Password != "" {
+		password = def.Docker.Password
+	}
+
+	if kvMemoryQuotaMB < 256 && hasKvService {
+		d.logger.Warn("kv memory must be at least 256, adjusting it...")
+		kvMemoryQuotaMB = 256
+	}
+	if indexMemoryQuotaMB < 256 && hasIndexService {
+		d.logger.Warn("index memory must be at least 256, adjusting it...")
+		indexMemoryQuotaMB = 256
+	}
+	if ftsMemoryQuotaMB < 256 && hasFtsService {
+		d.logger.Warn("fts memory must be at least 256, adjusting it...")
+		ftsMemoryQuotaMB = 256
+	}
+	if cbasMemoryQuotaMB < 1024 && hasAnalyticsService {
+		d.logger.Warn("cbas memory must be at least 1024, adjusting it...")
+		cbasMemoryQuotaMB = 1024
+	}
+	if eventingMemoryQuotaMB < 256 && hasEventingService {
+		d.logger.Warn("eventing memory must be at least 256, adjusting it...")
+		eventingMemoryQuotaMB = 256
 	}
 
 	setupOpts := &clustercontrol.SetupNewClusterOptions{
