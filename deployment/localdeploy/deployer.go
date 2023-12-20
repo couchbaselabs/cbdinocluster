@@ -178,3 +178,11 @@ func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
 func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
 	return nil, errors.New("localdeploy does not support image search")
 }
+
+func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("localdeploy does not support node pausing")
+}
+
+func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("localdeploy does not support node pausing")
+}

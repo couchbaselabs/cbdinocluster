@@ -1255,3 +1255,31 @@ func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
 func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
 	return d.imageProvider.SearchImages(ctx, version)
 }
+
+func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+
+	err = d.dockerCli.ContainerPause(ctx, node.ContainerID)
+	if err != nil {
+		return errors.Wrap(err, "failed to pause container")
+	}
+
+	return nil
+}
+
+func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+
+	err = d.dockerCli.ContainerUnpause(ctx, node.ContainerID)
+	if err != nil {
+		return errors.Wrap(err, "failed to unpause container")
+	}
+
+	return nil
+}
