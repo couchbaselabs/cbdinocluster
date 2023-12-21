@@ -1,0 +1,9 @@
+nodes:
+  - count: 2
+    version: 7.2.2
+    services: [kv, n1ql, index, fts]
+  - count: 1
+    version: 7.2.2
+    services: [n1ql]
+docker:
+  kv-memory: 2048
