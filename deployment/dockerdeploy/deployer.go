@@ -1113,13 +1113,22 @@ func (d *Deployer) getNode(ctx context.Context, clusterID, nodeID string) (*Node
 	return foundNode, nil
 }
 
-func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
 	node, err := d.getNode(ctx, clusterID, nodeID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get node")
 	}
 
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, true)
+	var tcType TrafficControlType
+	switch blockType {
+	case deployment.BlockNodeTrafficNodes:
+		tcType = TrafficControlBlockNodes
+	case deployment.BlockNodeTrafficClients:
+		tcType = TrafficControlBlockClients
+	case deployment.BlockNodeTrafficAll:
+		tcType = TrafficControlBlockAll
+	}
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, tcType)
 	if err != nil {
 		return errors.Wrap(err, "failed to block traffic")
 	}
@@ -1133,7 +1142,7 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 		return errors.Wrap(err, "failed to get node")
 	}
 
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, false)
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlAllowAll)
 	if err != nil {
 		return errors.Wrap(err, "failed to allow traffic")
 	}

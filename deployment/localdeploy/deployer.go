@@ -159,7 +159,7 @@ func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucke
 	return errors.New("localdeploy does not support deleting collections")
 }
 
-func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
 	return errors.New("localdeploy does not support traffic control")
 }
 

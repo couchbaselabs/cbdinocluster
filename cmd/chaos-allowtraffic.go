@@ -7,7 +7,7 @@ import (
 
 var chaosAllowTrafficCmd = &cobra.Command{
 	Use:   "allow-traffic",
-	Short: "Allows inter-node traffic to a specific node",
+	Short: "Allows all traffic to a specific node",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
