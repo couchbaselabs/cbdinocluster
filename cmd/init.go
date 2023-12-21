@@ -953,6 +953,71 @@ var initCmd = &cobra.Command{
 			saveConfig()
 		}
 
+		printCaoConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.Cao.Enabled.Value())
+			fmt.Printf("  Operator version: %s\n", curConfig.Cao.OperatorVersion)
+			fmt.Printf("  Admission version: %s\n", curConfig.Cao.AdmissionVersion)
+			fmt.Printf("  CRD path: %s\n", curConfig.Cao.CrdPath)
+		}
+		{
+			flagDisableCao, _ := cmd.Flags().GetBool("disable-cao")
+			flagCaoOperatorVersion, _ := cmd.Flags().GetString("cao-operator-version")
+			flagCaoAdmissionVersion, _ := cmd.Flags().GetString("cao-admission-version")
+			flagCaoCRDPath, _ := cmd.Flags().GetString("cao-crd-path")
+
+			caoEnabled := true
+			caoOperatorVersion := cbdcconfig.DEFAULT_CAO_OPERATOR_VERSION
+			caoAdmissionVersion := cbdcconfig.DEFAULT_CAO_ADMISSION_VERSION
+			caoCRDPath:= cbdcconfig.DEFAULT_CAO_CRD_FILE_PATH
+
+			for {
+				if flagDisableCao {
+					fmt.Printf("CAO disabled via flags.\n")
+					caoEnabled = false
+					break
+				}
+
+				caoEnabled = readBool(
+					"Would you like to enable CAO?",
+					caoEnabled)
+				if !caoEnabled {
+					break
+				}
+
+				if flagCaoOperatorVersion != "" {
+					fmt.Printf("CAO operator version specified via flags:\n  %s\n", flagCaoOperatorVersion)
+					// TODO: validate version from list
+					caoOperatorVersion = flagCaoOperatorVersion
+				} else {
+					fmt.Printf("CAO operator default version used:\n  %s\n", caoOperatorVersion)
+				}
+
+				if flagCaoAdmissionVersion != "" {
+					fmt.Printf("CAO admission version specified via flags:\n  %s\n", flagCaoAdmissionVersion)
+					// TODO: validate version from list
+					caoAdmissionVersion = flagCaoAdmissionVersion
+				} else {
+					fmt.Printf("CAO admission controller default version used:\n  %s\n", caoAdmissionVersion)
+				}
+
+				if flagCaoCRDPath != "" {
+					fmt.Printf("CAO CRD file path specified via flags:\n  %s\n", flagCaoCRDPath)
+					caoCRDPath = flagCaoCRDPath
+				} else {
+					fmt.Printf("CAO CRD default file used:\n  %s\n", caoCRDPath)
+				}
+
+				break
+			}
+
+			curConfig.Cao.Enabled.Set(caoEnabled)
+			curConfig.Cao.OperatorVersion = caoOperatorVersion
+			curConfig.Cao.AdmissionVersion = caoAdmissionVersion
+			curConfig.Cao.CrdPath = caoCRDPath
+			
+			saveConfig()
+		}
+
 		printBaseConfig := func() {
 			fmt.Printf("  Default Deployer: %s\n", curConfig.DefaultDeployer)
 			fmt.Printf("  Default Expiry: %s\n", curConfig.DefaultExpiry.String())
@@ -967,6 +1032,9 @@ var initCmd = &cobra.Command{
 				}
 				if defaultDeployer == "" && curConfig.Capella.Enabled.Value() {
 					defaultDeployer = "cloud"
+				}
+				if defaultDeployer == "" && curConfig.Cao.Enabled.Value() {
+					defaultDeployer = "cao"
 				}
 
 				defaultDeployer = readString(
@@ -1012,6 +1080,9 @@ var initCmd = &cobra.Command{
 		fmt.Printf("Using Capella configuration:\n")
 		printCapellaConfig()
 
+		fmt.Printf("Using CAO configuration:\n")
+		printCaoConfig()
+
 		fmt.Printf("Using Base configuration:\n")
 		printBaseConfig()
 	},
@@ -1040,4 +1111,8 @@ func init() {
 	initCmd.Flags().Bool("disable-aws", false, "Disable AWS")
 	initCmd.Flags().String("aws-region", "", "AWS default region to use")
 	initCmd.Flags().Bool("disable-azure", false, "Disable Azure")
+	initCmd.Flags().Bool("disable-cao", false, "Disable Couchbase Autonomous Operator(CAO)")
+	initCmd.Flags().String("cao-operator-version", "", "CAO operator version")
+	initCmd.Flags().String("cao-admission-version", "", "CAO admission controller version")
+	initCmd.Flags().String("cao-crd-path", "", "Path to the CRD yaml file")
 }
