@@ -19,14 +19,12 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/deployment/caodeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/dockerdeploy"
+	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 type CmdHelper struct {
@@ -165,7 +163,6 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 }
 
 func (h *CmdHelper) getCaoDeployer(ctx context.Context) (*caodeploy.Deployer, error) {
-	fmt.Println("++++++++++111111+++++++++")
 	logger := h.GetLogger()
 	config := h.GetConfig(ctx)
 
@@ -175,54 +172,43 @@ func (h *CmdHelper) getCaoDeployer(ctx context.Context) (*caodeploy.Deployer, er
 
 	kubeConfigPath := config.Cao.KubeConfigPath
 
-	restConfig, err := getK8sRestConfig(kubeConfigPath)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to build config from kubeconfig filepath")
-	}
-
-	clientset, err := kubernetes.NewForConfig(restConfig)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to craete kubernetes client")
-	}
-
-	caoDeployer, err := caodeploy.NewDeployer(&caodeploy.NewDeployerOptions{
-		Logger:             logger,
-		Client:             clientset,
+	client, err := caocontrol.NewController(&caocontrol.ControllerOptions{
+		Logger:         logger,
+		KubeConfigPath: kubeConfigPath,
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create deployer")
+		return nil, errors.Wrap(err, "failed to create cao controller")
 	}
 
-	fmt.Println("++++++++++2222222+++++++++")
+	caoOperatorVer := config.Cao.OperatorVersion
+	caoAdmissionVer := config.Cao.AdmissionVersion
+	operatorNamespace := config.Cao.AdmissionNamespace
+	admissionNamespace := config.Cao.OperatorNamespace
+	caoCRDPath := config.Cao.CrdPath
+	caoBinPath := config.Cao.CaoBinPath
+
+	dopts := &caodeploy.NewDeployerOptions{
+		Logger:             logger,
+		Client:             client,
+		OperatorVer:        caoOperatorVer,
+		AdmissionVer:       caoAdmissionVer,
+		CrdPath:            caoCRDPath,
+		CaoBinPath:         caoBinPath,
+		AdmissionNamespace: admissionNamespace,
+		OperatorNamespace:  operatorNamespace,
+	}
+
+	if config.Cao.NeedGhcrAccess.Value() {
+		dopts.GhcrUser = config.Cao.GhcrUser
+		dopts.GhcrToken = config.Cao.GhcrToken
+	}
+
+	caoDeployer, err := caodeploy.NewDeployer(dopts)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create cao deployer")
+	}
 
 	return caoDeployer, nil
-}
-
-// getK8sRestConfig returns a Kubernetes client configuration based on the provided kubeconfig path or default paths.
-func getK8sRestConfig(kubeconfig string) (*rest.Config, error) {
-	if kubeconfig == "" {
-		// If no kubeconfig path is provided, try using the default paths
-		config, err := clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
-		if err == nil {
-			fmt.Println("Using kubeconfig from the default home path.")
-			return clientcmd.NewDefaultClientConfig(*config, &clientcmd.ConfigOverrides{}).ClientConfig()
-		}
-
-		config, err = clientcmd.LoadFromFile(clientcmd.RecommendedConfigDir)
-		if err == nil {
-			fmt.Println("Using kubeconfig from the default system path.")
-			return clientcmd.NewDefaultClientConfig(*config, &clientcmd.ConfigOverrides{}).ClientConfig()
-		}
-	} else {
-		// If a kubeconfig path is provided, use it
-		config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err == nil {
-			fmt.Printf("Using kubeconfig from the specified path: %s\n", kubeconfig)
-			return config, nil
-		}
-	}
-
-	return nil, fmt.Errorf("unable to load kubeconfig")
 }
 
 func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.Deployer {
@@ -259,12 +245,12 @@ func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
 	config := h.GetConfig(ctx)
 
 	switch config.DefaultDeployer {
-		case "cloud":
-			return h.GetCloudDeployer(ctx)
-		case "cao":
-			return h.GetCaoDeployer(ctx)
-		default:
-			return h.GetDockerDeployer(ctx)
+	case "cloud":
+		return h.GetCloudDeployer(ctx)
+	case "cao":
+		return h.GetCaoDeployer(ctx)
+	default:
+		return h.GetDockerDeployer(ctx)
 	}
 }
 
@@ -332,7 +318,6 @@ func (h *CmdHelper) GetCloudDeployer(ctx context.Context) *clouddeploy.Deployer 
 
 	return deployer
 }
-
 
 func (h *CmdHelper) GetCaoDeployer(ctx context.Context) *caodeploy.Deployer {
 	logger := h.GetLogger()

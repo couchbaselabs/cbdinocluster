@@ -110,11 +110,19 @@ type Config_Capella struct {
 
 type Config_Cao struct {
 	Enabled 			StringBool `yaml:"enabled"`
-	KubeConfigPath			string	`yaml:"kubeconfig"`
+	KubeConfigPath		string	`yaml:"kubeconfig"`
+
+	// for pulling ghcr images
+	NeedGhcrAccess		StringBool `yaml:"needGhcrAccess"`
+	GhcrToken   		string     `yaml:"ghcrToken"`
+	GhcrUser    		string     `yaml:"ghcrUser"`
 
 	OperatorVersion     string `yaml:"operatorVersion"`
+	OperatorNamespace   string `yaml:"operatorNamespace"`
 	AdmissionVersion    string `yaml:"admissionVersion"`
-	CrdPath				string `yaml:"cardPath"`
+	AdmissionNamespace  string `yaml:"admissionNamespace"`
+	CrdPath				string `yaml:"crdPath"`
+	CaoBinPath			string `yaml:"caoBinPath"`
 }
 
 func DefaultConfigPath() (string, error) {

@@ -8,11 +8,13 @@ type NodeGroup struct {
 	// any existing nodes when doing modifications.
 	ForceNew bool `yaml:"force-new,omitempty"`
 
-	Version  string    `yaml:"version,omitempty"`
-	Services []Service `yaml:"services,omitempty"`
+	Version     string    `yaml:"version,omitempty"`
+	ServerImage string    `yaml:"srvImage,omitempty"`
+	Services    []Service `yaml:"services,omitempty"`
 
 	Docker DockerNodeGroup `yaml:"docker,omitempty"`
 	Cloud  CloudNodeGroup  `yaml:"cloud,omitempty"`
+	Cao    CaoNodeGroup    `yaml:"cao,omitempty"`
 }
 
 type DockerNodeGroup struct {
@@ -23,4 +25,8 @@ type CloudNodeGroup struct {
 	DiskType     string `yaml:"disk-type,omitempty"`
 	DiskSize     int    `yaml:"disk-size,omitempty"`
 	DiskIops     int    `yaml:"disk-iops,omitempty"`
+}
+
+type CaoNodeGroup struct {
+	CNGImage string `yaml:"cngImage,omitempty"`
 }
