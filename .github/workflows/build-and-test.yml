@@ -38,15 +38,26 @@ jobs:
           ./cbdinocluster-linux init --auto
       - name: Setup Cluster
         run: |
-          CBDC_ID=$(./cbdinocluster-linux allocate simple:7.0.0)
+          CBDC_ID=$(./cbdinocluster-linux -v allocate simple:7.0.0)
           echo "CBDC_ID=$CBDC_ID" >> "$GITHUB_ENV"
       - name: Run Tests
         timeout-minutes: 10
         run: |
-          ./cbdinocluster-linux connstr $CBDC_ID
-          CBDC_MGMT=$(./cbdinocluster-linux mgmt $CBDC_ID)
+          # validate getting the connection string
+          ./cbdinocluster-linux -v connstr $CBDC_ID
+          # validate getting management addresses
+          CBDC_MGMT=$(./cbdinocluster-linux -v mgmt $CBDC_ID)
           echo $CBDC_MGMT
+          # validate cluster is accessible
           curl $CBDC_MGMT
+          # pick a random node to mess with
+          NODE_IP=$(./cbdinocluster-linux -v ip $CBDC_ID)
+          # validate blocking traffic to the node
+          ./cbdinocluster-linux -v chaos block-traffic $CBDC_ID $NODE_IP
+          # validate we can still access that node
+          curl http://$NODE_IP:8091
+          # ensure we can unblock traffic
+          ./cbdinocluster-linux -v chaos allow-traffic $CBDC_ID $NODE_IP
       - name: Cleanup Cluster
         if: always()
         run: |

@@ -187,6 +187,7 @@ type DeployNodeOptions struct {
 	ClusterID          string
 	Image              *ImageRef
 	ImageServerVersion string
+	EnvVars            map[string]string
 }
 
 func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*NodeInfo, error) {
@@ -196,6 +197,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 	logger.Debug("deploying node", zap.Any("def", def))
 
 	containerName := "cbdynnode-" + nodeID
+
+	var envVars []string
+	for varName, varValue := range def.EnvVars {
+		envVars = append(envVars, fmt.Sprintf("%s=%s", varName, varValue))
+	}
 
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
 		Image: def.Image.ImagePath,
@@ -207,6 +213,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		},
 		// same effect as ntp
 		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
+		Env:     envVars,
 	}, &container.HostConfig{
 		AutoRemove:  true,
 		NetworkMode: container.NetworkMode(c.NetworkName),
@@ -364,9 +371,19 @@ func (c *Controller) execIptables(ctx context.Context, containerID string, args 
 	return nil
 }
 
-func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, blocked bool) error {
+type TrafficControlType string
+
+const (
+	TrafficControlBlockNodes   TrafficControlType = "nodes"
+	TrafficControlBlockClients TrafficControlType = "clients"
+	TrafficControlBlockAll     TrafficControlType = "all"
+	TrafficControlAllowAll     TrafficControlType = "none"
+)
+
+func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, tcType TrafficControlType) error {
 	logger := c.Logger.With(zap.String("container", containerID))
-	logger.Debug("setting up traffic control", zap.Bool("blocked", blocked))
+	logger.Debug("setting up traffic control",
+		zap.String("blockType", string(tcType)))
 
 	netInfo, err := c.DockerCli.NetworkInspect(ctx, c.NetworkName, types.NetworkInspectOptions{})
 	if err != nil {
@@ -393,7 +410,7 @@ func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, 
 		return errors.Wrap(err, "failed to clear iptables")
 	}
 
-	if blocked {
+	if tcType == TrafficControlBlockNodes {
 		// reject from the rest of that subnet
 		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", ipRange, "-j", "DROP"})
 		if err != nil {
@@ -405,6 +422,34 @@ func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, 
 		if err != nil {
 			return errors.Wrap(err, "failed to create iptables rule")
 		}
+	} else if tcType == TrafficControlBlockClients {
+		// block everyone else
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-j", "DROP"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create iptables rule")
+		}
+
+		// always accept from inter-node subnet
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", ipRange, "-j", "ACCEPT"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create iptables rule")
+		}
+
+		// always reject from the gateway
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", gatewayIP, "-j", "DROP"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create iptables rule")
+		}
+	} else if tcType == TrafficControlBlockAll {
+		// block all packets
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-j", "DROP"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create iptables rule")
+		}
+	} else if tcType == TrafficControlAllowAll {
+		// nothing to do, we are allowing all traffic
+	} else {
+		return errors.New("invalid traffic control type")
 	}
 
 	err = c.execIptables(ctx, containerID, []string{"-S"})

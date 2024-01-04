@@ -70,6 +70,7 @@ var allocateCmd = &cobra.Command{
 		ctx := helper.GetContext()
 		config := helper.GetConfig(ctx)
 
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		defStr, _ := cmd.Flags().GetString("def")
 		defFile, _ := cmd.Flags().GetString("def-file")
 		purpose, _ := cmd.Flags().GetString("purpose")
@@ -107,6 +108,10 @@ var allocateCmd = &cobra.Command{
 
 		logger.Info("deploying definition", zap.Any("def", def))
 
+		if dryRun {
+			return
+		}
+
 		var deployer deployment.Deployer
 		if def.Deployer == "" {
 			deployer = helper.GetDefaultDeployer(ctx)
@@ -134,6 +139,7 @@ var allocateCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(allocateCmd)
 
+	allocateCmd.Flags().Bool("dry-run", false, "Disables the actual allocate and simply does a dry-run.")
 	allocateCmd.Flags().String("def", "", "The cluster definition you wish to provision.")
 	allocateCmd.Flags().String("def-file", "", "The path to a file containing a cluster definition to provision.")
 	allocateCmd.Flags().String("purpose", "", "The purpose for allocating this cluster")

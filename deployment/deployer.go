@@ -64,6 +64,14 @@ type Image struct {
 	Name   string
 }
 
+type BlockNodeTrafficType string
+
+const (
+	BlockNodeTrafficClients BlockNodeTrafficType = "clients"
+	BlockNodeTrafficNodes   BlockNodeTrafficType = "nodes"
+	BlockNodeTrafficAll     BlockNodeTrafficType = "all"
+)
+
 type Deployer interface {
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
 	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
@@ -87,9 +95,11 @@ type Deployer interface {
 	CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
 	DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error
 	DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
-	BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
+	BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType BlockNodeTrafficType) error
 	AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
 	CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error)
 	ListImages(ctx context.Context) ([]Image, error)
 	SearchImages(ctx context.Context, version string) ([]Image, error)
+	PauseNode(ctx context.Context, clusterID string, nodeID string) error
+	UnpauseNode(ctx context.Context, clusterID string, nodeID string) error
 }

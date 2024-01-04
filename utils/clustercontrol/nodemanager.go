@@ -111,7 +111,12 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 		StorageMode: "plasma",
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to setup net config")
+		err = c.UpdateIndexSettings(ctx, &UpdateIndexSettingsOptions{
+			StorageMode: "forestdb",
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to setup net config")
+		}
 	}
 
 	err = c.UpdateWebSettings(ctx, &UpdateWebSettingsOptions{

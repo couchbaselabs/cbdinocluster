@@ -202,6 +202,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 				Image:              image,
 				ImageServerVersion: nodeGrp.Version,
 				Expiry:             def.Expiry,
+				EnvVars:            nodeGrp.Docker.EnvVars,
 			}
 
 			nodeOpts = append(nodeOpts, deployOpts)
@@ -253,56 +254,6 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 	leaveNodesAfterReturn = true
 
-	kvMemoryQuotaMB := 256
-	indexMemoryQuotaMB := 256
-	ftsMemoryQuotaMB := 256
-	cbasMemoryQuotaMB := 1024
-	eventingMemoryQuotaMB := 256
-	username := "Administrator"
-	password := "password"
-	if def.Docker.KvMemoryMB > 0 {
-		kvMemoryQuotaMB = def.Docker.KvMemoryMB
-	}
-	if def.Docker.IndexMemoryMB > 0 {
-		indexMemoryQuotaMB = def.Docker.IndexMemoryMB
-	}
-	if def.Docker.FtsMemoryMB > 0 {
-		ftsMemoryQuotaMB = def.Docker.FtsMemoryMB
-	}
-	if def.Docker.CbasMemoryMB > 0 {
-		cbasMemoryQuotaMB = def.Docker.CbasMemoryMB
-	}
-	if def.Docker.EventingMemoryMB > 0 {
-		eventingMemoryQuotaMB = def.Docker.EventingMemoryMB
-	}
-	if def.Docker.Username != "" {
-		username = def.Docker.Username
-	}
-	if def.Docker.Password != "" {
-		password = def.Docker.Password
-	}
-
-	if kvMemoryQuotaMB < 256 {
-		d.logger.Warn("kv memory must be at least 256, adjusting it...")
-		kvMemoryQuotaMB = 256
-	}
-	if indexMemoryQuotaMB < 256 {
-		d.logger.Warn("index memory must be at least 256, adjusting it...")
-		indexMemoryQuotaMB = 256
-	}
-	if ftsMemoryQuotaMB < 256 {
-		d.logger.Warn("fts memory must be at least 256, adjusting it...")
-		ftsMemoryQuotaMB = 256
-	}
-	if cbasMemoryQuotaMB < 1024 {
-		d.logger.Warn("cbas memory must be at least 1024, adjusting it...")
-		cbasMemoryQuotaMB = 1024
-	}
-	if eventingMemoryQuotaMB < 256 {
-		d.logger.Warn("eventing memory must be at least 256, adjusting it...")
-		eventingMemoryQuotaMB = 256
-	}
-
 	var setupNodeOpts []*clustercontrol.SetupNewClusterNodeOptions
 	for nodeIdx, node := range nodes {
 		nodeGrp := nodeNodeGrps[nodeIdx]
@@ -326,6 +277,89 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 			Address:  node.IPAddress,
 			Services: nsServices,
 		})
+	}
+
+	var clusterServices []clusterdef.Service
+	for _, node := range setupNodeOpts {
+		for _, serviceName := range node.Services {
+			service := clusterdef.Service(serviceName)
+			if !slices.Contains(clusterServices, service) {
+				clusterServices = append(clusterServices, service)
+			}
+		}
+	}
+
+	kvMemoryQuotaMB := 256
+	indexMemoryQuotaMB := 256
+	ftsMemoryQuotaMB := 256
+	cbasMemoryQuotaMB := 1024
+	eventingMemoryQuotaMB := 256
+	username := "Administrator"
+	password := "password"
+
+	hasKvService := slices.Contains(clusterServices, clusterdef.KvService)
+	hasIndexService := slices.Contains(clusterServices, clusterdef.IndexService)
+	hasFtsService := slices.Contains(clusterServices, clusterdef.SearchService)
+	hasAnalyticsService := slices.Contains(clusterServices, clusterdef.AnalyticsService)
+	hasEventingService := slices.Contains(clusterServices, clusterdef.EventingService)
+
+	if !hasKvService {
+		kvMemoryQuotaMB = 0
+	}
+	if !hasIndexService {
+		indexMemoryQuotaMB = 0
+	}
+	if !hasFtsService {
+		ftsMemoryQuotaMB = 0
+	}
+	if !hasAnalyticsService {
+		cbasMemoryQuotaMB = 0
+	}
+	if !hasEventingService {
+		eventingMemoryQuotaMB = 0
+	}
+
+	if def.Docker.KvMemoryMB > 0 {
+		kvMemoryQuotaMB = def.Docker.KvMemoryMB
+	}
+	if def.Docker.IndexMemoryMB > 0 {
+		indexMemoryQuotaMB = def.Docker.IndexMemoryMB
+	}
+	if def.Docker.FtsMemoryMB > 0 {
+		ftsMemoryQuotaMB = def.Docker.FtsMemoryMB
+	}
+	if def.Docker.CbasMemoryMB > 0 {
+		cbasMemoryQuotaMB = def.Docker.CbasMemoryMB
+	}
+	if def.Docker.EventingMemoryMB > 0 {
+		eventingMemoryQuotaMB = def.Docker.EventingMemoryMB
+	}
+	if def.Docker.Username != "" {
+		username = def.Docker.Username
+	}
+	if def.Docker.Password != "" {
+		password = def.Docker.Password
+	}
+
+	if kvMemoryQuotaMB < 256 && hasKvService {
+		d.logger.Warn("kv memory must be at least 256, adjusting it...")
+		kvMemoryQuotaMB = 256
+	}
+	if indexMemoryQuotaMB < 256 && hasIndexService {
+		d.logger.Warn("index memory must be at least 256, adjusting it...")
+		indexMemoryQuotaMB = 256
+	}
+	if ftsMemoryQuotaMB < 256 && hasFtsService {
+		d.logger.Warn("fts memory must be at least 256, adjusting it...")
+		ftsMemoryQuotaMB = 256
+	}
+	if cbasMemoryQuotaMB < 1024 && hasAnalyticsService {
+		d.logger.Warn("cbas memory must be at least 1024, adjusting it...")
+		cbasMemoryQuotaMB = 1024
+	}
+	if eventingMemoryQuotaMB < 256 && hasEventingService {
+		d.logger.Warn("eventing memory must be at least 256, adjusting it...")
+		eventingMemoryQuotaMB = 256
 	}
 
 	setupOpts := &clustercontrol.SetupNewClusterOptions{
@@ -525,6 +559,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 				Image:              image,
 				ImageServerVersion: nodeGrp.Version,
 				Expiry:             def.Expiry,
+				EnvVars:            nodeGrp.Docker.EnvVars,
 			}
 
 			d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
@@ -1078,13 +1113,22 @@ func (d *Deployer) getNode(ctx context.Context, clusterID, nodeID string) (*Node
 	return foundNode, nil
 }
 
-func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
 	node, err := d.getNode(ctx, clusterID, nodeID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get node")
 	}
 
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, true)
+	var tcType TrafficControlType
+	switch blockType {
+	case deployment.BlockNodeTrafficNodes:
+		tcType = TrafficControlBlockNodes
+	case deployment.BlockNodeTrafficClients:
+		tcType = TrafficControlBlockClients
+	case deployment.BlockNodeTrafficAll:
+		tcType = TrafficControlBlockAll
+	}
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, tcType)
 	if err != nil {
 		return errors.Wrap(err, "failed to block traffic")
 	}
@@ -1098,7 +1142,7 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 		return errors.Wrap(err, "failed to get node")
 	}
 
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, false)
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlAllowAll)
 	if err != nil {
 		return errors.Wrap(err, "failed to allow traffic")
 	}
@@ -1221,4 +1265,32 @@ func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
 
 func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
 	return d.imageProvider.SearchImages(ctx, version)
+}
+
+func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+
+	err = d.dockerCli.ContainerPause(ctx, node.ContainerID)
+	if err != nil {
+		return errors.Wrap(err, "failed to pause container")
+	}
+
+	return nil
+}
+
+func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+
+	err = d.dockerCli.ContainerUnpause(ctx, node.ContainerID)
+	if err != nil {
+		return errors.Wrap(err, "failed to unpause container")
+	}
+
+	return nil
 }

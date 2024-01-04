@@ -48,13 +48,23 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	}, nil
 }
 
+// PauseNode implements deployment.Deployer.
+func (*Deployer) PauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("caodeploy does not support pausing node")
+}
+
+// UnpauseNode implements deployment.Deployer.
+func (*Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("caodeploy does not support unpausing node")
+}
+
 // AllowNodeTraffic implements deployment.Deployer.
 func (*Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
 	return errors.New("caodeploy does not support allowing node traffic")
 }
 
 // BlockNodeTraffic implements deployment.Deployer.
-func (*Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+func (*Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
 	return errors.New("caodeploy does not support blocking node traffic")
 }
 

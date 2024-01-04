@@ -18,6 +18,7 @@ type NodeGroup struct {
 }
 
 type DockerNodeGroup struct {
+	EnvVars map[string]string `yaml:"env,omitempty"`
 }
 
 type CloudNodeGroup struct {

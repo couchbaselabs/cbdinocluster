@@ -5,9 +5,9 @@ import (
 	"go.uber.org/zap"
 )
 
-var chaosAllowTrafficCmd = &cobra.Command{
-	Use:   "allow-traffic",
-	Short: "Allows all traffic to a specific node",
+var chaosUnpauseNodeCmd = &cobra.Command{
+	Use:   "unpause-node",
+	Short: "Unpauses a particular node in the cluster.",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
@@ -17,13 +17,13 @@ var chaosAllowTrafficCmd = &cobra.Command{
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 		node := helper.IdentifyNode(ctx, cluster, args[1])
 
-		err := deployer.AllowNodeTraffic(ctx, cluster.GetID(), node.GetID())
+		err := deployer.UnpauseNode(ctx, cluster.GetID(), node.GetID())
 		if err != nil {
-			logger.Fatal("failed to allow node traffic", zap.Error(err))
+			logger.Fatal("failed to resume node", zap.Error(err))
 		}
 	},
 }
 
 func init() {
-	chaosCmd.AddCommand(chaosAllowTrafficCmd)
+	chaosCmd.AddCommand(chaosUnpauseNodeCmd)
 }

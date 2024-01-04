@@ -159,7 +159,7 @@ func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucke
 	return errors.New("localdeploy does not support deleting collections")
 }
 
-func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
 	return errors.New("localdeploy does not support traffic control")
 }
 
@@ -177,4 +177,12 @@ func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
 
 func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
 	return nil, errors.New("localdeploy does not support image search")
+}
+
+func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("localdeploy does not support node pausing")
+}
+
+func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("localdeploy does not support node pausing")
 }
