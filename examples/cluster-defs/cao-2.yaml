@@ -1,0 +1,6 @@
+nodes:
+  - count: 2
+    srvImage: couchbase/server:7.2.0 # in case of ghcr, provide full registry name
+    services: [kv, n1ql, index, fts]
+    cao:
+      cngImage: couchbase/cloud-native-gateway:0.1.0 # in case of ghcr, provide full registry name

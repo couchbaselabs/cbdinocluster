@@ -50,6 +50,7 @@ type Config struct {
 	GCP     Config_GCP     `yaml:"gcp"`
 	Azure   Config_Azure   `yaml:"azure"`
 	Capella Config_Capella `yaml:"capella"`
+	Cao 	Config_Cao 	   `yaml:"cao"`
 
 	DefaultDeployer string        `yaml:"default-deployer"`
 	DefaultExpiry   time.Duration `yaml:"default-expiry"`
@@ -105,6 +106,23 @@ type Config_Capella struct {
 	DefaultAwsRegion   string `yaml:"default-aws-region"`
 	DefaultAzureRegion string `yaml:"default-azure-region"`
 	DefaultGcpRegion   string `yaml:"default-gcp-region"`
+}
+
+type Config_Cao struct {
+	Enabled 			StringBool `yaml:"enabled"`
+	KubeConfigPath		string	`yaml:"kubeconfig"`
+
+	// for pulling ghcr images
+	NeedGhcrAccess		StringBool `yaml:"needGhcrAccess"`
+	GhcrToken   		string     `yaml:"ghcrToken"`
+	GhcrUser    		string     `yaml:"ghcrUser"`
+
+	OperatorVersion     string `yaml:"operatorVersion"`
+	OperatorNamespace   string `yaml:"operatorNamespace"`
+	AdmissionVersion    string `yaml:"admissionVersion"`
+	AdmissionNamespace  string `yaml:"admissionNamespace"`
+	CrdPath				string `yaml:"crdPath"`
+	CaoBinPath			string `yaml:"caoBinPath"`
 }
 
 func DefaultConfigPath() (string, error) {

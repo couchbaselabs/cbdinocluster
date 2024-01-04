@@ -16,8 +16,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/caodeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/dockerdeploy"
+	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
@@ -160,6 +162,55 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	return prov, nil
 }
 
+func (h *CmdHelper) getCaoDeployer(ctx context.Context) (*caodeploy.Deployer, error) {
+	logger := h.GetLogger()
+	config := h.GetConfig(ctx)
+
+	if !config.Cao.Enabled.Value() {
+		return nil, nil
+	}
+
+	kubeConfigPath := config.Cao.KubeConfigPath
+
+	client, err := caocontrol.NewController(&caocontrol.ControllerOptions{
+		Logger:         logger,
+		KubeConfigPath: kubeConfigPath,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create cao controller")
+	}
+
+	caoOperatorVer := config.Cao.OperatorVersion
+	caoAdmissionVer := config.Cao.AdmissionVersion
+	operatorNamespace := config.Cao.AdmissionNamespace
+	admissionNamespace := config.Cao.OperatorNamespace
+	caoCRDPath := config.Cao.CrdPath
+	caoBinPath := config.Cao.CaoBinPath
+
+	dopts := &caodeploy.NewDeployerOptions{
+		Logger:             logger,
+		Client:             client,
+		OperatorVer:        caoOperatorVer,
+		AdmissionVer:       caoAdmissionVer,
+		CrdPath:            caoCRDPath,
+		CaoBinPath:         caoBinPath,
+		AdmissionNamespace: admissionNamespace,
+		OperatorNamespace:  operatorNamespace,
+	}
+
+	if config.Cao.NeedGhcrAccess.Value() {
+		dopts.GhcrUser = config.Cao.GhcrUser
+		dopts.GhcrToken = config.Cao.GhcrToken
+	}
+
+	caoDeployer, err := caodeploy.NewDeployer(dopts)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create cao deployer")
+	}
+
+	return caoDeployer, nil
+}
+
 func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.Deployer {
 	logger := h.GetLogger()
 
@@ -175,6 +226,11 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 		out["cloud"] = cloudDeployer
 	}
 
+	caoDeployer, _ := h.getCaoDeployer(ctx)
+	if caoDeployer != nil {
+		out["cao"] = caoDeployer
+	}
+
 	logger.Info("identified available deployers",
 		zap.Strings("deployers", maps.Keys(out)))
 
@@ -188,9 +244,12 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
 	config := h.GetConfig(ctx)
 
-	if config.DefaultDeployer == "cloud" {
+	switch config.DefaultDeployer {
+	case "cloud":
 		return h.GetCloudDeployer(ctx)
-	} else {
+	case "cao":
+		return h.GetCaoDeployer(ctx)
+	default:
 		return h.GetDockerDeployer(ctx)
 	}
 }
@@ -256,6 +315,17 @@ func (h *CmdHelper) GetCloudDeployer(ctx context.Context) *clouddeploy.Deployer 
 			logger.Fatal("failed to run pre-cleanup", zap.Error(err))
 		}
 	*/
+
+	return deployer
+}
+
+func (h *CmdHelper) GetCaoDeployer(ctx context.Context) *caodeploy.Deployer {
+	logger := h.GetLogger()
+
+	deployer, err := h.getCaoDeployer(ctx)
+	if err != nil {
+		logger.Fatal("failed to get cao deployer", zap.Error(err))
+	}
 
 	return deployer
 }

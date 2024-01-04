@@ -953,6 +953,189 @@ var initCmd = &cobra.Command{
 			saveConfig()
 		}
 
+		printCaoConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.Cao.Enabled.Value())
+			fmt.Printf("  Operator version: %s\n", curConfig.Cao.OperatorVersion)
+			fmt.Printf("  Operator namespace: %s\n", curConfig.Cao.OperatorNamespace)
+			fmt.Printf("  Admission version: %s\n", curConfig.Cao.AdmissionVersion)
+			fmt.Printf("  Admission namespace: %s\n", curConfig.Cao.AdmissionNamespace)
+			fmt.Printf("  CRD path: %s\n", curConfig.Cao.CrdPath)
+			fmt.Printf("  CAO Bin path: %s\n", curConfig.Cao.CaoBinPath)
+		}
+		{
+			flagDisableCao, _ := cmd.Flags().GetBool("disable-cao")
+			flagDisableGhcr, _ := cmd.Flags().GetBool("test-unreleased-cng-images") // for the lack of good, descriptive name
+			flagCaoOperatorVersion, _ := cmd.Flags().GetString("cao-operator-version")
+			flagCaoOperatorNamespace, _ := cmd.Flags().GetString("cao-operator-namespace")
+			flagCaoAdmissionVersion, _ := cmd.Flags().GetString("cao-admission-version")
+			flagCaoAdmissionNamespace, _ := cmd.Flags().GetString("cao-admission-namespace")
+			flagCaoCRDPath, _ := cmd.Flags().GetString("cao-crd-path")
+			flagCaoBinPath, _ := cmd.Flags().GetString("cao-bin-path")
+			flagGhcrToken, _ := cmd.Flags().GetString("ghcr-token")
+			flagGhcrUser, _ := cmd.Flags().GetString("ghcr-user")
+
+			caoEnabled := true
+			ghcrAccessEnabled := true
+			caoOperatorVersion := ""
+			caoOperatorNamespace := ""
+			caoAdmissionVersion := ""
+			caoAdmissionNamespace := ""
+			caoCRDPath := ""
+			caoBinPath := ""
+			ghcrToken := ""
+			ghcrUser := ""
+
+			for {
+				if flagDisableCao {
+					fmt.Printf("CAO disabled via flags.\n")
+					caoEnabled = false
+					break
+				}
+
+				caoEnabled = readBool(
+					"Would you like to enable CAO?",
+					caoEnabled)
+				if !caoEnabled {
+					break
+				}
+
+				if flagDisableGhcr {
+					fmt.Printf("GHCR access disabled via flags.\n")
+					ghcrAccessEnabled = false
+					break
+				}
+
+				ghcrAccessEnabled = readBool(
+					"Would you like to configure GHCR?",
+					ghcrAccessEnabled)
+				if !ghcrAccessEnabled {
+					break
+				}
+
+				// Ask for ghcr username/token
+				// if UNRELEASED CNG images need to be pulled for testing purpose.
+				if flagGhcrToken != "" {
+					fmt.Printf("GHCR token specified via flags:\n")
+					ghcrToken = flagGhcrToken
+				} else {
+					ghcrToken = readString(
+						"What GHCR token should we use?",
+						ghcrToken, true)
+				}
+				if ghcrToken == "" {
+					fmt.Printf("A GHCR token is required.\n")
+					ghcrAccessEnabled = false
+					continue
+				}
+
+				if flagGhcrUser != "" {
+					fmt.Printf("GHCR User specified via flags:\n")
+					ghcrUser = flagGhcrUser
+				} else {
+					ghcrUser = readString(
+						"What GHCR User should we use?",
+						ghcrUser, true)
+				}
+				if ghcrUser == "" {
+					fmt.Printf("A GHCR User is required.\n")
+					ghcrAccessEnabled = false
+					continue
+				}
+				
+
+				if flagCaoOperatorVersion != "" {
+					fmt.Printf("CAO operator version specified via flags:\n  %s\n", flagCaoOperatorVersion)
+					// TODO: validate allowed version from list
+					caoOperatorVersion = flagCaoOperatorVersion
+				} else {
+					if caoOperatorVersion == "" {
+						caoOperatorVersion = cbdcconfig.DEFAULT_CAO_OPERATOR_VERSION
+					}
+				}
+				caoOperatorVersion = readString(
+					"What CAO operator version should we use?",
+					caoOperatorVersion, false)
+
+				if flagCaoOperatorNamespace != "" {
+					fmt.Printf("CAO operator namespace specified via flags:\n  %s\n", flagCaoOperatorNamespace)
+					caoOperatorNamespace = flagCaoOperatorNamespace
+				} else {
+					if caoOperatorNamespace == "" {
+						caoOperatorNamespace = cbdcconfig.DEFAULT_NAMESPACE
+					}
+				}
+				caoOperatorNamespace = readString(
+					"In which namepace do you want to install Cao operator?",
+					caoOperatorNamespace, false)
+
+				if flagCaoAdmissionVersion != "" {
+					fmt.Printf("CAO admission version specified via flags:\n  %s\n", flagCaoAdmissionVersion)
+					// TODO: validate allowed version from list
+					caoAdmissionVersion = flagCaoAdmissionVersion
+				} else {
+					if caoAdmissionVersion == "" {
+						caoAdmissionVersion = cbdcconfig.DEFAULT_CAO_ADMISSION_VERSION
+					}
+				}
+				caoAdmissionVersion = readString(
+					"What CAO admission controller version should we use?",
+					caoAdmissionVersion, false)
+
+				if flagCaoAdmissionNamespace != "" {
+					fmt.Printf("CAO admission controller namespace specified via flags:\n  %s\n", flagCaoAdmissionNamespace)
+					caoAdmissionNamespace = flagCaoAdmissionNamespace
+				} else {
+					if caoAdmissionNamespace == "" {
+						caoAdmissionNamespace = cbdcconfig.DEFAULT_NAMESPACE
+					}
+				}
+				caoAdmissionNamespace = readString(
+					"In which namepace do you want to install CAO admission controller?",
+					caoAdmissionNamespace, false)
+
+				if flagCaoCRDPath != "" {
+					fmt.Printf("CAO CRD file path specified via flags:\n  %s\n", flagCaoCRDPath)
+					caoCRDPath = flagCaoCRDPath
+				} else {
+					if caoCRDPath == "" {
+						caoCRDPath = cbdcconfig.DEFAULT_CAO_CRD_FILE_PATH
+					}
+				}
+				caoCRDPath = readString(
+					"Where is your CRD file placed?",
+					caoCRDPath, false)
+
+				if flagCaoBinPath != "" {
+					fmt.Printf("CAO bin path specified via flags:\n  %s\n", flagCaoBinPath)
+					caoBinPath = flagCaoBinPath
+				} else {
+					if caoBinPath == "" {
+						caoBinPath = cbdcconfig.DEFAULT_CAO_BIN_PATH
+					}
+				}
+				caoBinPath = readString(
+					"Where is your CAO bin path?",
+					caoBinPath, false)
+
+				break
+			}
+
+			curConfig.Cao.Enabled.Set(caoEnabled)
+			curConfig.Cao.NeedGhcrAccess.Set(ghcrAccessEnabled)
+			if ghcrAccessEnabled {
+				curConfig.Cao.GhcrToken = ghcrToken
+				curConfig.Cao.GhcrUser = ghcrUser
+			}
+			curConfig.Cao.OperatorVersion = caoOperatorVersion
+			curConfig.Cao.OperatorNamespace = caoOperatorNamespace
+			curConfig.Cao.AdmissionNamespace = caoAdmissionNamespace
+			curConfig.Cao.AdmissionVersion = caoAdmissionVersion
+			curConfig.Cao.CrdPath = caoCRDPath
+			curConfig.Cao.CaoBinPath = caoBinPath
+
+			saveConfig()
+		}
+
 		printBaseConfig := func() {
 			fmt.Printf("  Default Deployer: %s\n", curConfig.DefaultDeployer)
 			fmt.Printf("  Default Expiry: %s\n", curConfig.DefaultExpiry.String())
@@ -967,6 +1150,9 @@ var initCmd = &cobra.Command{
 				}
 				if defaultDeployer == "" && curConfig.Capella.Enabled.Value() {
 					defaultDeployer = "cloud"
+				}
+				if defaultDeployer == "" && curConfig.Cao.Enabled.Value() {
+					defaultDeployer = "cao"
 				}
 
 				defaultDeployer = readString(
@@ -1012,6 +1198,9 @@ var initCmd = &cobra.Command{
 		fmt.Printf("Using Capella configuration:\n")
 		printCapellaConfig()
 
+		fmt.Printf("Using CAO configuration:\n")
+		printCaoConfig()
+
 		fmt.Printf("Using Base configuration:\n")
 		printBaseConfig()
 	},
@@ -1040,4 +1229,11 @@ func init() {
 	initCmd.Flags().Bool("disable-aws", false, "Disable AWS")
 	initCmd.Flags().String("aws-region", "", "AWS default region to use")
 	initCmd.Flags().Bool("disable-azure", false, "Disable Azure")
+	initCmd.Flags().Bool("disable-cao", false, "Disable Couchbase Autonomous Operator(CAO)")
+	initCmd.Flags().String("cao-operator-version", "", "CAO operator version")
+	initCmd.Flags().String("cao-operator-namespace", "", "CAO operator namespace")
+	initCmd.Flags().String("cao-admission-version", "", "CAO admission controller version")
+	initCmd.Flags().String("cao-admission-namespace", "", "CAO admission controller namespace")
+	initCmd.Flags().String("cao-crd-path", "", "Path to the CRD yaml file")
+	initCmd.Flags().String("cao-bin-path", "", "Path to the CAO binary file")
 }
