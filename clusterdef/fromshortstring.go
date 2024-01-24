@@ -45,6 +45,26 @@ func FromShortString(shortStr string) (*Cluster, error) {
 				},
 			},
 		}, nil
+	} else if defName == "high-mem" {
+		return &Cluster{
+			NodeGroups: []*NodeGroup{
+				{
+					Count:   1,
+					Version: defVersion,
+					Services: []Service{
+						KvService,
+						QueryService,
+						IndexService,
+						SearchService,
+					},
+				},
+			},
+			Docker: DockerCluster{
+				KvMemoryMB:    1536,
+				IndexMemoryMB: 1024,
+				FtsMemoryMB:   1024,
+			},
+		}, nil
 	}
 
 	return nil, fmt.Errorf("unknown short string name `%s`", defName)
