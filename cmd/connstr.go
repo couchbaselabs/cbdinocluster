@@ -2,13 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
 
 var connstrCmd = &cobra.Command{
-	Use:     "connstr [flags] cluster [node]",
+	Use:     "connstr [flags] cluster",
 	Aliases: []string{"conn-str"},
 	Short:   "Gets a connection string to connect to the cluster",
 	Args:    cobra.MinimumNArgs(1),
@@ -23,11 +24,18 @@ var connstrCmd = &cobra.Command{
 		if err != nil {
 			logger.Fatal("failed to get connect info", zap.Error(err))
 		}
+		connStr := connectInfo.ConnStr
 
-		fmt.Printf("%s\n", connectInfo.ConnStr)
+		useTLS, _ := cmd.Flags().GetBool("tls")
+		if useTLS {
+			connStr = strings.Replace(connStr, "couchbase://", "couchbases://", -1)
+		}
+
+		fmt.Printf("%s\n", connStr)
 	},
 }
 
 func init() {
+	connstrCmd.PersistentFlags().Bool("tls", false, "Renders secure connection string")
 	rootCmd.AddCommand(connstrCmd)
 }
