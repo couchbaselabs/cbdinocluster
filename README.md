@@ -118,6 +118,19 @@ couchba+     384  0.0  0.4 1762336 27268 ?       SLsl 20:39   0:00 /opt/couchbas
 root         664  0.0  0.0   2976  1536 pts/0    S+   20:49   0:00 grep --color=auto memcached
 ```
 
+#### Bash function to render connection string with cluster certificate
+
+This version uses option name for C++SDK (and all wrappers)
+
+```bash
+cbdinocluster_connstr_with_certificate() {
+    local cluster_id="$1"
+    local cert_file="${TMPDIR}/cluster-${cluster_id}.pem"
+    cbdinocluster certificates getca "${cluster_id}" > "${cert_file}"
+    echo "$(cbdinocluster connstr --tls "${cluster_id}")?trust_certificate=${cert_file}"
+}
+```
+
 ### Advanced Usage
 
 #### Resetting Colima
