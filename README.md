@@ -60,6 +60,14 @@ environments.
 ./cbdinocluster allocate simple:7.2.0
 ```
 
+#### Allocate a single-node cluster with higher memory allocations
+
+Useful for testing magma buckets, advanced search indexes (1536mb for KV, 1024mb for Indexer, 1024mb for FTS)
+
+```
+./cbdinocluster allocate high-mem:7.6.0-2038
+```
+
 #### Remove a previously allocated local cluster
 
 ```
