@@ -16,8 +16,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/caodeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/dockerdeploy"
+	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
@@ -114,6 +116,37 @@ func (h *CmdHelper) getDockerDeployer(ctx context.Context) (*dockerdeploy.Deploy
 	return deployer, nil
 }
 
+func (h *CmdHelper) getCaoDeployer(ctx context.Context) (*caodeploy.Deployer, error) {
+	logger := h.GetLogger()
+	config := h.GetConfig(ctx)
+
+	if !config.K8s.Enabled.Value() {
+		return nil, nil
+	}
+
+	caoCtrl, err := caocontrol.NewController(&caocontrol.ControllerOptions{
+		Logger:         logger,
+		CaoToolsPath:   config.K8s.CaoTools,
+		KubeConfigPath: config.K8s.KubeConfig,
+		KubeContext:    config.K8s.Context,
+		GhcrUser:       config.GitHub.User,
+		GhcrToken:      config.GitHub.Token,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to setup caocontrol")
+	}
+
+	deployer, err := caodeploy.NewDeployer(&caodeploy.NewDeployerOptions{
+		Logger: logger,
+		Client: caoCtrl,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to initializer deployer")
+	}
+
+	return deployer, nil
+}
+
 func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer, error) {
 	logger := h.GetLogger()
 	config := h.GetConfig(ctx)
@@ -170,6 +203,11 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 		out["docker"] = dockerDeployer
 	}
 
+	caoDeployer, _ := h.getCaoDeployer(ctx)
+	if caoDeployer != nil {
+		out["cao"] = caoDeployer
+	}
+
 	cloudDeployer, _ := h.getCloudDeployer(ctx)
 	if cloudDeployer != nil {
 		out["cloud"] = cloudDeployer
@@ -188,7 +226,9 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
 	config := h.GetConfig(ctx)
 
-	if config.DefaultDeployer == "cloud" {
+	if config.DefaultDeployer == "cao" {
+		return h.GetCaoDeployer(ctx)
+	} else if config.DefaultDeployer == "cloud" {
 		return h.GetCloudDeployer(ctx)
 	} else {
 		return h.GetDockerDeployer(ctx)
@@ -231,6 +271,22 @@ func (h *CmdHelper) GetDockerDeployer(ctx context.Context) *dockerdeploy.Deploye
 	deployer, err := h.getDockerDeployer(ctx)
 	if err != nil {
 		logger.Fatal("failed to get docker deployer", zap.Error(err))
+	}
+
+	err = deployer.Cleanup(ctx)
+	if err != nil {
+		logger.Fatal("failed to run pre-cleanup", zap.Error(err))
+	}
+
+	return deployer
+}
+
+func (h *CmdHelper) GetCaoDeployer(ctx context.Context) *caodeploy.Deployer {
+	logger := h.GetLogger()
+
+	deployer, err := h.getCaoDeployer(ctx)
+	if err != nil {
+		logger.Fatal("failed to get cao deployer", zap.Error(err))
 	}
 
 	err = deployer.Cleanup(ctx)
