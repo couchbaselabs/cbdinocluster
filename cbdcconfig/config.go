@@ -45,6 +45,7 @@ type Config struct {
 	Version int `yaml:"version"`
 
 	Docker  Config_Docker  `yaml:"docker"`
+	K8s     Config_K8s     `yaml:"k8s"`
 	GitHub  Config_GitHub  `yaml:"github"`
 	AWS     Config_AWS     `yaml:"aws"`
 	GCP     Config_GCP     `yaml:"gcp"`
@@ -62,6 +63,13 @@ type Config_Docker struct {
 	Host        string     `yaml:"host"`
 	Network     string     `yaml:"network"`
 	ForwardOnly StringBool `yaml:"forward-only"`
+}
+
+type Config_K8s struct {
+	Enabled    StringBool `yaml:"enabled"`
+	CaoTools   string     `yaml:"cao-tools"`
+	KubeConfig string     `yaml:"kubeconfig"`
+	Context    string     `yaml:"context"`
 }
 
 type Config_GitHub struct {

@@ -1,6 +1,10 @@
 package clusterdef
 
-import "golang.org/x/exp/slices"
+import (
+	"errors"
+
+	"golang.org/x/exp/slices"
+)
 
 type Service string
 
@@ -61,6 +65,55 @@ func NsServicesToServices(services []string) ([]Service, error) {
 		}
 
 		out = append(out, service)
+	}
+	return out, nil
+}
+
+func CaoServiceToService(service string) (Service, error) {
+	switch service {
+	case "data":
+		return KvService, nil
+	case "index":
+		return IndexService, nil
+	case "query":
+		return QueryService, nil
+	case "search":
+		return SearchService, nil
+	case "eventing":
+		return EventingService, nil
+	case "analytics":
+		return AnalyticsService, nil
+	}
+	return "", errors.New("invalid service type")
+}
+
+func ServiceToCaoService(service Service) (string, error) {
+	switch service {
+	case KvService:
+		return "data", nil
+	case IndexService:
+		return "index", nil
+	case QueryService:
+		return "query", nil
+	case SearchService:
+		return "search", nil
+	case EventingService:
+		return "eventing", nil
+	case AnalyticsService:
+		return "analytics", nil
+	}
+	return "", errors.New("invalid service type")
+}
+
+func ServicesToCaoServices(services []Service) ([]string, error) {
+	var out []string
+	for _, service := range services {
+		serviceStr, err := ServiceToCaoService(service)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, serviceStr)
 	}
 	return out, nil
 }

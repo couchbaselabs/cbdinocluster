@@ -19,6 +19,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
@@ -27,12 +28,24 @@ import (
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/clientcmd/api"
+)
+
+const (
+	DefaultCaoVersion = "2.6.0"
 )
 
 var initCmd = &cobra.Command{
 	Use:   "init [flags]",
 	Short: "Initializes the tool",
 	Run: func(cmd *cobra.Command, args []string) {
+		loggerConfig := zap.NewDevelopmentConfig()
+		loggerConfig.DisableStacktrace = true
+		loggerConfig.DisableCaller = true
+		loggerConfig.EncoderConfig.TimeKey = ""
+
+		logger, _ := loggerConfig.Build()
 		ctx := context.Background()
 
 		autoConfig, _ := cmd.Flags().GetBool("auto")
@@ -239,9 +252,9 @@ var initCmd = &cobra.Command{
 			envGithubToken := os.Getenv("GITHUB_TOKEN")
 			envGithubActor := os.Getenv("GITHUB_ACTOR")
 
-			githubEnabled := true
-			githubToken := ""
-			githubUser := ""
+			githubEnabled := curConfig.GitHub.Enabled.ValueOr(true)
+			githubToken := curConfig.GitHub.Token
+			githubUser := curConfig.GitHub.User
 
 			for {
 				if flagDisableGithub {
@@ -261,7 +274,6 @@ var initCmd = &cobra.Command{
 					fmt.Printf("GitHub token specified via flags:\n")
 					githubToken = flagGithubToken
 				} else {
-					githubToken = curConfig.GitHub.Token
 					if githubToken == "" && envGithubToken != "" {
 						fmt.Printf("Defaulting to GitHub token from environment.\n")
 						githubToken = envGithubToken
@@ -327,7 +339,7 @@ var initCmd = &cobra.Command{
 			flagDockerNetwork, _ := cmd.Flags().GetString("docker-network")
 			envDockerHost := os.Getenv("DOCKER_HOST")
 
-			dockerEnabled := true
+			dockerEnabled := curConfig.Docker.Enabled.ValueOr(true)
 			dockerHost := curConfig.Docker.Host
 			dockerNetwork := curConfig.Docker.Network
 
@@ -493,6 +505,222 @@ var initCmd = &cobra.Command{
 			saveConfig()
 		}
 
+		printK8sConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.K8s.Enabled.Value())
+			fmt.Printf("  CaoTools: %s\n", curConfig.K8s.CaoTools)
+			fmt.Printf("  KubeConfig: %s\n", curConfig.K8s.KubeConfig)
+			fmt.Printf("  Context: %s\n", curConfig.K8s.Context)
+		}
+		{
+			fmt.Printf("-- K8s Configuration\n")
+
+			flagDisableK8s, _ := cmd.Flags().GetBool("disable-k8s")
+			flagCaoTools, _ := cmd.Flags().GetString("cao-tools")
+			flagKubeConfig, _ := cmd.Flags().GetString("kube-config")
+			flagKubeContext, _ := cmd.Flags().GetString("kube-context")
+			envKubeConfig := os.Getenv("KUBECONFIG")
+
+			k8sEnabled := curConfig.K8s.Enabled.ValueOr(true)
+			k8sCaoTools := curConfig.K8s.CaoTools
+			k8sKubeConfig := curConfig.K8s.KubeConfig
+			k8sKubeContext := curConfig.K8s.Context
+
+			for {
+				if flagDisableK8s {
+					fmt.Printf("K8s disabled via flags.\n")
+					k8sEnabled = false
+					break
+				}
+
+				k8sEnabled = readBool(
+					"Would you like to configure K8s Deployments?",
+					k8sEnabled)
+				if !k8sEnabled {
+					break
+				}
+
+				var kubeConfig *api.Config
+				if flagKubeConfig != "" {
+					kubeConfig, err = clientcmd.LoadFromFile(flagKubeConfig)
+					if err != nil {
+						fmt.Printf("Failed to load kube-config file from flag:\n  %s\n", err)
+						k8sEnabled = false
+						continue
+					}
+
+					k8sKubeConfig = flagKubeConfig
+				} else if envKubeConfig != "" {
+					kubeConfig, err = clientcmd.LoadFromFile(envKubeConfig)
+					if err != nil {
+						fmt.Printf("Failed to load kube-config file from env:\n  %s\n", err)
+						k8sEnabled = false
+						continue
+					}
+
+					k8sKubeConfig = envKubeConfig
+				} else {
+					kubeConfig, err = clientcmd.LoadFromFile(clientcmd.RecommendedHomeFile)
+					if err != nil {
+						fmt.Printf("Failed to load kube-config file from default path:\n  %s\n", err)
+						k8sEnabled = false
+						continue
+					}
+
+					k8sKubeConfig = clientcmd.RecommendedHomeFile
+				}
+
+				if flagKubeContext != "" {
+					if _, ok := kubeConfig.Contexts[flagKubeContext]; !ok {
+						fmt.Printf("Failed to find kube-context from flag:\n  %s\n", err)
+						k8sEnabled = false
+						continue
+					}
+
+					k8sKubeContext = flagKubeContext
+				} else {
+					fmt.Printf("Listing k8s contexts:\n")
+					for contextName := range kubeConfig.Contexts {
+						fmt.Printf("  %s\n", contextName)
+					}
+
+					fmt.Printf("Current k8s context: %s\n", kubeConfig.CurrentContext)
+
+					k8sKubeContext = kubeConfig.CurrentContext
+
+					k8sKubeContext = readString(
+						"What k8s context should we use?",
+						k8sKubeContext, false)
+
+					if _, ok := kubeConfig.Contexts[k8sKubeContext]; !ok {
+						fmt.Printf("Failed to find specified context:\n  %s\n", err)
+						k8sEnabled = false
+						continue
+					}
+				}
+
+				if flagCaoTools != "" {
+					fmt.Printf("CAO tools path specified via flags:\n  %s\n", flagCaoTools)
+					k8sCaoTools = flagCaoTools
+				} else {
+					dinoCaoPath := path.Join(userHomePath, ".dinotools/cao", DefaultCaoVersion)
+
+					_, err := os.Stat(dinoCaoPath)
+					if err == nil {
+						fmt.Printf("Found existing dinocluster cao installation: %s\n", dinoCaoPath)
+						k8sCaoTools = dinoCaoPath
+					} else {
+						fmt.Printf("In order to use kubernetes, we need a local install of the cao tools.\n")
+
+						shouldInstallCaoTools := readBool("Should we auto-install the cao tools?", true)
+						if shouldInstallCaoTools {
+							err := caocontrol.DownloadLocalCaoTools(ctx, logger, dinoCaoPath, DefaultCaoVersion, false)
+							if err != nil {
+								fmt.Printf("Failed to install cao tools\n  %s\n", err)
+							} else {
+								k8sCaoTools = dinoCaoPath
+							}
+						}
+					}
+
+					k8sCaoTools = readString(
+						"What CAO Tools path should we use?",
+						k8sCaoTools, false)
+				}
+				if k8sCaoTools == "" {
+					fmt.Printf("The CAO tools path is required.\n")
+					k8sEnabled = false
+					continue
+				}
+
+				caoCtrl, err := caocontrol.NewController(&caocontrol.ControllerOptions{
+					Logger:         logger,
+					CaoToolsPath:   k8sCaoTools,
+					KubeConfigPath: k8sKubeConfig,
+					KubeContext:    k8sKubeContext,
+					GhcrUser:       curConfig.GitHub.User,
+					GhcrToken:      curConfig.GitHub.Token,
+				})
+				if err != nil {
+					fmt.Printf("Failed to initialize cao system:\n  %s\n", err)
+					k8sEnabled = false
+					continue
+				}
+
+				err = caoCtrl.Ping(ctx)
+				if err != nil {
+					fmt.Printf("Failed to check connectivity to k8s:\n  %s\n", err)
+					k8sEnabled = false
+					continue
+				}
+
+				hasExistingCrds, err := caoCtrl.IsCrdInstalled(ctx)
+				if err != nil {
+					fmt.Printf("Failed to check for existing CAO CRDs:\n  %s\n", err)
+					k8sEnabled = false
+					continue
+				}
+
+				var shouldInstallCrds bool
+				if hasExistingCrds {
+					fmt.Printf("We found existing CAO CRDs.\n")
+					shouldInstallCrds = false
+				} else {
+					fmt.Printf("It does not appear that the CAO CRDs are installed.\n")
+					shouldInstallCrds = true
+				}
+
+				shouldInstallCrds = readBool("Should we auto-install the cao crds?", shouldInstallCrds)
+
+				if shouldInstallCrds {
+					fmt.Printf("---- crd install start ----\n")
+					err := caoCtrl.InstallDefaultCrd(ctx)
+					fmt.Printf("---- crd install end ----\n")
+					if err != nil {
+						fmt.Printf("Failed to install CAO CRDs:\n  %s\n", err)
+						k8sEnabled = false
+						continue
+					}
+				}
+
+				admNamespace, err := caoCtrl.FindAdmissionController(ctx)
+				if err != nil {
+					fmt.Printf("Failed to check for existing Admission Controller:\n  %s\n", err)
+					k8sEnabled = false
+					continue
+				}
+
+				var shouldInstallAdm bool
+				if admNamespace != "" {
+					fmt.Printf("We found an existing Admission Controller.\n")
+					shouldInstallAdm = false
+				} else {
+					fmt.Printf("It does not appear that the Admission Controller is installed.\n")
+					shouldInstallAdm = true
+				}
+
+				shouldInstallAdm = readBool("Should we auto-install the Admission Controller?", shouldInstallAdm)
+
+				if shouldInstallAdm {
+					fmt.Printf("---- admission controller install start ----\n")
+					err := caoCtrl.InstallGlobalAdmissionController(ctx, "")
+					fmt.Printf("---- admission controller install end ----\n")
+					if err != nil {
+						fmt.Printf("Failed to install Admission Controller:\n  %s\n", err)
+						k8sEnabled = false
+						continue
+					}
+				}
+
+				break
+			}
+
+			curConfig.K8s.Enabled.Set(k8sEnabled)
+			curConfig.K8s.CaoTools = k8sCaoTools
+			curConfig.K8s.KubeConfig = k8sKubeConfig
+			curConfig.K8s.Context = k8sKubeContext
+			saveConfig()
+		}
+
 		printAwsConfig := func() {
 			fmt.Printf("  Enabled: %t\n", curConfig.AWS.Enabled.Value())
 			fmt.Printf("  Region: %s\n", curConfig.AWS.Region)
@@ -502,8 +730,8 @@ var initCmd = &cobra.Command{
 			flagAwsRegion, _ := cmd.Flags().GetString("aws-region")
 			envAwsRegion := os.Getenv("AWS_REGION")
 
-			awsEnabled := true
-			awsRegion := ""
+			awsEnabled := curConfig.AWS.Enabled.ValueOr(true)
+			awsRegion := curConfig.AWS.Region
 
 			for {
 				if flagDisableAws {
@@ -585,10 +813,10 @@ var initCmd = &cobra.Command{
 			envAzureSubID := os.Getenv("AZURE_SUBSCRIPTION_ID")
 			envAzureRgName := os.Getenv("AZURE_GROUP")
 
-			azureEnabled := true
-			azureRegion := ""
-			azureSubID := ""
-			azureRGName := ""
+			azureEnabled := curConfig.Azure.Enabled.ValueOr(true)
+			azureRegion := curConfig.Azure.Region
+			azureSubID := curConfig.Azure.SubID
+			azureRGName := curConfig.Azure.RGName
 
 			for {
 				if flagDisableAzure {
@@ -744,15 +972,15 @@ var initCmd = &cobra.Command{
 			envCapellaPass := os.Getenv("CAPELLA_PASS")
 			envCapellaOid := os.Getenv("CAPELLA_OID")
 
-			capellaEnabled := true
-			capellaEndpoint := ""
-			capellaUser := ""
-			capellaPass := ""
-			capellaOid := ""
-			capellaProvider := ""
-			capellaAwsRegion := ""
-			capellaAzureRegion := ""
-			capellaGcpRegion := ""
+			capellaEnabled := curConfig.Capella.Enabled.ValueOr(true)
+			capellaEndpoint := curConfig.Capella.Endpoint
+			capellaUser := curConfig.Capella.Username
+			capellaPass := curConfig.Capella.Password
+			capellaOid := curConfig.Capella.OrganizationID
+			capellaProvider := curConfig.Capella.DefaultCloud
+			capellaAwsRegion := curConfig.Capella.DefaultAwsRegion
+			capellaAzureRegion := curConfig.Capella.DefaultAzureRegion
+			capellaGcpRegion := curConfig.Capella.DefaultGcpRegion
 
 			for {
 				if flagDisableCapella {
@@ -1000,6 +1228,9 @@ var initCmd = &cobra.Command{
 		fmt.Printf("Using Docker configuration:\n")
 		printDockerConfig()
 
+		fmt.Printf("Using K8s configuration:\n")
+		printK8sConfig()
+
 		fmt.Printf("Using AWS configuration:\n")
 		printAwsConfig()
 
@@ -1025,6 +1256,10 @@ func init() {
 	initCmd.Flags().Bool("disable-docker", false, "Disable Docker")
 	initCmd.Flags().String("docker-host", "", "Docker host address to use")
 	initCmd.Flags().String("docker-network", "", "Docker network to use")
+	initCmd.Flags().Bool("disable-k8s", false, "Disable K8s")
+	initCmd.Flags().String("cao-tools", "", "CAO tools path to use")
+	initCmd.Flags().String("kube-config", "", "Kubeconfig file to use")
+	initCmd.Flags().String("k8s-context", "", "K8s context to use")
 	initCmd.Flags().Bool("disable-github", false, "Disable GitHub")
 	initCmd.Flags().String("github-token", "", "GitHub token to use")
 	initCmd.Flags().String("github-user", "", "GitHub user to use")
