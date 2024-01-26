@@ -910,8 +910,10 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	connStr := fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.Connect.Srv)
 
 	return &deployment.ConnectInfo{
-		ConnStr: connStr,
-		Mgmt:    "",
+		ConnStr:    "",
+		ConnStrTls: connStr,
+		Mgmt:       "",
+		MgmtTls:    "",
 	}, nil
 }
 

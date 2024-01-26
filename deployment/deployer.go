@@ -23,8 +23,10 @@ type ClusterInfo interface {
 }
 
 type ConnectInfo struct {
-	ConnStr string
-	Mgmt    string
+	ConnStr    string
+	ConnStrTls string
+	Mgmt       string
+	MgmtTls    string
 }
 
 type UserInfo struct {

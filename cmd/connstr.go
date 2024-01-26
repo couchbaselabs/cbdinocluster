@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -18,17 +17,37 @@ var connstrCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
+		useTLS, _ := cmd.Flags().GetBool("tls")
+		noTLS, _ := cmd.Flags().GetBool("no-tls")
+
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		connectInfo, err := deployer.GetConnectInfo(ctx, cluster.GetID())
 		if err != nil {
 			logger.Fatal("failed to get connect info", zap.Error(err))
 		}
-		connStr := connectInfo.ConnStr
 
-		useTLS, _ := cmd.Flags().GetBool("tls")
-		if useTLS {
-			connStr = strings.Replace(connStr, "couchbase://", "couchbases://", -1)
+		var connStr string
+		if useTLS && noTLS {
+			logger.Fatal("cannot request both TLS and non-TLS")
+		} else if useTLS {
+			connStr = connectInfo.ConnStrTls
+			if connStr == "" {
+				logger.Fatal("TLS endpoint is unavailable")
+			}
+		} else if noTLS {
+			connStr = connectInfo.ConnStr
+			if connStr == "" {
+				logger.Fatal("non-TLS endpoint is unavailable")
+			}
+		} else {
+			connStr = connectInfo.ConnStr
+			if connStr == "" {
+				connStr = connectInfo.ConnStrTls
+			}
+			if connStr == "" {
+				logger.Fatal("no endpoint available")
+			}
 		}
 
 		fmt.Printf("%s\n", connStr)
@@ -36,6 +55,8 @@ var connstrCmd = &cobra.Command{
 }
 
 func init() {
-	connstrCmd.PersistentFlags().Bool("tls", false, "Renders secure connection string")
 	rootCmd.AddCommand(connstrCmd)
+
+	connstrCmd.PersistentFlags().Bool("tls", false, "Explicitly requests a TLS endpoint")
+	connstrCmd.PersistentFlags().Bool("no-tls", false, "Explicitly requests non-TLS endpoint")
 }
