@@ -102,8 +102,10 @@ func (d *Deployer) Cleanup(ctx context.Context) error {
 
 func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
 	return &deployment.ConnectInfo{
-		ConnStr: "couchbase://127.0.0.1",
-		Mgmt:    "http://127.0.0.1:8091",
+		ConnStr:    "couchbase://127.0.0.1",
+		ConnStrTls: "couchbases://127.0.0.1",
+		Mgmt:       "http://127.0.0.1:8091",
+		MgmtTls:    "https://127.0.0.1:18091",
 	}, nil
 }
 
