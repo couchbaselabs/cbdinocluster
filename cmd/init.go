@@ -702,7 +702,7 @@ var initCmd = &cobra.Command{
 
 				if shouldInstallAdm {
 					fmt.Printf("---- admission controller install start ----\n")
-					err := caoCtrl.InstallGlobalAdmissionController(ctx, "")
+					err := caoCtrl.InstallGlobalAdmissionController(ctx, "", "")
 					fmt.Printf("---- admission controller install end ----\n")
 					if err != nil {
 						fmt.Printf("Failed to install Admission Controller:\n  %s\n", err)

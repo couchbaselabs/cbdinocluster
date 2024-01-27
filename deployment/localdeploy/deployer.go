@@ -137,6 +137,10 @@ func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 	return "", errors.New("localdeploy does not support getting the CA certificate")
 }
 
+func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
+	return "", errors.New("localdeploy does not support getting gateway certificates")
+}
+
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
 	return "", errors.New("localdeploy does not support executing queries")
 }

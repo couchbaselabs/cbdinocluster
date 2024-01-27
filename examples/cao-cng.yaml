@@ -1,0 +1,7 @@
+nodes:
+  - count: 3
+    version: 7.2.4-7070
+    services: [kv, n1ql, index, fts]
+cao:
+  operator-version: "2.6.1-113"
+  gateway-version: "0.2.1-133"

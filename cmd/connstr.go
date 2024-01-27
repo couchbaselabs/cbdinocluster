@@ -19,6 +19,7 @@ var connstrCmd = &cobra.Command{
 
 		useTLS, _ := cmd.Flags().GetBool("tls")
 		noTLS, _ := cmd.Flags().GetBool("no-tls")
+		useCb2, _ := cmd.Flags().GetBool("couchbase2")
 
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
@@ -28,25 +29,36 @@ var connstrCmd = &cobra.Command{
 		}
 
 		var connStr string
-		if useTLS && noTLS {
-			logger.Fatal("cannot request both TLS and non-TLS")
-		} else if useTLS {
-			connStr = connectInfo.ConnStrTls
-			if connStr == "" {
-				logger.Fatal("TLS endpoint is unavailable")
+		if useCb2 {
+			if noTLS {
+				logger.Fatal("cannot request non-TLS for couchbase2")
 			}
-		} else if noTLS {
-			connStr = connectInfo.ConnStr
+
+			connStr = connectInfo.ConnStrCb2
 			if connStr == "" {
-				logger.Fatal("non-TLS endpoint is unavailable")
+				logger.Fatal("couchbase2 endpoint is unavailable")
 			}
 		} else {
-			connStr = connectInfo.ConnStr
-			if connStr == "" {
+			if useTLS && noTLS {
+				logger.Fatal("cannot request both TLS and non-TLS")
+			} else if useTLS {
 				connStr = connectInfo.ConnStrTls
-			}
-			if connStr == "" {
-				logger.Fatal("no endpoint available")
+				if connStr == "" {
+					logger.Fatal("TLS endpoint is unavailable")
+				}
+			} else if noTLS {
+				connStr = connectInfo.ConnStr
+				if connStr == "" {
+					logger.Fatal("non-TLS endpoint is unavailable")
+				}
+			} else {
+				connStr = connectInfo.ConnStr
+				if connStr == "" {
+					connStr = connectInfo.ConnStrTls
+				}
+				if connStr == "" {
+					logger.Fatal("no endpoint available")
+				}
 			}
 		}
 
@@ -57,6 +69,7 @@ var connstrCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(connstrCmd)
 
+	connstrCmd.PersistentFlags().Bool("couchbase2", false, "Requests a couchbase2 connstr")
 	connstrCmd.PersistentFlags().Bool("tls", false, "Explicitly requests a TLS endpoint")
 	connstrCmd.PersistentFlags().Bool("no-tls", false, "Explicitly requests non-TLS endpoint")
 }

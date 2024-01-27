@@ -25,6 +25,7 @@ type ClusterInfo interface {
 type ConnectInfo struct {
 	ConnStr    string
 	ConnStrTls string
+	ConnStrCb2 string
 	Mgmt       string
 	MgmtTls    string
 }
@@ -91,6 +92,7 @@ type Deployer interface {
 	CreateBucket(ctx context.Context, clusterID string, opts *CreateBucketOptions) error
 	DeleteBucket(ctx context.Context, clusterID string, bucketName string) error
 	GetCertificate(ctx context.Context, clusterID string) (string, error)
+	GetGatewayCertificate(ctx context.Context, clusterID string) (string, error)
 	ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error)
 	ListCollections(ctx context.Context, clusterID string, bucketName string) ([]ScopeInfo, error)
 	CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error

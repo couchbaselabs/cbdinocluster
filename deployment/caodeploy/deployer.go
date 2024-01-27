@@ -112,8 +112,40 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 }
 
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
-	clusterID := cbdcuuid.New()
+	clusterVersion := ""
+	for _, nodeGrp := range def.NodeGroups {
+		if clusterVersion == "" {
+			clusterVersion = nodeGrp.Version
+		}
+		if clusterVersion != nodeGrp.Version {
+			return nil, errors.New("all node groups must have the same couchbase version")
+		}
+	}
 
+	serverImagePath, err := caocontrol.GetServerImage(ctx, clusterVersion)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to identify server image")
+	}
+
+	gatewayImagePath := ""
+	if def.Cao.GatewayVersion != "" {
+		foundGatewayImagePath, err := caocontrol.GetGatewayImage(ctx, def.Cao.GatewayVersion)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to identify gateway image")
+		}
+
+		gatewayImagePath = foundGatewayImagePath
+	}
+	username := "Administrator"
+	password := "password"
+	if def.Docker.Username != "" {
+		username = def.Cao.Username
+	}
+	if def.Docker.Password != "" {
+		password = def.Cao.Password
+	}
+
+	clusterID := cbdcuuid.New()
 	namespace := "cbdc2-" + clusterID.String()
 
 	expiryTime := time.Time{}
@@ -121,7 +153,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		expiryTime = time.Now().Add(def.Expiry)
 	}
 
-	err := d.client.CreateNamespace(ctx, namespace, map[string]string{
+	err = d.client.CreateNamespace(ctx, namespace, map[string]string{
 		"cbdc2.type":       "cluster",
 		"cbdc2.cluster_id": clusterID.String(),
 		"cbdc2.purpose":    def.Purpose,
@@ -136,30 +168,21 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to install ghcr secret")
 	}
 
-	err = d.client.InstallOperator(ctx, namespace)
+	err = d.client.InstallOperator(ctx, namespace, def.Cao.OperatorVersion)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to install operator")
 	}
 
-	err = d.client.CreateBasicAuthSecret(ctx, namespace, "cbdc2-admin-auth", "Administrator", "password")
+	err = d.client.CreateBasicAuthSecret(ctx, namespace, "cbdc2-admin-auth", username, password)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create admin auth")
 	}
-
-	clusterVersion := ""
 
 	var serversRes []interface{}
 	for nodeGrpIdx, nodeGrp := range def.NodeGroups {
 		caoServices, err := clusterdef.ServicesToCaoServices(nodeGrp.Services)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to generate cao server services list")
-		}
-
-		if clusterVersion == "" {
-			clusterVersion = nodeGrp.Version
-		}
-		if clusterVersion != nodeGrp.Version {
-			return nil, errors.New("all node groups must have the same couchbase version")
 		}
 
 		serversRes = append(serversRes, map[string]interface{}{
@@ -178,8 +201,15 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		})
 	}
 
+	var cngSpec map[string]interface{}
+	if gatewayImagePath != "" {
+		cngSpec = map[string]interface{}{
+			"image": gatewayImagePath,
+		}
+	}
+
 	clusterSpec := map[string]interface{}{
-		"image": "couchbase/server:" + clusterVersion,
+		"image": serverImagePath,
 		"buckets": map[string]interface{}{
 			"managed": false,
 		},
@@ -192,13 +222,28 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		"networking": map[string]interface{}{
 			"exposeAdminConsole": true,
 			"exposedFeatures":    []string{"admin", "xdcr", "client"},
+			"cloudNativeGateway": cngSpec,
 		},
 		"servers": serversRes,
 	}
 
-	err = d.client.CreateCouchbaseCluster(ctx, namespace, CouchbaseClusterName, nil, clusterSpec)
+	err = d.client.CreateCouchbaseCluster(ctx,
+		namespace, CouchbaseClusterName, nil,
+		clusterSpec)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create cluster resource")
+	}
+
+	// check if the CNG service is there, if so, lets mirror it to a cbdc NodePort
+	_, err = d.client.GetService(ctx, namespace, CouchbaseClusterName+"-cloud-native-gateway-service")
+	if err != nil {
+		d.logger.Info("no cng service detected")
+	} else {
+		d.logger.Info("cng service detected, creating NodePort service")
+		err = d.client.CreateCbdcCngService(ctx, namespace, CouchbaseClusterName)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create dino cng service")
+		}
 	}
 
 	return ClusterInfo{
@@ -281,11 +326,6 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		return nil, err
 	}
 
-	service, err := d.client.GetService(ctx, namespaceName, CouchbaseClusterName+"-ui")
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get service")
-	}
-
 	nodes, err := d.client.GetNodes(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get nodes")
@@ -307,6 +347,11 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		return nil, errors.New("could not identify node IP to use")
 	}
 
+	service, err := d.client.GetService(ctx, namespaceName, CouchbaseClusterName+"-ui")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get service")
+	}
+
 	var mgmtAddr string
 	var mgmtTlsAddr string
 	var connstr string
@@ -325,9 +370,22 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		}
 	}
 
+	var connstrCb2 string
+
+	service, err = d.client.GetService(ctx, namespaceName, "cbdc2-"+CouchbaseClusterName+"-cng-service")
+	if err == nil {
+		for _, port := range service.Spec.Ports {
+			switch port.Name {
+			case "cloud-native-gateway-https":
+				connstrCb2 = fmt.Sprintf("couchbase2://%s:%d", externalIP, port.NodePort)
+			}
+		}
+	}
+
 	return &deployment.ConnectInfo{
 		ConnStr:    connstr,
 		ConnStrTls: connstrTls,
+		ConnStrCb2: connstrCb2,
 		Mgmt:       mgmtAddr,
 		MgmtTls:    mgmtTlsAddr,
 	}, nil
@@ -393,6 +451,25 @@ func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 
 func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("caodeploy does not support getting certificates")
+}
+
+func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
+	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
+	if err != nil {
+		return "", err
+	}
+
+	secret, err := d.client.GetSecret(ctx, namespaceName, "couchbase-cloud-native-gateway-self-signed-secret-cluster")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get secret")
+	}
+
+	secretData := secret.Data["tls.crt"]
+	if len(secretData) == 0 {
+		return "", errors.New("secret data was unexpectedly empty")
+	}
+
+	return string(secretData), nil
 }
 
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {

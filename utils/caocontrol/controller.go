@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -271,6 +272,20 @@ func (c *Controller) InstallDefaultCrd(ctx context.Context) error {
 	return nil
 }
 
+func (c *Controller) GetSecret(ctx context.Context, namespace string, name string) (*corev1.Secret, error) {
+	kubes, err := kubernetes.NewForConfig(c.restConfig)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create kubernetes client")
+	}
+
+	secret, err := kubes.CoreV1().Secrets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get secret")
+	}
+
+	return secret, nil
+}
+
 func (c *Controller) CreateSecret(ctx context.Context, namespace string, secret *corev1.Secret) error {
 	kubes, err := kubernetes.NewForConfig(c.restConfig)
 	if err != nil {
@@ -449,9 +464,19 @@ func (c *Controller) FindAdmissionController(ctx context.Context) (string, error
 	return "", nil
 }
 
-func (c *Controller) InstallGlobalAdmissionController(ctx context.Context, namespace string) error {
+func (c *Controller) InstallGlobalAdmissionController(ctx context.Context, namespace string, version string) error {
 	if namespace == "" {
 		namespace = CbdcAdmissionControllerNamespace
+	}
+
+	imagePath := ""
+	if version != "" {
+		foundImagePath, err := GetAdmissionControllerImage(ctx, version)
+		if err != nil {
+			return errors.Wrap(err, "failed to identify image")
+		}
+
+		imagePath = foundImagePath
 	}
 
 	existingNamespace, err := c.FindAdmissionController(ctx)
@@ -493,13 +518,19 @@ func (c *Controller) InstallGlobalAdmissionController(ctx context.Context, names
 
 	c.logger.Info("installing admission controller", zap.String("namespace", namespace))
 
-	err = c.caoExecAndPipe(ctx, c.logger, []string{
+	createArgs := []string{
 		"create",
 		"admission",
 		"--namespace", namespace,
 		"--replicas", "1",
 		"--image-pull-secret", GhcrSecretName,
-	})
+	}
+	if imagePath != "" {
+		createArgs = append(createArgs,
+			"--image", imagePath)
+	}
+
+	err = c.caoExecAndPipe(ctx, c.logger, createArgs)
 	if err != nil {
 		return errors.Wrap(err, "failed to create admission controller")
 	}
@@ -589,9 +620,19 @@ func (c *Controller) UninstallGlobalAdmissionController(ctx context.Context, nam
 	return nil
 }
 
-func (c *Controller) InstallOperator(ctx context.Context, namespace string) error {
+func (c *Controller) InstallOperator(ctx context.Context, namespace string, version string) error {
 	if namespace == "" {
 		return errors.New("namespace must be specified")
+	}
+
+	imagePath := ""
+	if version != "" {
+		foundImagePath, err := GetOperatorImage(ctx, version)
+		if err != nil {
+			return errors.Wrap(err, "failed to identify image")
+		}
+
+		imagePath = foundImagePath
 	}
 
 	c.logger.Info("installing operator", zap.String("namespace", namespace))
@@ -610,12 +651,18 @@ func (c *Controller) InstallOperator(ctx context.Context, namespace string) erro
 
 	c.logger.Info("installing operator", zap.String("namespace", namespace))
 
-	err = c.caoExecAndPipe(ctx, c.logger, []string{
+	createArgs := []string{
 		"create",
 		"operator",
 		"--namespace", namespace,
 		"--image-pull-secret", GhcrSecretName,
-	})
+	}
+	if imagePath != "" {
+		createArgs = append(createArgs,
+			"--image", imagePath)
+	}
+
+	err = c.caoExecAndPipe(ctx, c.logger, createArgs)
 	if err != nil {
 		return errors.Wrap(err, "failed to create operator")
 	}
@@ -777,6 +824,42 @@ func (c *Controller) CreateCouchbaseCluster(
 
 	c.logger.Info("couchbase cluster created")
 
+	return nil
+}
+
+func (c *Controller) CreateCbdcCngService(ctx context.Context, namespace string, clusterName string) error {
+	c.logger.Info("creating dino cng service", zap.String("namespace", namespace))
+
+	kubes, err := kubernetes.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create kubernetes client")
+	}
+
+	origSvcName := fmt.Sprintf("%s-cloud-native-gateway-service", clusterName)
+	cngSvc, err := kubes.CoreV1().Services(namespace).Get(ctx, origSvcName, metav1.GetOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to find cng service")
+	}
+
+	svcName := fmt.Sprintf("cbdc2-%s-cng-service", clusterName)
+	_, err = kubes.CoreV1().Services(namespace).Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: svcName,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: cngSvc.Spec.Selector,
+			Ports:    cngSvc.Spec.Ports,
+			Type:     corev1.ServiceTypeNodePort,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to create dino cng service")
+	}
+
+	// NodePort services get assigned ports at creation time.  No need to
+	// wait for it to be "Available".
+
+	c.logger.Info("created dino cng service")
 	return nil
 }
 

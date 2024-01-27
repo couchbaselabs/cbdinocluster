@@ -1119,6 +1119,10 @@ func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 	return strings.TrimSpace(lastCert.Pem), nil
 }
 
+func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
+	return "", errors.New("clouddeploy does not support getting gateway certificates")
+}
+
 func (p *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
 	return "", errors.New("clouddeploy does not support executing queries")
 }

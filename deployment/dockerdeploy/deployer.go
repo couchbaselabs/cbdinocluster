@@ -972,6 +972,10 @@ func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 	return strings.TrimSpace(lastCert.Pem), nil
 }
 
+func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
+	return "", errors.New("dockerdeploy does not support getting gateway certificates")
+}
+
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
 	agent, err := d.getAgent(ctx, clusterID, "")
 	if err != nil {

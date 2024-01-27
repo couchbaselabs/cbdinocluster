@@ -15,8 +15,9 @@ var toolsCaoInstallAdmissionCmd = &cobra.Command{
 		caoDeployer := helper.GetCaoDeployer(ctx)
 
 		namespace, _ := cmd.Flags().GetString("namespace")
+		version, _ := cmd.Flags().GetString("version")
 
-		err := caoDeployer.GetClient().InstallGlobalAdmissionController(ctx, namespace)
+		err := caoDeployer.GetClient().InstallGlobalAdmissionController(ctx, namespace, version)
 		if err != nil {
 			logger.Fatal("failed to install admission controller", zap.Error(err))
 		}
@@ -27,4 +28,5 @@ func init() {
 	toolsCaoCmd.AddCommand(toolsCaoInstallAdmissionCmd)
 
 	toolsCaoInstallAdmissionCmd.Flags().String("namespace", "", "Which namespace to install in.")
+	toolsCaoInstallAdmissionCmd.Flags().String("version", "", "Which admission controller version to install.")
 }

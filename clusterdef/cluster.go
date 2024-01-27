@@ -11,6 +11,7 @@ type Cluster struct {
 	NodeGroups []*NodeGroup `yaml:"nodes,omitempty"`
 
 	Docker DockerCluster `yaml:"docker,omitempty"`
+	Cao    CaoCluster    `yaml:"cao,omitempty"`
 	Cloud  CloudCluster  `yaml:"cloud,omitempty"`
 }
 
@@ -23,6 +24,14 @@ type DockerCluster struct {
 	FtsMemoryMB      int `yaml:"fts-memory,omitempty"`
 	CbasMemoryMB     int `yaml:"cbas-memory,omitempty"`
 	EventingMemoryMB int `yaml:"eventing-memory,omitempty"`
+}
+
+type CaoCluster struct {
+	Username string `yaml:"username,omitempty"`
+	Password string `yaml:"password,omitempty"`
+
+	OperatorVersion string `yaml:"operator-version,omitempty"`
+	GatewayVersion  string `yaml:"gateway-version,omitempty"`
 }
 
 type CloudCluster struct {
