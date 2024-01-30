@@ -98,8 +98,9 @@ func (p *GhcrImageProvider) ListImages(ctx context.Context) ([]deployment.Image,
 			}
 
 			images = append(images, deployment.Image{
-				Source: "ghcr",
-				Name:   versionName,
+				Source:     "ghcr",
+				Name:       versionName,
+				SourcePath: fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", versionName),
 			})
 		}
 	}
@@ -140,8 +141,9 @@ func (p *GhcrImageProvider) SearchImages(ctx context.Context, version string) ([
 		}
 
 		images = append(images, deployment.Image{
-			Source: "ghcr",
-			Name:   versionName,
+			Source:     "ghcr",
+			Name:       versionName,
+			SourcePath: fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", versionName),
 		})
 	}
 

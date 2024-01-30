@@ -63,8 +63,9 @@ type CollectionInfo struct {
 }
 
 type Image struct {
-	Source string
-	Name   string
+	Source     string
+	Name       string
+	SourcePath string
 }
 
 type BlockNodeTrafficType string

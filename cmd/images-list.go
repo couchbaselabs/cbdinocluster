@@ -10,8 +10,9 @@ import (
 type ImagesListOutput []ImagesListOutput_Item
 
 type ImagesListOutput_Item struct {
-	Source string `json:"source"`
-	Name   string `json:"name"`
+	Source     string `json:"source"`
+	Name       string `json:"name"`
+	SourcePath string `json:"source-path"`
 }
 
 var imagesListCmd = &cobra.Command{
@@ -34,14 +35,19 @@ var imagesListCmd = &cobra.Command{
 		if !outputJson {
 			fmt.Printf("Images:\n")
 			for _, image := range images {
-				fmt.Printf("  %s [Source: %s]\n", image.Name, image.Source)
+				if image.SourcePath != "" {
+					fmt.Printf("  %s [Source: %s, Source Path: %s]\n", image.Name, image.Source, image.SourcePath)
+				} else {
+					fmt.Printf("  %s [Source: %s]\n", image.Name, image.Source)
+				}
 			}
 		} else {
 			var out ImagesListOutput
 			for _, image := range images {
 				out = append(out, ImagesListOutput_Item{
-					Source: image.Source,
-					Name:   image.Name,
+					Source:     image.Source,
+					Name:       image.Name,
+					SourcePath: image.SourcePath,
 				})
 			}
 			helper.OutputJson(out)

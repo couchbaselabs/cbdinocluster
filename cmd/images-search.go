@@ -13,8 +13,9 @@ import (
 type ImagesSearchOutput []ImagesSearchOutput_Item
 
 type ImagesSearchOutput_Item struct {
-	Source string `json:"source"`
-	Name   string `json:"name"`
+	Source     string `json:"source"`
+	Name       string `json:"name"`
+	SourcePath string `json:"source-path"`
 }
 
 var imagesSearchCmd = &cobra.Command{
@@ -61,7 +62,11 @@ var imagesSearchCmd = &cobra.Command{
 					break
 				}
 
-				fmt.Printf("  %s [Source: %s]\n", image.Name, image.Source)
+				if image.SourcePath != "" {
+					fmt.Printf("  %s [Source: %s, Source Path: %s]\n", image.Name, image.Source, image.SourcePath)
+				} else {
+					fmt.Printf("  %s [Source: %s]\n", image.Name, image.Source)
+				}
 			}
 		} else {
 			var out ImagesSearchOutput
@@ -71,8 +76,9 @@ var imagesSearchCmd = &cobra.Command{
 				}
 
 				out = append(out, ImagesSearchOutput_Item{
-					Source: image.Source,
-					Name:   image.Name,
+					Source:     image.Source,
+					Name:       image.Name,
+					SourcePath: image.SourcePath,
 				})
 			}
 			helper.OutputJson(out)

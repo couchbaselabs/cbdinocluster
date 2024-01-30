@@ -65,8 +65,9 @@ func (p *DockerHubImageProvider) ListImages(ctx context.Context) ([]deployment.I
 			versionName := tagParts[1]
 
 			images = append(images, deployment.Image{
-				Source: "dockerhub",
-				Name:   versionName,
+				Source:     "dockerhub",
+				Name:       versionName,
+				SourcePath: fmt.Sprintf("couchbase:%s", versionName),
 			})
 		}
 	}
@@ -111,8 +112,9 @@ func (p *DockerHubImageProvider) SearchImages(ctx context.Context, version strin
 			}
 
 			images = append(images, deployment.Image{
-				Source: "dockerhub",
-				Name:   versionName,
+				Source:     "dockerhub",
+				Name:       versionName,
+				SourcePath: fmt.Sprintf("couchbase:%s", versionName),
 			})
 		}
 
