@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
+	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/deployment/caodeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
@@ -483,4 +484,52 @@ func (h *CmdHelper) IdentifyNode(
 func (h *CmdHelper) OutputJson(value interface{}) {
 	out, _ := json.Marshal(value)
 	fmt.Printf("%s\n", out)
+}
+
+func (h *CmdHelper) FetchClusterDef(
+	simpleStr, defStr, defPath string,
+) (*clusterdef.Cluster, error) {
+	onlyOneDefErr := errors.New("must specify only one form of cluster definition")
+
+	if simpleStr != "" {
+		if defStr != "" || defPath != "" {
+			return nil, onlyOneDefErr
+		}
+
+		shortDef, err := clusterdef.FromShortString(simpleStr)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse definition short string")
+		}
+
+		return shortDef, nil
+	} else if defStr != "" {
+		if simpleStr != "" || defPath != "" {
+			return nil, onlyOneDefErr
+		}
+
+		parsedDef, err := clusterdef.Parse([]byte(defStr))
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse cluster definition")
+		}
+
+		return parsedDef, nil
+	} else if defPath != "" {
+		if simpleStr != "" || defStr != "" {
+			return nil, onlyOneDefErr
+		}
+
+		defFileBytes, err := os.ReadFile(defPath)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to read cluster definition file")
+		}
+
+		parsedDef, err := clusterdef.Parse(defFileBytes)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse cluster definition from file")
+		}
+
+		return parsedDef, nil
+	}
+
+	return nil, errors.New("must specify at least one form of cluster definition")
 }

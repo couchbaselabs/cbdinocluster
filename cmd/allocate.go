@@ -2,62 +2,12 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
-
-func fetchClusterDef(
-	simpleStr, defStr, defPath string,
-) (*clusterdef.Cluster, error) {
-	onlyOneDefErr := errors.New("must specify only one form of cluster definition")
-
-	if simpleStr != "" {
-		if defStr != "" || defPath != "" {
-			return nil, onlyOneDefErr
-		}
-
-		shortDef, err := clusterdef.FromShortString(simpleStr)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse definition short string")
-		}
-
-		return shortDef, nil
-	} else if defStr != "" {
-		if simpleStr != "" || defPath != "" {
-			return nil, onlyOneDefErr
-		}
-
-		parsedDef, err := clusterdef.Parse([]byte(defStr))
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse cluster definition")
-		}
-
-		return parsedDef, nil
-	} else if defPath != "" {
-		if simpleStr != "" || defStr != "" {
-			return nil, onlyOneDefErr
-		}
-
-		defFileBytes, err := os.ReadFile(defPath)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to read cluster definition file")
-		}
-
-		parsedDef, err := clusterdef.Parse(defFileBytes)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse cluster definition from file")
-		}
-
-		return parsedDef, nil
-	}
-
-	return nil, errors.New("must specify at least one form of cluster definition")
-}
 
 var allocateCmd = &cobra.Command{
 	Use:     "allocate [flags] [definition-tag | --def | --def-file]",
@@ -86,7 +36,7 @@ var allocateCmd = &cobra.Command{
 			simpleDefStr = args[0]
 		}
 
-		def, err := fetchClusterDef(simpleDefStr, defStr, defFile)
+		def, err := helper.FetchClusterDef(simpleDefStr, defStr, defFile)
 		if err != nil {
 			logger.Fatal("failed to get definition", zap.Error(err))
 		}

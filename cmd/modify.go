@@ -21,7 +21,7 @@ var modifyCmd = &cobra.Command{
 
 		var def *clusterdef.Cluster
 
-		def, err := fetchClusterDef("", defStr, defFile)
+		def, err := helper.FetchClusterDef("", defStr, defFile)
 		if err != nil {
 			logger.Fatal("failed to get definition", zap.Error(err))
 		}
