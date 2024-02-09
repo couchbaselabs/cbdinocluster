@@ -25,7 +25,7 @@ type ImageProvider interface {
 }
 
 func CompareImageDefs(a, b *ImageDef) int {
-	c := semver.Compare(a.Version, b.Version)
+	c := semver.Compare("v"+a.Version, "v"+b.Version)
 	if c != 0 {
 		return c
 	}
