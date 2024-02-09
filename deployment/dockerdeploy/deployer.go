@@ -24,6 +24,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
+	"golang.org/x/mod/semver"
 )
 
 type Deployer struct {
@@ -253,6 +254,15 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	}
 
 	leaveNodesAfterReturn = true
+
+	// we need to sort the nodes by server version so that the oldest server version
+	// is the first one initialized, otherwise in mixed-version clusters, we might
+	// end up initializing the higher version nodes first, disallowing older nodes
+	// from being initialized into the cluster (couchbase does not permit downgrades).
+	slices.SortFunc(nodes, func(a, b *NodeInfo) bool {
+		return semver.Compare("v"+a.InitialServerVersion, "v"+b.InitialServerVersion) < 0
+	})
+	d.logger.Debug("reordered setup order", zap.Any("nodes", nodes))
 
 	var setupNodeOpts []*clustercontrol.SetupNewClusterNodeOptions
 	for nodeIdx, node := range nodes {
