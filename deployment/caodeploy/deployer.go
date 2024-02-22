@@ -112,6 +112,11 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 }
 
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
+	isOpenShift, err := d.client.IsOpenShift(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to detect whether we are using openshift")
+	}
+
 	clusterVersion := ""
 	for _, nodeGrp := range def.NodeGroups {
 		if clusterVersion == "" {
@@ -122,14 +127,14 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 	}
 
-	serverImagePath, err := caocontrol.GetServerImage(ctx, clusterVersion)
+	serverImagePath, err := caocontrol.GetServerImage(ctx, clusterVersion, isOpenShift)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to identify server image")
 	}
 
 	gatewayImagePath := ""
 	if def.Cao.GatewayVersion != "" {
-		foundGatewayImagePath, err := caocontrol.GetGatewayImage(ctx, def.Cao.GatewayVersion)
+		foundGatewayImagePath, err := caocontrol.GetGatewayImage(ctx, def.Cao.GatewayVersion, isOpenShift)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to identify gateway image")
 		}
@@ -168,7 +173,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to install ghcr secret")
 	}
 
-	err = d.client.InstallOperator(ctx, namespace, def.Cao.OperatorVersion)
+	err = d.client.InstallOperator(ctx, namespace, def.Cao.OperatorVersion, isOpenShift)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to install operator")
 	}
@@ -235,14 +240,69 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	}
 
 	// check if the CNG service is there, if so, lets mirror it to a cbdc NodePort
-	_, err = d.client.GetService(ctx, namespace, CouchbaseClusterName+"-cloud-native-gateway-service")
+	hasCng := false
+
+	uiServiceName := CouchbaseClusterName + "-ui"
+	cngServiceName := CouchbaseClusterName + "-cloud-native-gateway-service"
+
+	_, err = d.client.GetService(ctx, namespace, cngServiceName)
 	if err != nil {
 		d.logger.Info("no cng service detected")
 	} else {
+		hasCng = true
+	}
+
+	if hasCng {
 		d.logger.Info("cng service detected, creating NodePort service")
 		err = d.client.CreateCbdcCngService(ctx, namespace, CouchbaseClusterName)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create dino cng service")
+		}
+	}
+
+	if def.Cao.UseIngress {
+		if isOpenShift {
+			d.logger.Info("cng service detected, creating ui route")
+
+			// this must be a short name or we hit dns name length limits
+			err = d.client.CreateRoute(ctx, namespace, "ui", map[string]interface{}{
+				"tls": map[string]interface{}{
+					"termination": "edge",
+				},
+				"to": map[string]interface{}{
+					"kind": "Service",
+					"name": uiServiceName,
+				},
+				"port": map[string]interface{}{
+					"targetPort": 8091,
+				},
+			})
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to create ui route")
+			}
+
+			if hasCng {
+				d.logger.Info("cng service detected, creating cng route")
+
+				// this must be a short name or we hit dns name length limits
+				err = d.client.CreateRoute(ctx, namespace, "cng", map[string]interface{}{
+					"tls": map[string]interface{}{
+						"termination": "passthrough",
+					},
+					"to": map[string]interface{}{
+						"kind": "Service",
+						"name": cngServiceName,
+					},
+					"port": map[string]interface{}{
+						"targetPort": 18098,
+					},
+				})
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to create cng route")
+				}
+			}
+		} else {
+			d.logger.Info("ignoring ingress request due to non-openshift")
 		}
 	}
 
@@ -380,6 +440,19 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 				connstrCb2 = fmt.Sprintf("couchbase2://%s:%d", externalIP, port.NodePort)
 			}
 		}
+	}
+
+	uiHost, err := d.client.GetRouteHost(ctx, namespaceName, "ui")
+	if err == nil {
+		mgmtAddr = ""
+		mgmtTlsAddr = fmt.Sprintf("https://%s", uiHost)
+	}
+
+	cngHost, err := d.client.GetRouteHost(ctx, namespaceName, "cng")
+	if err == nil {
+		connstr = ""
+		connstrTls = ""
+		connstrCb2 = fmt.Sprintf("couchbase2://%s", cngHost)
 	}
 
 	return &deployment.ConnectInfo{

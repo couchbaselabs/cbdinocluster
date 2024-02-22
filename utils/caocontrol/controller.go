@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
 	"k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -161,6 +162,26 @@ func (c *Controller) Ping(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (c *Controller) IsOpenShift(ctx context.Context) (bool, error) {
+	discCli, err := discovery.NewDiscoveryClientForConfig(c.restConfig)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to create discovery client")
+	}
+
+	serverGroups, err := discCli.ServerGroups()
+	if err != nil {
+		return false, errors.Wrap(err, "failed to get server groups")
+	}
+
+	for _, serverGroup := range serverGroups.Groups {
+		if serverGroup.Name == "route.openshift.io" {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func (c *Controller) IsCrdInstalled(ctx context.Context) (bool, error) {
@@ -620,14 +641,14 @@ func (c *Controller) UninstallGlobalAdmissionController(ctx context.Context, nam
 	return nil
 }
 
-func (c *Controller) InstallOperator(ctx context.Context, namespace string, version string) error {
+func (c *Controller) InstallOperator(ctx context.Context, namespace string, version string, needRhcc bool) error {
 	if namespace == "" {
 		return errors.New("namespace must be specified")
 	}
 
 	imagePath := ""
 	if version != "" {
-		foundImagePath, err := GetOperatorImage(ctx, version)
+		foundImagePath, err := GetOperatorImage(ctx, version, needRhcc)
 		if err != nil {
 			return errors.Wrap(err, "failed to identify image")
 		}
@@ -861,6 +882,58 @@ func (c *Controller) CreateCbdcCngService(ctx context.Context, namespace string,
 
 	c.logger.Info("created dino cng service")
 	return nil
+}
+
+func (c *Controller) CreateRoute(ctx context.Context, namespace string, routeName string, spec interface{}) error {
+	c.logger.Info("creating route", zap.String("namespace", namespace))
+
+	err := c.createUnstructuredResource(ctx, namespace, &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "route.openshift.io/v1",
+			"kind":       "Route",
+			"metadata": map[string]interface{}{
+				"name": routeName,
+			},
+			"spec": spec,
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create route")
+	}
+
+	return nil
+}
+
+func (c *Controller) GetRouteHost(ctx context.Context, namespace string, name string) (string, error) {
+	c.logger.Debug("getting route host",
+		zap.String("namespace", namespace),
+		zap.String("name", name))
+
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	route, err := dyna.Resource(schema.GroupVersionResource{
+		Group:    "route.openshift.io",
+		Version:  "v1",
+		Resource: "routes",
+	}).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get route")
+	}
+
+	spec, ok := route.Object["spec"].(map[string]interface{})
+	if !ok {
+		return "", errors.New("spec was not an object")
+	}
+
+	host, ok := spec["host"].(string)
+	if !ok {
+		return "", errors.New("host was not a string")
+	}
+
+	return host, nil
 }
 
 func (c *Controller) GetNodes(
