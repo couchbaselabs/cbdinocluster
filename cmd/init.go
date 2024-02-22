@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
 	"strings"
 	"time"
 
@@ -150,6 +151,11 @@ var initCmd = &cobra.Command{
 		}
 
 		getColimaDockerHost := func() string {
+			if runtime.GOOS != "windows" {
+				fmt.Printf("not checked on windows.\n")
+				return ""
+			}
+
 			colimaSocketPath := path.Join(userHomePath, "/.colima/default/docker.sock")
 			fmt.Printf("Checking for Colima installation at `%s`... ", colimaSocketPath)
 			hasColima := checkFileExists(colimaSocketPath)
@@ -163,7 +169,13 @@ var initCmd = &cobra.Command{
 		}
 
 		getDockerDockerHost := func() string {
+			dockerSocketScheme := "unix"
 			dockerSocketPath := "/var/run/docker.sock"
+			if runtime.GOOS == "windows" {
+				dockerSocketScheme = "npipe"
+				dockerSocketPath = "//./pipe/docker_engine"
+			}
+
 			fmt.Printf("Checking for Docker installation at `%s`... ", dockerSocketPath)
 			hasDocker := checkFileExists(dockerSocketPath)
 			if !hasDocker {
@@ -172,7 +184,7 @@ var initCmd = &cobra.Command{
 			}
 
 			fmt.Printf("found.\n")
-			return "unix://" + dockerSocketPath
+			return dockerSocketScheme + "://" + dockerSocketPath
 		}
 
 		getColimaAddress := func() string {

@@ -44,6 +44,8 @@ func DownloadCaoTools(
 		archiveType = "tar.gz"
 	} else if osName == "macos" {
 		archiveType = "zip"
+	} else if osName == "windows" {
+		archiveType = "zip"
 	} else {
 		return errors.New("unsupported osName")
 	}
