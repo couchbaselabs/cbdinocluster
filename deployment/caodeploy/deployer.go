@@ -15,6 +15,9 @@ import (
 
 const (
 	CouchbaseClusterName = "cluster"
+
+	UiServiceName  = CouchbaseClusterName + "-ui"
+	CngServiceName = CouchbaseClusterName + "-cloud-native-gateway-service"
 )
 
 type Deployer struct {
@@ -239,79 +242,21 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to create cluster resource")
 	}
 
-	// check if the CNG service is there, if so, lets mirror it to a cbdc NodePort
-	hasCng := false
-
-	uiServiceName := CouchbaseClusterName + "-ui"
-	cngServiceName := CouchbaseClusterName + "-cloud-native-gateway-service"
-
-	_, err = d.client.GetService(ctx, namespace, cngServiceName)
+	_, err = d.client.GetService(ctx, namespace, CngServiceName)
 	if err != nil {
 		d.logger.Info("no cng service detected")
 	} else {
 		d.logger.Info("cng service detected, waiting for endpoints to be available")
 
-		err := d.client.WaitServiceHasEndpoints(ctx, namespace, cngServiceName)
+		err := d.client.WaitServiceHasEndpoints(ctx, namespace, CngServiceName)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to wait for cng service to have endpoints")
 		}
 
-		hasCng = true
-	}
-
-	if hasCng {
 		d.logger.Info("creating cbdc cng NodePort service")
 		err = d.client.CreateCbdcCngService(ctx, namespace, CouchbaseClusterName)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create dino cng service")
-		}
-	}
-
-	if def.Cao.UseIngress {
-		d.logger.Info("ingresses enabled")
-
-		if isOpenShift {
-			d.logger.Info("creating ui route")
-
-			// this must be a short name or we hit dns name length limits
-			err = d.client.CreateRoute(ctx, namespace, "ui", map[string]interface{}{
-				"tls": map[string]interface{}{
-					"termination": "edge",
-				},
-				"to": map[string]interface{}{
-					"kind": "Service",
-					"name": uiServiceName,
-				},
-				"port": map[string]interface{}{
-					"targetPort": 8091,
-				},
-			})
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to create ui route")
-			}
-
-			if hasCng {
-				d.logger.Info("creating cng route")
-
-				// this must be a short name or we hit dns name length limits
-				err = d.client.CreateRoute(ctx, namespace, "cng", map[string]interface{}{
-					"tls": map[string]interface{}{
-						"termination": "passthrough",
-					},
-					"to": map[string]interface{}{
-						"kind": "Service",
-						"name": cngServiceName,
-					},
-					"port": map[string]interface{}{
-						"targetPort": 18098,
-					},
-				})
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to create cng route")
-				}
-			}
-		} else {
-			d.logger.Info("ignoring ingress request due to non-openshift")
 		}
 	}
 
@@ -389,6 +334,96 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 	return nil
 }
 
+func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string) error {
+	isOpenShift, err := d.client.IsOpenShift(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to detect whether we are using openshift")
+	}
+
+	if !isOpenShift {
+		return errors.New("ingresses are currently only supported with openshift")
+	}
+
+	namespace, err := d.getClusterNamespace(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	d.logger.Info("creating ui route")
+
+	// this must be a short name or we hit dns name length limits
+	err = d.client.CreateRoute(ctx, namespace, "ui", map[string]interface{}{
+		"tls": map[string]interface{}{
+			"termination": "edge",
+		},
+		"to": map[string]interface{}{
+			"kind": "Service",
+			"name": UiServiceName,
+		},
+		"port": map[string]interface{}{
+			"targetPort": 8091,
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create ui route")
+	}
+
+	_, err = d.client.GetService(ctx, namespace, CngServiceName)
+	if err != nil {
+		d.logger.Info("no cng service detected")
+	} else {
+		d.logger.Info("cng service detected, creating cng route")
+
+		// this must be a short name or we hit dns name length limits
+		err = d.client.CreateRoute(ctx, namespace, "cng", map[string]interface{}{
+			"tls": map[string]interface{}{
+				"termination": "passthrough",
+			},
+			"to": map[string]interface{}{
+				"kind": "Service",
+				"name": CngServiceName,
+			},
+			"port": map[string]interface{}{
+				"targetPort": 18098,
+			},
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to create cng route")
+		}
+	}
+
+	return nil
+}
+
+func (d *Deployer) DisableIngresses(ctx context.Context, clusterID string) error {
+	namespace, err := d.getClusterNamespace(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	allDeletesFailed := true
+
+	err = d.client.DeleteRoute(ctx, namespace, "ui")
+	if err != nil {
+		d.logger.Debug("failed to delete ui route", zap.Error(err))
+	} else {
+		allDeletesFailed = false
+	}
+
+	err = d.client.DeleteRoute(ctx, namespace, "cng")
+	if err != nil {
+		d.logger.Debug("failed to delete cng route", zap.Error(err))
+	} else {
+		allDeletesFailed = false
+	}
+
+	if allDeletesFailed {
+		return errors.New("route deletions failed")
+	}
+
+	return nil
+}
+
 func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
 	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
@@ -451,24 +486,39 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		}
 	}
 
-	uiHost, err := d.client.GetRouteHost(ctx, namespaceName, "ui")
-	if err == nil {
-		mgmtAddr = ""
-		mgmtTlsAddr = fmt.Sprintf("https://%s", uiHost)
-	}
-
-	cngHost, err := d.client.GetRouteHost(ctx, namespaceName, "cng")
-	if err == nil {
-		connstr = ""
-		connstrTls = ""
-		connstrCb2 = fmt.Sprintf("couchbase2://%s", cngHost)
-	}
-
 	return &deployment.ConnectInfo{
 		ConnStr:    connstr,
 		ConnStrTls: connstrTls,
 		ConnStrCb2: connstrCb2,
 		Mgmt:       mgmtAddr,
+		MgmtTls:    mgmtTlsAddr,
+	}, nil
+}
+
+func (d *Deployer) GetIngressConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
+	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	var mgmtTlsAddr string
+	var connstrCb2 string
+
+	uiHost, err := d.client.GetRouteHost(ctx, namespaceName, "ui")
+	if err == nil {
+		mgmtTlsAddr = fmt.Sprintf("https://%s:443", uiHost)
+	}
+
+	cngHost, err := d.client.GetRouteHost(ctx, namespaceName, "cng")
+	if err == nil {
+		connstrCb2 = fmt.Sprintf("couchbase2://%s:443", cngHost)
+	}
+
+	return &deployment.ConnectInfo{
+		ConnStr:    "",
+		ConnStrTls: "",
+		ConnStrCb2: connstrCb2,
+		Mgmt:       "",
 		MgmtTls:    mgmtTlsAddr,
 	}, nil
 }

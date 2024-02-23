@@ -884,7 +884,7 @@ func (c *Controller) CreateCbdcCngService(ctx context.Context, namespace string,
 	return nil
 }
 
-func (c *Controller) CreateRoute(ctx context.Context, namespace string, routeName string, spec interface{}) error {
+func (c *Controller) CreateRoute(ctx context.Context, namespace string, name string, spec interface{}) error {
 	c.logger.Info("creating route", zap.String("namespace", namespace))
 
 	err := c.createUnstructuredResource(ctx, namespace, &unstructured.Unstructured{
@@ -892,13 +892,31 @@ func (c *Controller) CreateRoute(ctx context.Context, namespace string, routeNam
 			"apiVersion": "route.openshift.io/v1",
 			"kind":       "Route",
 			"metadata": map[string]interface{}{
-				"name": routeName,
+				"name": name,
 			},
 			"spec": spec,
 		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create route")
+	}
+
+	return nil
+}
+
+func (c *Controller) DeleteRoute(ctx context.Context, namespace string, name string) error {
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	err = dyna.Resource(schema.GroupVersionResource{
+		Group:    "route.openshift.io",
+		Version:  "v1",
+		Resource: "routes",
+	}).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to get route")
 	}
 
 	return nil

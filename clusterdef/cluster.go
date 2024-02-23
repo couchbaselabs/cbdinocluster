@@ -30,7 +30,6 @@ type CaoCluster struct {
 	Username string `yaml:"username,omitempty"`
 	Password string `yaml:"password,omitempty"`
 
-	UseIngress      bool   `yaml:"use-ingress,omitempty"`
 	OperatorVersion string `yaml:"operator-version,omitempty"`
 	GatewayVersion  string `yaml:"gateway-version,omitempty"`
 }
