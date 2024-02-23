@@ -969,3 +969,37 @@ func (c *Controller) GetService(
 
 	return service, nil
 }
+
+func (c *Controller) WaitServiceHasEndpoints(
+	ctx context.Context,
+	namespace string,
+	name string,
+) error {
+	kubes, err := kubernetes.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create kubernetes client")
+	}
+
+	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+		endpoint, err := kubes.CoreV1().Endpoints(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return false, errors.Wrap(err, "failed to get endpoints resource")
+		}
+
+		numEndpoints := 0
+		for _, subset := range endpoint.Subsets {
+			numEndpoints += len(subset.Addresses)
+		}
+
+		if numEndpoints == 0 {
+			return false, nil
+		}
+
+		return true, nil
+	}, 10*time.Minute)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for couchbase cluster")
+	}
+
+	return nil
+}

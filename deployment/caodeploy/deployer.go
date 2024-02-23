@@ -249,11 +249,18 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	if err != nil {
 		d.logger.Info("no cng service detected")
 	} else {
+		d.logger.Info("cng service detected, waiting for endpoints to be available")
+
+		err := d.client.WaitServiceHasEndpoints(ctx, namespace, cngServiceName)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wait for cng service to have endpoints")
+		}
+
 		hasCng = true
 	}
 
 	if hasCng {
-		d.logger.Info("cng service detected, creating NodePort service")
+		d.logger.Info("creating cbdc cng NodePort service")
 		err = d.client.CreateCbdcCngService(ctx, namespace, CouchbaseClusterName)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create dino cng service")
@@ -261,8 +268,10 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	}
 
 	if def.Cao.UseIngress {
+		d.logger.Info("ingresses enabled")
+
 		if isOpenShift {
-			d.logger.Info("cng service detected, creating ui route")
+			d.logger.Info("creating ui route")
 
 			// this must be a short name or we hit dns name length limits
 			err = d.client.CreateRoute(ctx, namespace, "ui", map[string]interface{}{
@@ -282,7 +291,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 			}
 
 			if hasCng {
-				d.logger.Info("cng service detected, creating cng route")
+				d.logger.Info("creating cng route")
 
 				// this must be a short name or we hit dns name length limits
 				err = d.client.CreateRoute(ctx, namespace, "cng", map[string]interface{}{
