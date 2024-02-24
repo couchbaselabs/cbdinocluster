@@ -10,6 +10,7 @@ import (
 	"runtime"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/archivehelper"
+	"github.com/couchbaselabs/cbdinocluster/utils/filehelper"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -141,7 +142,7 @@ func DownloadCaoTools(
 		return errors.Wrap(err, "failed to create parent directories")
 	}
 
-	err = os.Rename(archDirPath, installPath)
+	err = filehelper.MoveDir(archDirPath, installPath)
 	if err != nil {
 		return errors.Wrap(err, "failed to move files to final location")
 	}
