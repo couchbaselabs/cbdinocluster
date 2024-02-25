@@ -151,7 +151,7 @@ var initCmd = &cobra.Command{
 		}
 
 		getColimaDockerHost := func() string {
-			if runtime.GOOS != "windows" {
+			if runtime.GOOS == "windows" {
 				fmt.Printf("not checked on windows.\n")
 				return ""
 			}
