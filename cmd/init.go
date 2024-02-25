@@ -7,7 +7,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -169,22 +171,42 @@ var initCmd = &cobra.Command{
 		}
 
 		getDockerDockerHost := func() string {
-			dockerSocketScheme := "unix"
-			dockerSocketPath := "/var/run/docker.sock"
+			type dockerSocketInfo struct {
+				Scheme string
+				Path   string
+			}
+			dockerSockets := []dockerSocketInfo{
+				{
+					Scheme: "unix",
+					Path:   "/var/run/docker.sock",
+				},
+			}
+
 			if runtime.GOOS == "windows" {
-				dockerSocketScheme = "npipe"
-				dockerSocketPath = "//./pipe/docker_engine"
+				dockerSockets = append(dockerSockets, dockerSocketInfo{
+					Scheme: "npipe",
+					Path:   "//./pipe/docker_engine",
+				})
+			} else if runtime.GOOS == "linux" {
+				currentUser, err := user.Current()
+				if err == nil {
+					dockerSockets = append(dockerSockets, dockerSocketInfo{
+						Scheme: "unix",
+						Path:   filepath.Join("/run/user", currentUser.Uid, "podman/podman.sock"),
+					})
+				}
 			}
 
-			fmt.Printf("Checking for Docker installation at `%s`... ", dockerSocketPath)
-			hasDocker := checkFileExists(dockerSocketPath)
-			if !hasDocker {
+			for _, socket := range dockerSockets {
+				fmt.Printf("Checking for Docker installation at `%s`... ", socket.Path)
+				if checkFileExists(socket.Path) {
+					fmt.Printf("found.\n")
+					return socket.Scheme + "://" + socket.Path
+				}
 				fmt.Printf("not found.\n")
-				return ""
 			}
 
-			fmt.Printf("found.\n")
-			return dockerSocketScheme + "://" + dockerSocketPath
+			return ""
 		}
 
 		getColimaAddress := func() string {
