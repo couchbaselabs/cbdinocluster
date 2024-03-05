@@ -1103,6 +1103,10 @@ func (p *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 	return nil
 }
 
+func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error {
+	return errors.New("clouddeploy does not support loading sample buckets")
+}
+
 func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
 	clusterInfo, err := p.getCluster(ctx, clusterID)
 	if err != nil {

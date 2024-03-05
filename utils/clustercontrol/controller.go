@@ -1,6 +1,7 @@
 package clustercontrol
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -122,6 +123,33 @@ func (c *Controller) doFormPost(ctx context.Context, path string, data url.Value
 
 func (c *Controller) doFormPut(ctx context.Context, path string, data url.Values, allowRetries bool, out interface{}) error {
 	return c.doFormReq(ctx, http.MethodPut, path, data, allowRetries, out)
+}
+
+func (c *Controller) doJsonReq(ctx context.Context, method string, path string, data any, allowRetries bool, out interface{}) error {
+	encodedData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	maxRetries := 10
+	if !allowRetries {
+		maxRetries = 0
+	}
+
+	return c.doRetriableReq(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, method, c.Endpoint+path, bytes.NewReader(encodedData))
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Add("Content-Type", "application/json")
+
+		return req, nil
+	}, maxRetries, out)
+}
+
+func (c *Controller) doJsonPost(ctx context.Context, path string, data any, allowRetries bool, out interface{}) error {
+	return c.doJsonReq(ctx, http.MethodPost, path, data, allowRetries, out)
 }
 
 func (c *Controller) Ping(ctx context.Context) error {
@@ -556,6 +584,20 @@ func (c *Controller) CreateBucket(ctx context.Context, req *CreateBucketRequest)
 func (c *Controller) DeleteBucket(ctx context.Context, bucketName string) error {
 	path := fmt.Sprintf("/pools/default/buckets/%s", bucketName)
 	err := c.doDelete(ctx, path, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) LoadSampleBucket(ctx context.Context, bucketName string) error {
+	samples := []string{
+		bucketName,
+	}
+
+	path := "/sampleBuckets/install"
+	err := c.doJsonPost(ctx, path, samples, true, nil)
 	if err != nil {
 		return err
 	}

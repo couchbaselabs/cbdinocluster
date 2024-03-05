@@ -918,6 +918,25 @@ func (d *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deploym
 	return buckets, nil
 }
 
+func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	err = controller.Controller().LoadSampleBucket(ctx, bucketName)
+	if err != nil {
+		return errors.Wrap(err, "failed to load sample bucket")
+	}
+
+	err = controller.WaitForNoRunningTasks(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for tasks to complete after loading sample bucket")
+	}
+
+	return nil
+}
+
 func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
 	controller, err := d.getController(ctx, clusterID)
 	if err != nil {

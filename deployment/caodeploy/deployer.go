@@ -581,6 +581,10 @@ func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 	return errors.New("caodeploy does not support deleting buckets")
 }
 
+func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error {
+	return errors.New("caodeploy does not support loading sample buckets")
+}
+
 func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("caodeploy does not support getting certificates")
 }
