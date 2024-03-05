@@ -86,6 +86,12 @@ Useful for testing magma buckets, advanced search indexes (1536mb for KV, 1024mb
 ./cbdinocluster collections add {{CLUSTER_ID}} default _default test
 ```
 
+#### Load travel sample bucket
+
+```
+./cbdinocluster buckets load-sample {{CLUSTER_ID}} travel-sample
+```
+
 ### Advanced Usage
 
 #### Resetting Colima
