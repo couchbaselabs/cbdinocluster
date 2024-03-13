@@ -592,6 +592,10 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	return nil
 }
 
+func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("clouddeploy does not support cluster node removal")
+}
+
 func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) error {
 	p.logger.Debug("deleting the cloud cluster", zap.String("cluster-id", clusterInfo.Meta.ID.String()))
 

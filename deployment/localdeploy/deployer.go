@@ -74,6 +74,10 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	return errors.New("localdeploy does not support cluster modification")
 }
 
+func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID string) error {
+	return errors.New("localdeploy does not support cluster node removal")
+}
+
 func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	if clusterID != "a" {
 		return errors.New("invalid cluster-id")

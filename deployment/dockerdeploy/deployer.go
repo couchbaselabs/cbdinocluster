@@ -632,6 +632,63 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	return nil
 }
 
+func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID string) error {
+	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster info")
+	}
+
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+
+	// we find the node the user selected, and a secondary node that we
+	// can use to actually manipulate the cluster
+	var foundNode *deployedNodeInfo
+	var otherNode *deployedNodeInfo
+	for _, clusterNode := range clusterInfo.Nodes {
+		if clusterNode.ContainerID == node.ContainerID {
+			foundNode = clusterNode
+		} else {
+			otherNode = clusterNode
+		}
+	}
+	if foundNode == nil {
+		return errors.Wrap(err, "failed to find deployed node")
+	}
+	if otherNode == nil {
+		return errors.Wrap(err, "failed to find other node to use")
+	}
+
+	nodeCtrl := clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:8091", otherNode.IPAddress),
+	}
+
+	d.logger.Info("initiating rebalance")
+
+	otpsToRemove := []string{foundNode.OTPNode}
+
+	err = nodeCtrl.Rebalance(ctx, otpsToRemove)
+	if err != nil {
+		return errors.Wrap(err, "failed to start rebalance")
+	}
+
+	d.logger.Info("waiting for rebalance completion")
+
+	err = nodeCtrl.WaitForNoRunningTasks(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for tasks to complete")
+	}
+
+	d.logger.Info("removing node",
+		zap.String("container", foundNode.ContainerID))
+
+	d.controller.RemoveNode(ctx, foundNode.ContainerID)
+
+	return nil
+}
+
 func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	nodes, err := d.controller.ListNodes(ctx)
 	if err != nil {
