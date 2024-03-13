@@ -403,7 +403,9 @@ type deployedNodeInfo struct {
 }
 
 type deployedClusterInfo struct {
+	ID      string
 	Purpose string
+	Expiry  time.Time
 	Nodes   []*deployedNodeInfo
 }
 
@@ -414,12 +416,16 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	var purpose string
+	var expiry time.Time
 	var nodeInfo []*deployedNodeInfo
 
 	for _, node := range nodes {
 		if node.ClusterID == clusterID {
 			if node.Purpose != "" {
 				purpose = node.Purpose
+			}
+			if !node.Expiry.IsZero() && node.Expiry.After(expiry) {
+				expiry = node.Expiry
 			}
 
 			nodeCtrl := clustercontrol.NodeManager{
@@ -446,7 +452,9 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployedClusterInfo{
+		ID:      clusterID,
 		Purpose: purpose,
+		Expiry:  expiry,
 		Nodes:   nodeInfo,
 	}, nil
 }
@@ -493,6 +501,125 @@ func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, ne
 	return nil
 }
 
+func (d *Deployer) addRemoveNodes(
+	ctx context.Context,
+	clusterInfo *deployedClusterInfo,
+	nodesToAdd []*clusterdef.NodeGroup,
+	nodesToRemove []*deployedNodeInfo,
+) ([]string, error) {
+	if len(nodesToRemove) == 0 && len(nodesToAdd) == 0 {
+		return nil, nil
+	}
+
+	ctrlNode := clusterInfo.Nodes[0]
+
+	d.logger.Debug("selected node for initial add commands",
+		zap.String("address", ctrlNode.IPAddress))
+
+	nodeCtrl := clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:8091", ctrlNode.IPAddress),
+	}
+
+	d.logger.Info("gathering node images")
+
+	nodesToAddImages, err := d.getImagesForNodeGrps(ctx, nodesToAdd)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to fetch images")
+	}
+
+	d.logger.Info("deploying new node containers")
+
+	var deployedNodeIds []string
+	var setupNodeOpts []*clustercontrol.AddNodeOptions
+	for nodeGrpIdx, nodeGrp := range nodesToAdd {
+		image := nodesToAddImages[nodeGrpIdx]
+
+		deployOpts := &DeployNodeOptions{
+			Purpose:            clusterInfo.Purpose,
+			ClusterID:          clusterInfo.ID,
+			Image:              image,
+			ImageServerVersion: nodeGrp.Version,
+			Expiry:             time.Until(clusterInfo.Expiry),
+			EnvVars:            nodeGrp.Docker.EnvVars,
+		}
+
+		d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
+
+		node, err := d.controller.DeployNode(ctx, deployOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to deploy a node")
+		}
+
+		nsServices, err := clusterdef.ServicesToNsServices(nodeGrp.Services)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to generate ns server services list")
+		}
+
+		setupNodeOpts = append(setupNodeOpts, &clustercontrol.AddNodeOptions{
+			ServerGroup: "0",
+			Address:     node.IPAddress,
+			Services:    nsServices,
+			Username:    "",
+			Password:    "",
+		})
+
+		deployedNodeIds = append(deployedNodeIds, node.NodeID)
+	}
+
+	d.logger.Info("registering new nodes")
+
+	for _, addNodeOpts := range setupNodeOpts {
+		err := nodeCtrl.Controller().AddNode(ctx, addNodeOpts)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to register new node")
+		}
+	}
+
+	otpsToRemove := make([]string, len(nodesToRemove))
+	for nodeIdx, nodeToRemove := range nodesToRemove {
+		otpsToRemove[nodeIdx] = nodeToRemove.OTPNode
+	}
+
+	// once all the new nodes are registered, we re-select a node to work with that is
+	// not being removed from the cluster, which can now include the new nodes...
+
+	for _, clusterNode := range clusterInfo.Nodes {
+		if !slices.Contains(otpsToRemove, clusterNode.OTPNode) {
+			ctrlNode = clusterNode
+		}
+	}
+
+	d.logger.Debug("selected node for remove and rebalance commands",
+		zap.String("address", ctrlNode.IPAddress))
+
+	nodeCtrl = clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:8091", ctrlNode.IPAddress),
+	}
+
+	d.logger.Info("initiating rebalance")
+
+	err = nodeCtrl.Rebalance(ctx, otpsToRemove)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to start rebalance")
+	}
+
+	d.logger.Info("waiting for rebalance completion")
+
+	err = nodeCtrl.WaitForNoRunningTasks(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to wait for tasks to complete")
+	}
+
+	for _, node := range nodesToRemove {
+		d.logger.Info("removing node",
+			zap.String("container", node.ContainerID))
+
+		d.controller.RemoveNode(ctx, node.ContainerID)
+	}
+
+	return deployedNodeIds, nil
+}
+
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
 	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
 	if err != nil {
@@ -501,10 +628,6 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 
 	if len(clusterInfo.Nodes) == 0 {
 		return errors.New("cannot modify a cluster with no nodes")
-	}
-
-	nodeCtrl := clustercontrol.NodeManager{
-		Endpoint: fmt.Sprintf("http://%s:8091", clusterInfo.Nodes[0].IPAddress),
 	}
 
 	if len(def.NodeGroups) > 0 {
@@ -550,86 +673,50 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		d.logger.Debug("identified nodes to remove",
 			zap.Any("nodes", nodesToRemove))
 
-		d.logger.Info("gathering node images")
-
-		nodesToAddImages, err := d.getImagesForNodeGrps(ctx, nodesToAdd)
+		_, err := d.addRemoveNodes(ctx, clusterInfo, nodesToAdd, nodesToRemove)
 		if err != nil {
-			return errors.Wrap(err, "failed to fetch images")
-		}
-
-		d.logger.Info("deploying new node containers")
-
-		var setupNodeOpts []*clustercontrol.AddNodeOptions
-		for nodeGrpIdx, nodeGrp := range nodesToAdd {
-			image := nodesToAddImages[nodeGrpIdx]
-
-			deployOpts := &DeployNodeOptions{
-				Purpose:            def.Purpose,
-				ClusterID:          clusterID,
-				Image:              image,
-				ImageServerVersion: nodeGrp.Version,
-				Expiry:             def.Expiry,
-				EnvVars:            nodeGrp.Docker.EnvVars,
-			}
-
-			d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
-
-			node, err := d.controller.DeployNode(ctx, deployOpts)
-			if err != nil {
-				return errors.Wrap(err, "failed to deploy a node")
-			}
-
-			nsServices, err := clusterdef.ServicesToNsServices(nodeGrp.Services)
-			if err != nil {
-				return errors.Wrap(err, "failed to generate ns server services list")
-			}
-
-			setupNodeOpts = append(setupNodeOpts, &clustercontrol.AddNodeOptions{
-				ServerGroup: "0",
-				Address:     node.IPAddress,
-				Services:    nsServices,
-				Username:    "",
-				Password:    "",
-			})
-		}
-
-		d.logger.Info("registering new nodes")
-
-		for _, addNodeOpts := range setupNodeOpts {
-			err := nodeCtrl.Controller().AddNode(ctx, addNodeOpts)
-			if err != nil {
-				return errors.Wrap(err, "failed to register new node")
-			}
-		}
-
-		d.logger.Info("initiating rebalance")
-
-		otpsToRemove := make([]string, len(nodesToRemove))
-		for nodeIdx, nodeToRemove := range nodesToRemove {
-			otpsToRemove[nodeIdx] = nodeToRemove.OTPNode
-		}
-
-		err = nodeCtrl.Rebalance(ctx, otpsToRemove)
-		if err != nil {
-			return errors.Wrap(err, "failed to start rebalance")
-		}
-
-		d.logger.Info("waiting for rebalance completion")
-
-		err = nodeCtrl.WaitForNoRunningTasks(ctx)
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for tasks to complete")
-		}
-
-		for _, node := range nodesToRemove {
-			d.logger.Info("removing node",
-				zap.String("container", node.ContainerID))
-
-			d.controller.RemoveNode(ctx, node.ContainerID)
+			return err
 		}
 	}
 
 	return nil
+}
+
+func (d *Deployer) AddNode(ctx context.Context, clusterID string) (string, error) {
+	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster info")
+	}
+
+	if len(clusterInfo.Nodes) == 0 {
+		return "", errors.New("cannot add a node to a cluster with no nodes")
+	}
+
+	nodeVersion := clusterInfo.Nodes[0].Version
+	nodeServices := clusterInfo.Nodes[0].Services
+
+	for _, node := range clusterInfo.Nodes {
+		if nodeVersion != node.Version || slices.Compare(nodeServices, node.Services) != 0 {
+			return "", errors.New("cluster must have homogenous versions to add a node")
+		}
+	}
+
+	nodeIds, err := d.addRemoveNodes(ctx, clusterInfo, []*clusterdef.NodeGroup{
+		{
+			Count:    1,
+			Version:  nodeVersion,
+			Services: nodeServices,
+		},
+	}, nil)
+	if err != nil {
+		return "", err
+	}
+
+	if len(nodeIds) != 1 {
+		return "", errors.New("unexpected number of node ids returned")
+	}
+
+	return nodeIds[0], nil
 }
 
 func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID string) error {
@@ -646,45 +733,21 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 	// we find the node the user selected, and a secondary node that we
 	// can use to actually manipulate the cluster
 	var foundNode *deployedNodeInfo
-	var otherNode *deployedNodeInfo
 	for _, clusterNode := range clusterInfo.Nodes {
 		if clusterNode.ContainerID == node.ContainerID {
 			foundNode = clusterNode
-		} else {
-			otherNode = clusterNode
 		}
 	}
 	if foundNode == nil {
 		return errors.Wrap(err, "failed to find deployed node")
 	}
-	if otherNode == nil {
-		return errors.Wrap(err, "failed to find other node to use")
-	}
 
-	nodeCtrl := clustercontrol.NodeManager{
-		Endpoint: fmt.Sprintf("http://%s:8091", otherNode.IPAddress),
-	}
-
-	d.logger.Info("initiating rebalance")
-
-	otpsToRemove := []string{foundNode.OTPNode}
-
-	err = nodeCtrl.Rebalance(ctx, otpsToRemove)
+	_, err = d.addRemoveNodes(ctx, clusterInfo, nil, []*deployedNodeInfo{
+		foundNode,
+	})
 	if err != nil {
-		return errors.Wrap(err, "failed to start rebalance")
+		return err
 	}
-
-	d.logger.Info("waiting for rebalance completion")
-
-	err = nodeCtrl.WaitForNoRunningTasks(ctx)
-	if err != nil {
-		return errors.Wrap(err, "failed to wait for tasks to complete")
-	}
-
-	d.logger.Info("removing node",
-		zap.String("container", foundNode.ContainerID))
-
-	d.controller.RemoveNode(ctx, foundNode.ContainerID)
 
 	return nil
 }
