@@ -196,3 +196,7 @@ func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID strin
 func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
 	return errors.New("localdeploy does not support node pausing")
 }
+
+func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error {
+	return errors.New("localdeploy does not support loading sample buckets")
+}
