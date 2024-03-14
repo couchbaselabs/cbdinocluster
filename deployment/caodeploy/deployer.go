@@ -144,6 +144,12 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 		gatewayImagePath = foundGatewayImagePath
 	}
+
+	gatewayLogLevel := ""
+	if def.Cao.GatewayLogLevel != "" {
+		gatewayLogLevel = def.Cao.GatewayLogLevel
+	}
+
 	username := "Administrator"
 	password := "password"
 	if def.Docker.Username != "" {
@@ -209,11 +215,15 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		})
 	}
 
-	var cngSpec map[string]interface{}
+	cngSpec := make(map[string]interface{})
 	if gatewayImagePath != "" {
-		cngSpec = map[string]interface{}{
-			"image": gatewayImagePath,
-		}
+		cngSpec["image"] = gatewayImagePath
+	}
+	if gatewayLogLevel != "" {
+		cngSpec["log-level"] = gatewayLogLevel
+	}
+	if len(cngSpec) == 0 {
+		cngSpec = nil
 	}
 
 	clusterSpec := map[string]interface{}{
