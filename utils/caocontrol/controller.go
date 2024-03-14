@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/couchbaselabs/cbdinocluster/utils/filehelper"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -1020,4 +1022,53 @@ func (c *Controller) WaitServiceHasEndpoints(
 	}
 
 	return nil
+}
+
+func (c *Controller) CollectLogs(ctx context.Context, namespace string, clusterName string, destPath string) ([]string, error) {
+	if namespace == "" {
+		return nil, errors.New("namespace must be specified")
+	}
+
+	tmpDir, err := os.MkdirTemp("", "caologs")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create temporary logs directory")
+	}
+
+	c.logger.Info("executing log collection",
+		zap.String("namespace", namespace),
+		zap.String("tmp-dir", tmpDir))
+
+	createArgs := []string{
+		"collect-logs",
+		"--namespace", namespace,
+		"--couchbase-cluster", clusterName,
+		"--directory", tmpDir,
+		"--collectinfo",
+		"--collectinfo-collect", "all",
+	}
+
+	err = c.caoExecAndPipe(ctx, c.logger, createArgs)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to execute collect-logs")
+	}
+
+	c.logger.Info("logs collected")
+
+	files, err := os.ReadDir(tmpDir)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list collected log files")
+	}
+
+	var destPaths []string
+	for _, file := range files {
+		destFilePath := filepath.Join(destPath, file.Name())
+		destPaths = append(destPaths, destFilePath)
+	}
+
+	err = filehelper.MoveDir(tmpDir, destPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to move logs to destination")
+	}
+
+	return destPaths, nil
 }

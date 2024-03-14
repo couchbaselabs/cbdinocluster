@@ -659,7 +659,17 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 }
 
 func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
-	return nil, errors.New("caodeploy does not support log collection")
+	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	destPaths, err := d.client.CollectLogs(ctx, namespaceName, CouchbaseClusterName, destPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to collect logs using cao")
+	}
+
+	return destPaths, nil
 }
 
 func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
