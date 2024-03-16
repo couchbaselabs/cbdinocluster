@@ -114,12 +114,11 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 	return clusters, nil
 }
 
-func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
-	isOpenShift, err := d.client.IsOpenShift(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to detect whether we are using openshift")
-	}
-
+func (d *Deployer) generateClusterSpec(
+	ctx context.Context,
+	def *clusterdef.Cluster,
+	isOpenShift bool,
+) (map[string]interface{}, error) {
 	clusterVersion := ""
 	for _, nodeGrp := range def.NodeGroups {
 		if clusterVersion == "" {
@@ -148,48 +147,6 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	gatewayLogLevel := ""
 	if def.Cao.GatewayLogLevel != "" {
 		gatewayLogLevel = def.Cao.GatewayLogLevel
-	}
-
-	username := "Administrator"
-	password := "password"
-	if def.Docker.Username != "" {
-		username = def.Cao.Username
-	}
-	if def.Docker.Password != "" {
-		password = def.Cao.Password
-	}
-
-	clusterID := cbdcuuid.New()
-	namespace := "cbdc2-" + clusterID.String()
-
-	expiryTime := time.Time{}
-	if def.Expiry > 0 {
-		expiryTime = time.Now().Add(def.Expiry)
-	}
-
-	err = d.client.CreateNamespace(ctx, namespace, map[string]string{
-		"cbdc2.type":       "cluster",
-		"cbdc2.cluster_id": clusterID.String(),
-		"cbdc2.purpose":    def.Purpose,
-		"cbdc2.expiry":     d.formatExpiry(expiryTime),
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cluster namespace")
-	}
-
-	err = d.client.InstallGhcrSecret(ctx, namespace)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to install ghcr secret")
-	}
-
-	err = d.client.InstallOperator(ctx, namespace, def.Cao.OperatorVersion, isOpenShift)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to install operator")
-	}
-
-	err = d.client.CreateBasicAuthSecret(ctx, namespace, "cbdc2-admin-auth", username, password)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create admin auth")
 	}
 
 	var serversRes []interface{}
@@ -245,6 +202,62 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		"servers": serversRes,
 	}
 
+	return clusterSpec, nil
+}
+
+func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
+	isOpenShift, err := d.client.IsOpenShift(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to detect whether we are using openshift")
+	}
+
+	clusterID := cbdcuuid.New()
+	namespace := "cbdc2-" + clusterID.String()
+
+	expiryTime := time.Time{}
+	if def.Expiry > 0 {
+		expiryTime = time.Now().Add(def.Expiry)
+	}
+
+	username := "Administrator"
+	password := "password"
+	if def.Docker.Username != "" {
+		username = def.Cao.Username
+	}
+	if def.Docker.Password != "" {
+		password = def.Cao.Password
+	}
+
+	err = d.client.CreateNamespace(ctx, namespace, map[string]string{
+		"cbdc2.type":       "cluster",
+		"cbdc2.cluster_id": clusterID.String(),
+		"cbdc2.purpose":    def.Purpose,
+		"cbdc2.expiry":     d.formatExpiry(expiryTime),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create cluster namespace")
+	}
+
+	err = d.client.InstallGhcrSecret(ctx, namespace)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to install ghcr secret")
+	}
+
+	err = d.client.InstallOperator(ctx, namespace, def.Cao.OperatorVersion, isOpenShift)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to install operator")
+	}
+
+	err = d.client.CreateBasicAuthSecret(ctx, namespace, "cbdc2-admin-auth", username, password)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create admin auth")
+	}
+
+	clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to generate cluster spec")
+	}
+
 	err = d.client.CreateCouchbaseCluster(ctx,
 		namespace, CouchbaseClusterName, nil,
 		clusterSpec)
@@ -286,7 +299,33 @@ func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, ne
 }
 
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
-	return errors.New("caodeploy does not support modifying clusters")
+	isOpenShift, err := d.client.IsOpenShift(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to detect whether we are using openshift")
+	}
+
+	for _, nodeGrp := range def.NodeGroups {
+		if nodeGrp.ForceNew {
+			return errors.New("cao cluster modification does not yet support force-new")
+		}
+	}
+
+	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
+	if err != nil {
+		return errors.Wrap(err, "failed to generate cluster spec")
+	}
+
+	err = d.client.UpdateCouchbaseClusterSpec(ctx, namespaceName, CouchbaseClusterName, clusterSpec)
+	if err != nil {
+		return errors.Wrap(err, "failed to update cluster spec")
+	}
+
+	return nil
 }
 
 func (d *Deployer) AddNode(ctx context.Context, clusterID string) (string, error) {

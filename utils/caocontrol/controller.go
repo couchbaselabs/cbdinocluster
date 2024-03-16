@@ -746,8 +746,36 @@ func (c *Controller) createUnstructuredResource(ctx context.Context, namespace s
 	return nil
 }
 
+func (c *Controller) updateUnstructuredResource(ctx context.Context, namespace string, res *unstructured.Unstructured) error {
+	c.logger.Debug("updating unstructured resource",
+		zap.String("namespace", namespace),
+		zap.Any("res", res))
+
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	gvk := res.GetObjectKind().GroupVersionKind()
+	gvr := schema.GroupVersionResource{
+		Group:    gvk.Group,
+		Version:  gvk.Version,
+		Resource: strings.ToLower(gvk.Kind) + "s",
+	}
+
+	_, err = dyna.Resource(gvr).Namespace(namespace).Update(ctx, res, metav1.UpdateOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to create resource")
+	}
+
+	c.logger.Debug("updated unstructured resource")
+
+	return nil
+}
+
 type CouchbaseClusterStatus struct {
 	Conditions []appsv1.DeploymentCondition `json:"conditions,omitempty"`
+	Size       int                          `json:"size,omitempty"`
 }
 
 func (c *Controller) ParseCouchbaseClusterStatus(
@@ -791,6 +819,84 @@ func (c *Controller) GetCouchbaseCluster(
 	return cluster, nil
 }
 
+func (c *Controller) clusterSizeFromClusterSpec(spec interface{}) (int, error) {
+	var structuredSpec struct {
+		Servers []struct {
+			Size int `json:"size"`
+		} `json:"servers"`
+	}
+
+	specBytes, err := json.Marshal(spec)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to marshal cluster spec")
+	}
+
+	err = json.Unmarshal(specBytes, &structuredSpec)
+	if err != nil {
+		return 0, errors.Wrap(err, "failed to unmarshall cluster spec")
+	}
+
+	var totalSize int
+	for _, server := range structuredSpec.Servers {
+		totalSize += server.Size
+	}
+
+	return totalSize, nil
+}
+
+func (c *Controller) waitCouchbaseClusterAvailable(
+	ctx context.Context,
+	namespace string,
+	name string,
+	expectedSize int,
+) error {
+	c.logger.Info("waiting for couchbase cluster to be available",
+		zap.Int("expectedSize", expectedSize))
+
+	err := waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+		cluster, err := c.GetCouchbaseCluster(ctx, namespace, name)
+		if err != nil {
+			return false, errors.Wrap(err, "failed to get couchbase cluster info")
+		}
+
+		status, err := c.ParseCouchbaseClusterStatus(cluster)
+		if err != nil {
+			return false, errors.Wrap(err, "failed to parse status data")
+		}
+
+		clusterAvailable := false
+
+		// check if the cluster is available
+		for _, cond := range status.Conditions {
+			if cond.Type == "Available" && cond.Status == "True" {
+				clusterAvailable = true
+			}
+		}
+
+		// mark it unavailable if we are in the middle of scaling
+		for _, cond := range status.Conditions {
+			if cond.Type == "Scaling" && cond.Status == "True" {
+				clusterAvailable = false
+			}
+		}
+
+		if expectedSize > 0 && status.Size != expectedSize {
+			clusterAvailable = false
+		}
+
+		if !clusterAvailable {
+			return false, nil
+		}
+
+		return true, nil
+	}, 10*time.Minute)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for couchbase cluster")
+	}
+
+	return nil
+}
+
 func (c *Controller) CreateCouchbaseCluster(
 	ctx context.Context,
 	namespace string,
@@ -800,7 +906,12 @@ func (c *Controller) CreateCouchbaseCluster(
 ) error {
 	c.logger.Info("creating couchbase cluster", zap.String("namespace", namespace))
 
-	err := c.createUnstructuredResource(ctx, namespace, &unstructured.Unstructured{
+	expectedSize, err := c.clusterSizeFromClusterSpec(spec)
+	if err != nil {
+		return errors.Wrap(err, "failed to identify expected cluster size")
+	}
+
+	err = c.createUnstructuredResource(ctx, namespace, &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "couchbase.com/v2",
 			"kind":       "CouchbaseCluster",
@@ -815,37 +926,47 @@ func (c *Controller) CreateCouchbaseCluster(
 		return errors.Wrap(err, "failed to create cluster")
 	}
 
-	c.logger.Info("waiting for couchbase cluster to start")
-
-	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
-		cluster, err := c.GetCouchbaseCluster(ctx, namespace, name)
-		if err != nil {
-			return false, errors.Wrap(err, "failed to get couchbase cluster info")
-		}
-
-		status, err := c.ParseCouchbaseClusterStatus(cluster)
-		if err != nil {
-			return false, errors.Wrap(err, "failed to parse status data")
-		}
-
-		clusterAvailable := false
-		for _, cond := range status.Conditions {
-			if cond.Type == "Available" && cond.Status == "True" {
-				clusterAvailable = true
-			}
-		}
-
-		if !clusterAvailable {
-			return false, nil
-		}
-
-		return true, nil
-	}, 10*time.Minute)
+	err = c.waitCouchbaseClusterAvailable(ctx, namespace, name, expectedSize)
 	if err != nil {
-		return errors.Wrap(err, "failed to wait for couchbase cluster")
+		return errors.Wrap(err, "failed to wait for cluster")
 	}
 
 	c.logger.Info("couchbase cluster created")
+
+	return nil
+}
+
+func (c *Controller) UpdateCouchbaseClusterSpec(
+	ctx context.Context,
+	namespace string,
+	name string,
+	spec interface{},
+) error {
+	c.logger.Info("updating couchbase cluster", zap.String("namespace", namespace))
+
+	expectedSize, err := c.clusterSizeFromClusterSpec(spec)
+	if err != nil {
+		return errors.Wrap(err, "failed to identify expected cluster size")
+	}
+
+	existingResource, err := c.GetCouchbaseCluster(ctx, namespace, name)
+	if err != nil {
+		return errors.Wrap(err, "failed to fetch existing resource")
+	}
+
+	existingResource.Object["spec"] = spec
+
+	err = c.updateUnstructuredResource(ctx, namespace, existingResource)
+	if err != nil {
+		return errors.Wrap(err, "failed to update cluster")
+	}
+
+	err = c.waitCouchbaseClusterAvailable(ctx, namespace, name, expectedSize)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for cluster")
+	}
+
+	c.logger.Info("couchbase cluster updated")
 
 	return nil
 }
