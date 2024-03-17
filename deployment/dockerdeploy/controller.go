@@ -14,6 +14,7 @@ import (
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
+	units "github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -218,6 +219,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		AutoRemove:  true,
 		NetworkMode: container.NetworkMode(c.NetworkName),
 		CapAdd:      []string{"NET_ADMIN"},
+		Resources: container.Resources{
+			Ulimits: []*units.Ulimit{
+				{Name: "nofile", Soft: 200000, Hard: 200000},
+			},
+		},
 	}, nil, nil, containerName)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create container")
