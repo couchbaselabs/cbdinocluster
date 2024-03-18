@@ -177,7 +177,7 @@ func (d *Deployer) generateClusterSpec(
 		cngSpec["image"] = gatewayImagePath
 	}
 	if gatewayLogLevel != "" {
-		cngSpec["log-level"] = gatewayLogLevel
+		cngSpec["logLevel"] = gatewayLogLevel
 	}
 	if len(cngSpec) == 0 {
 		cngSpec = nil
