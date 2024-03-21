@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         run: go get .
       - name: Build Binary
-        run: GOOS=${{ matrix.platform }} GOARCH=amd64 go build -o cbdinocluster-${{ matrix.platform }}
+        run: GOOS=${{ matrix.platform }} GOARCH=amd64 go build -o cbdinocluster-${{ matrix.platform }} -ldflags="-X github.com/couchbase/gocbcorex/contrib/buildversion.MainPkgVersion=${{ github.sha }}"
       - uses: actions/upload-artifact@v3
         with:
           name: cbdinocluster-${{ matrix.platform }}
