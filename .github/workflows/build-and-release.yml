@@ -13,6 +13,7 @@ jobs:
     strategy:
       matrix:
         platform: [darwin, linux, windows]
+        arch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v2
       - uses: actions/setup-go@v2
@@ -21,11 +22,11 @@ jobs:
       - name: Install dependencies
         run: go get .
       - name: Build Binary
-        run: GOOS=${{ matrix.platform }} GOARCH=amd64 go build -o cbdinocluster-${{ matrix.platform }} -ldflags="-X github.com/couchbase/gocbcorex/contrib/buildversion.MainPkgVersion=${{ github.ref_name }}"
+        run: GOOS=${{ matrix.platform }} GOARCH=${{ matrix.arch }} go build -o cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }} -ldflags="-X github.com/couchbase/gocbcorex/contrib/buildversion.MainPkgVersion=${{ github.ref_name }}"
       - uses: actions/upload-artifact@v3
         with:
-          name: cbdinocluster-${{ matrix.platform }}
-          path: cbdinocluster-${{ matrix.platform }}
+          name: cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }}
+          path: cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }}
   publish:
     name: Publish
     needs: [build]
@@ -33,19 +34,33 @@ jobs:
     steps:
       - uses: actions/download-artifact@v3
         with:
-          name: cbdinocluster-linux
+          name: cbdinocluster-linux-amd64
       - uses: actions/download-artifact@v3
         with:
-          name: cbdinocluster-darwin
+          name: cbdinocluster-linux-arm64
       - uses: actions/download-artifact@v3
         with:
-          name: cbdinocluster-windows
-      - name: Rename Windows Binary
-        run: mv cbdinocluster-windows cbdinocluster-windows.exe
+          name: cbdinocluster-darwin-amd64
+      - uses: actions/download-artifact@v3
+        with:
+          name: cbdinocluster-darwin-arm64
+      - uses: actions/download-artifact@v3
+        with:
+          name: cbdinocluster-windows-amd64
+      - uses: actions/download-artifact@v3
+        with:
+          name: cbdinocluster-windows-arm64
+      - name: Rename Windows Amd64 Binary
+        run: mv cbdinocluster-windows-amd64 cbdinocluster-windows-amd64.exe
+      - name: Rename Windows Arm64 Binary
+        run: mv cbdinocluster-windows-arm64 cbdinocluster-windows-arm64.exe
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            cbdinocluster-darwin
-            cbdinocluster-linux
-            cbdinocluster-windows.exe
+            cbdinocluster-darwin-amd64
+            cbdinocluster-darwin-arm64
+            cbdinocluster-linux-amd64
+            cbdinocluster-linux-arm64
+            cbdinocluster-windows-amd64.exe
+            cbdinocluster-windows-arm64.exe
