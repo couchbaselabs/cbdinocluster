@@ -13,7 +13,7 @@ var versionCmd = &cobra.Command{
 	Short:   "Gets the version of cbdinocluster",
 	Run: func(cmd *cobra.Command, args []string) {
 		version := buildversion.GetVersion("github.com/couchbaselabs/cbdinocluster")
-		fmt.Printf("Version: %s\n", version)
+		fmt.Printf("%s\n", version)
 	},
 }
 
