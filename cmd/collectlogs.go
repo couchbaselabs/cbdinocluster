@@ -11,7 +11,7 @@ type CollectLogsOutput []string
 
 var collectLogsCmd = &cobra.Command{
 	Use:   "collect-logs [flags] cluster dest-path",
-	Short: "Gets a connection string to connect to the cluster",
+	Short: "Fetches the logs from a cluster into a local path",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
