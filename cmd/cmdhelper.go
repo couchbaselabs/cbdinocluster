@@ -160,6 +160,7 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	capellaUser := config.Capella.Username
 	capellaPass := config.Capella.Password
 	capellaOid := config.Capella.OrganizationID
+	capellaOverrideToken := config.Capella.OverrideToken
 
 	client, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
 		Logger:   logger,
@@ -182,6 +183,7 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 		Logger:             logger,
 		Client:             client,
 		TenantID:           capellaOid,
+		OverrideToken:      capellaOverrideToken,
 		DefaultCloud:       defaultCloud,
 		DefaultAwsRegion:   defaultAwsRegion,
 		DefaultAzureRegion: defaultAzureRegion,
