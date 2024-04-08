@@ -1077,13 +1077,18 @@ func (p *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		ramQuotaMb = opts.RamQuotaMB
 	}
 
+	numReplicas := 1
+	if opts.NumReplicas > 1 {
+		numReplicas = opts.NumReplicas
+	}
+
 	err = p.mgr.Client.CreateBucket(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateBucketRequest{
 		BucketConflictResolution: "seqno",
 		DurabilityLevel:          "none",
 		Flush:                    opts.FlushEnabled,
 		MemoryAllocationInMB:     ramQuotaMb,
 		Name:                     opts.Name,
-		Replicas:                 1,
+		Replicas:                 numReplicas,
 		StorageBackend:           "couchstore",
 		Type:                     "couchbase",
 	})

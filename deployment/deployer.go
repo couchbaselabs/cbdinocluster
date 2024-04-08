@@ -51,6 +51,7 @@ type CreateBucketOptions struct {
 	Name         string
 	RamQuotaMB   int
 	FlushEnabled bool
+	NumReplicas  int
 }
 
 type ScopeInfo struct {

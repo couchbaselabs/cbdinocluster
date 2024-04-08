@@ -20,6 +20,7 @@ var bucketsAddCmd = &cobra.Command{
 
 		ramQuotaMB, _ := cmd.Flags().GetInt("ram-quota-mb")
 		flushEnabled, _ := cmd.Flags().GetBool("flush-enabled")
+		numReplicas, _ := cmd.Flags().GetInt("num-replicas")
 
 		_, deployer, cluster := helper.IdentifyCluster(ctx, clusterID)
 
@@ -27,6 +28,7 @@ var bucketsAddCmd = &cobra.Command{
 			Name:         bucketName,
 			RamQuotaMB:   ramQuotaMB,
 			FlushEnabled: flushEnabled,
+			NumReplicas:  numReplicas,
 		})
 		if err != nil {
 			logger.Fatal("failed to create bucket", zap.Error(err))
