@@ -1068,6 +1068,11 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		ramQuotaMb = opts.RamQuotaMB
 	}
 
+	numReplicas := 1
+	if opts.NumReplicas > 1 {
+		numReplicas = opts.NumReplicas
+	}
+
 	err = controller.Controller().CreateBucket(ctx, &clustercontrol.CreateBucketRequest{
 		Name:                   opts.Name,
 		BucketType:             "membase",
@@ -1075,7 +1080,7 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		AutoCompactionDefined:  false,
 		EvictionPolicy:         "valueOnly",
 		ThreadsNumber:          3,
-		ReplicaNumber:          1,
+		ReplicaNumber:          numReplicas,
 		DurabilityMinLevel:     "none",
 		CompressionMode:        "passive",
 		MaxTTL:                 0,
