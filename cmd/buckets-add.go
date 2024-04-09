@@ -41,4 +41,5 @@ func init() {
 
 	bucketsAddCmd.Flags().Int("ram-quota-mb", 0, "The amount of RAM to provide for the bucket.")
 	bucketsAddCmd.Flags().Bool("flush-enabled", false, "Whether flush is enabled on the bucket.")
+	bucketsAddCmd.Flags().Int("num-replicas", 1, "The number of replicas for the bucket.")
 }
