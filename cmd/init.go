@@ -986,6 +986,7 @@ var initCmd = &cobra.Command{
 			fmt.Printf("  Username: %s\n", curConfig.Capella.Username)
 			fmt.Printf("  Password: %s\n", strings.Repeat("*", len(curConfig.Capella.Password)))
 			fmt.Printf("  Organization ID: %s\n", curConfig.Capella.OrganizationID)
+			fmt.Printf("  Override Token: %s\n", strings.Repeat("*", len(curConfig.Capella.OverrideToken)))
 			fmt.Printf("  Default Cloud: %s\n", curConfig.Capella.DefaultCloud)
 			fmt.Printf("  Default AWS Region: %s\n", curConfig.Capella.DefaultAwsRegion)
 			fmt.Printf("  Default Azure Region: %s\n", curConfig.Capella.DefaultAzureRegion)
@@ -997,6 +998,7 @@ var initCmd = &cobra.Command{
 			flagCapellaUser, _ := cmd.Flags().GetString("capella-user")
 			flagCapellaPass, _ := cmd.Flags().GetString("capella-pass")
 			flagCapellaOid, _ := cmd.Flags().GetString("capella-oid")
+			flagCapellaOverrideToken, _ := cmd.Flags().GetString("capella-override-token")
 			flagCapellaProvider, _ := cmd.Flags().GetString("capella-provider")
 			flagCapellaAwsRegion, _ := cmd.Flags().GetString("capella-aws-region")
 			flagCapellaAzureRegion, _ := cmd.Flags().GetString("capella-azure-region")
@@ -1005,12 +1007,14 @@ var initCmd = &cobra.Command{
 			envCapellaUser := os.Getenv("CAPELLA_USER")
 			envCapellaPass := os.Getenv("CAPELLA_PASS")
 			envCapellaOid := os.Getenv("CAPELLA_OID")
+			envCapellaOverrideToken := os.Getenv("CAPELLA_OVERRIDE_TOKEN")
 
 			capellaEnabled := curConfig.Capella.Enabled.ValueOr(true)
 			capellaEndpoint := curConfig.Capella.Endpoint
 			capellaUser := curConfig.Capella.Username
 			capellaPass := curConfig.Capella.Password
 			capellaOid := curConfig.Capella.OrganizationID
+			capellaOverrideToken := curConfig.Capella.OverrideToken
 			capellaProvider := curConfig.Capella.DefaultCloud
 			capellaAwsRegion := curConfig.Capella.DefaultAwsRegion
 			capellaAzureRegion := curConfig.Capella.DefaultAzureRegion
@@ -1105,6 +1109,25 @@ var initCmd = &cobra.Command{
 				}
 				if capellaOid == "" {
 					fmt.Printf("Capella oid is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaOverrideToken != "" {
+					fmt.Printf("Capella override token specified via flags:\n  %s\n", flagCapellaOverrideToken)
+					capellaOverrideToken = flagCapellaOverrideToken
+				} else {
+					if capellaOverrideToken == "" && envCapellaOverrideToken != "" {
+						fmt.Printf("Defaulting to capella override token from environment.\n")
+						capellaOverrideToken = envCapellaOverrideToken
+					}
+
+					capellaOverrideToken = readString(
+						"What Capella Override token should we use?",
+						capellaOverrideToken, true)
+				}
+				if capellaOverrideToken == "" {
+					fmt.Printf("Capella override token is required.\n")
 					capellaEnabled = false
 					continue
 				}
@@ -1208,6 +1231,7 @@ var initCmd = &cobra.Command{
 			curConfig.Capella.Username = capellaUser
 			curConfig.Capella.Password = capellaPass
 			curConfig.Capella.OrganizationID = capellaOid
+			curConfig.Capella.OverrideToken = capellaOverrideToken
 			curConfig.Capella.DefaultCloud = capellaProvider
 			curConfig.Capella.DefaultAwsRegion = capellaAwsRegion
 			curConfig.Capella.DefaultAzureRegion = capellaAzureRegion
@@ -1302,6 +1326,7 @@ func init() {
 	initCmd.Flags().String("capella-user", "", "Capella user to use")
 	initCmd.Flags().String("capella-pass", "", "Capella pass to use")
 	initCmd.Flags().String("capella-oid", "", "Capella organization id to use")
+	initCmd.Flags().String("capella-override-token", "", "Capella override token to use")
 	initCmd.Flags().String("capella-provider", "", "Capella default cloud provider to use")
 	initCmd.Flags().String("capella-aws-region", "", "Capella default AWS region to use")
 	initCmd.Flags().String("capella-azure-region", "", "Capella default Azure region to use")

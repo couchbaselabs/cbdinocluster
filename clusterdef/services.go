@@ -2,6 +2,7 @@ package clusterdef
 
 import (
 	"errors"
+	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 
 	"golang.org/x/exp/slices"
 )
@@ -52,6 +53,21 @@ func ServicesToNsServices(services []Service) ([]string, error) {
 		}
 
 		out = append(out, serviceStr)
+	}
+	return out, nil
+}
+
+func ServicesToNsServicesOverride(services []Service) ([]capellacontrol.CreateServices, error) {
+	var out []capellacontrol.CreateServices
+	for _, service := range services {
+		serviceStr, err := ServiceToNsService(service)
+		if err != nil {
+			return nil, err
+		}
+		service := capellacontrol.CreateServices{
+			Type: serviceStr,
+		}
+		out = append(out, service)
 	}
 	return out, nil
 }

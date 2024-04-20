@@ -21,6 +21,9 @@ type DockerNodeGroup struct {
 
 type CloudNodeGroup struct {
 	InstanceType string `yaml:"instance-type,omitempty"`
+	Cpu          int    `yaml:"cpu,omitempty"`
+	Memory       int    `yaml:"memory,omitempty"`
+	ServerImage  string `yaml:"server-image,omitempty"`
 	DiskType     string `yaml:"disk-type,omitempty"`
 	DiskSize     int    `yaml:"disk-size,omitempty"`
 	DiskIops     int    `yaml:"disk-iops,omitempty"`

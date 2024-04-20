@@ -22,6 +22,7 @@ type Deployer struct {
 	client             *capellacontrol.Controller
 	mgr                *capellacontrol.Manager
 	tenantID           string
+	overrideToken      string
 	defaultCloud       string
 	defaultAwsRegion   string
 	defaultAzureRegion string
@@ -34,6 +35,7 @@ type NewDeployerOptions struct {
 	Logger             *zap.Logger
 	Client             *capellacontrol.Controller
 	TenantID           string
+	OverrideToken      string
 	DefaultCloud       string
 	DefaultAwsRegion   string
 	DefaultAzureRegion string
@@ -49,6 +51,7 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 			Client: opts.Client,
 		},
 		tenantID:           opts.TenantID,
+		overrideToken:      opts.OverrideToken,
 		defaultCloud:       opts.DefaultCloud,
 		defaultAwsRegion:   opts.DefaultAwsRegion,
 		defaultAzureRegion: opts.DefaultAzureRegion,
@@ -226,6 +229,113 @@ type NewClusterOptions struct {
 	NodeGroups []*NewClusterNodeGroupOptions
 }
 
+func (p *Deployer) buildDeploySpecs(
+	ctx context.Context,
+	cloudProvider string,
+	nodeGrps []*clusterdef.NodeGroup,
+) ([]capellacontrol.DeployClusterRequest_Spec, error) {
+	diskAutoExpansionEnabled := false
+	if cloudProvider == "aws" {
+		diskAutoExpansionEnabled = true
+	} else if cloudProvider == "gcp" {
+		diskAutoExpansionEnabled = false
+	} else if cloudProvider == "azure" {
+		diskAutoExpansionEnabled = false
+	} else {
+		return nil, errors.New("invalid cloud provider for setup info")
+	}
+
+	var specs []capellacontrol.DeployClusterRequest_Spec
+	for _, nodeGroup := range nodeGrps {
+		var instanceType string
+		var cpu int
+		var memory int
+		var diskType string
+		var diskSize int
+		var diskIops int
+
+		if cloudProvider == "aws" {
+			instanceType = "m5.xlarge"
+			cpu = 4
+			memory = 16
+			diskType = "gp3"
+			diskSize = 50
+			diskIops = 3000
+		} else if cloudProvider == "gcp" {
+			// add defaults for gcp provider
+			instanceType = ""
+			cpu = 0
+			memory = 0
+			diskType = ""
+			diskSize = 0
+			diskIops = 0
+		} else if cloudProvider == "azure" {
+			instanceType = "Standard_D4s_v5"
+			cpu = 8
+			memory = 32
+			diskType = "P6"
+			diskSize = 64
+			diskIops = 240
+		} else {
+			return nil, errors.New("invalid cloud provider specified")
+		}
+
+		if nodeGroup.Cloud.InstanceType != "" {
+			instanceType = nodeGroup.Cloud.InstanceType
+		}
+		if nodeGroup.Cloud.DiskType != "" {
+			diskType = nodeGroup.Cloud.DiskType
+		}
+		if nodeGroup.Cloud.DiskSize != 0 {
+			diskSize = nodeGroup.Cloud.DiskSize
+		}
+		if nodeGroup.Cloud.DiskIops != 0 {
+			diskIops = nodeGroup.Cloud.DiskIops
+		}
+		if nodeGroup.Cloud.Cpu != 0 {
+			cpu = nodeGroup.Cloud.Cpu
+		}
+		if nodeGroup.Cloud.Memory != 0 {
+			memory = nodeGroup.Cloud.Memory
+		}
+
+		services := []clusterdef.Service{
+			clusterdef.KvService,
+			clusterdef.IndexService,
+			clusterdef.QueryService,
+			clusterdef.SearchService,
+		}
+		if len(nodeGroup.Services) > 0 {
+			services = nodeGroup.Services
+		}
+
+		nsServices, err := clusterdef.ServicesToNsServicesOverride(services)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to generate ns server services list")
+		}
+
+		specs = append(specs, capellacontrol.DeployClusterRequest_Spec{
+			Compute: capellacontrol.DeployClusterRequest_Spec_Compute{
+				Type:   instanceType,
+				Cpu:    cpu,
+				Memory: memory,
+			},
+			Count: nodeGroup.Count,
+			Disk: capellacontrol.CreateClusterRequest_Spec_Disk{
+				Type:     diskType,
+				SizeInGb: diskSize,
+				Iops:     diskIops,
+			},
+			DiskAutoScaling: capellacontrol.CreateClusterRequest_Spec_DiskScaling{
+				Enabled: diskAutoExpansionEnabled,
+			},
+			Services: nsServices,
+		})
+	}
+
+	return specs, nil
+}
+
 func (p *Deployer) buildCreateSpecs(
 	ctx context.Context,
 	cloudProvider string,
@@ -357,18 +467,161 @@ func (p *Deployer) buildModifySpecs(
 	return specs, nil
 }
 
-func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
-	var clusterVersion string
-	for _, nodeGroup := range def.NodeGroups {
-		if clusterVersion == "" {
-			clusterVersion = nodeGroup.Version
+func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster, clusterVersion string, serverImage string) (deployment.ClusterInfo, error) {
+	clusterID := cbdcuuid.New()
+
+	expiryTime := time.Time{}
+	if def.Expiry > 0 {
+		expiryTime = time.Now().Add(def.Expiry)
+	}
+
+	metaData := stringclustermeta.MetaData{
+		ID:     clusterID,
+		Expiry: expiryTime,
+	}
+	projectName := metaData.String()
+
+	p.logger.Debug("creating a new cloud project")
+
+	newProject, err := p.client.CreateProject(ctx, p.tenantID, &capellacontrol.CreateProjectRequest{
+		Name: projectName,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create project")
+	}
+
+	cloudProjectID := newProject.Id
+
+	cloudProvider := ""
+	cloudRegion := ""
+	clusterCidr := ""
+
+	if def.Cloud.CloudProvider != "" {
+		cloudProvider = def.Cloud.CloudProvider
+	}
+	if def.Cloud.Region != "" {
+		cloudRegion = def.Cloud.Region
+	}
+	if def.Cloud.Cidr != "" {
+		clusterCidr = def.Cloud.Cidr
+	}
+
+	if cloudProvider == "" {
+		cloudProvider = p.defaultCloud
+	}
+	if cloudRegion == "" {
+		if cloudProvider == "aws" {
+			cloudRegion = p.defaultAwsRegion
+		} else if cloudProvider == "azure" {
+			cloudRegion = p.defaultAzureRegion
+		} else if cloudProvider == "gcp" {
+			cloudRegion = p.defaultGcpRegion
 		} else {
-			if clusterVersion != nodeGroup.Version {
-				return nil, errors.New("all node groups must have the same version")
-			}
+			return nil, errors.New("invalid cloud provider for region selection")
 		}
 	}
 
+	deploymentProvider := ""
+	clusterProvider := ""
+	if cloudProvider == "aws" {
+		deploymentProvider = "aws"
+		clusterProvider = "hostedAWS"
+	} else if cloudProvider == "gcp" {
+		deploymentProvider = "gcp"
+		clusterProvider = "gcp"
+	} else if cloudProvider == "azure" {
+		deploymentProvider = "azure"
+		clusterProvider = "hostedAzure"
+	} else {
+		return nil, errors.New("invalid cloud provider for setup info")
+	}
+
+	p.logger.Debug("fetching deployment options project")
+
+	deploymentOpts, err := p.client.GetProviderDeploymentOptions(ctx, p.tenantID, &capellacontrol.GetProviderDeploymentOptionsRequest{
+		Provider: deploymentProvider,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get deployment options")
+	}
+
+	if clusterVersion == "" {
+		clusterVersion = deploymentOpts.ServerVersions.DefaultVersion
+	}
+	if clusterCidr == "" {
+		clusterCidr = deploymentOpts.SuggestedCidr
+	}
+
+	p.logger.Debug("creating a new cloud cluster")
+
+	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
+
+	specs, err := p.buildDeploySpecs(
+		ctx,
+		cloudProvider,
+		def.NodeGroups)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to build cluster specs")
+	}
+
+	createReq := &capellacontrol.DeployClusterRequest{
+		CIDR:        clusterCidr,
+		Description: "",
+		Name:        clusterName,
+		Package:     "developerPro",
+		ProjectId:   cloudProjectID,
+		TenantId:    p.tenantID,
+		Provider:    clusterProvider,
+		Region:      cloudRegion,
+		Override: capellacontrol.CreateOverrideRequest{
+			Image:  serverImage,
+			Server: clusterVersion,
+			Token:  p.overrideToken,
+		},
+		Server:   clusterVersion,
+		SingleAZ: false,
+		Specs:    specs,
+		Timezone: "PT",
+	}
+
+	p.logger.Debug("creating cluster", zap.Any("req", createReq))
+
+	newCluster, err := p.client.DeployCluster(ctx, p.tenantID, createReq)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create cluster")
+	}
+
+	cloudClusterID := newCluster.Id
+
+	p.logger.Debug("waiting for cluster creation to complete")
+
+	err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to wait for cluster deployment")
+	}
+
+	// we cheat for now...
+	clusters, err := p.ListClusters(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list clusters")
+	}
+
+	var thisCluster *ClusterInfo
+	for _, cluster := range clusters {
+		cluster := cluster.(*ClusterInfo)
+
+		if cluster.ClusterID == clusterID.String() {
+			thisCluster = cluster
+		}
+	}
+	if thisCluster == nil {
+		return nil, errors.New("failed to find new cluster after deployment")
+	}
+
+	return thisCluster, nil
+}
+
+func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster, clusterVersion string) (deployment.ClusterInfo, error) {
 	clusterID := cbdcuuid.New()
 
 	expiryTime := time.Time{}
@@ -515,6 +768,31 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	return thisCluster, nil
 }
 
+func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
+	var (
+		clusterVersion = ""
+		serverImage    = ""
+	)
+	// Ensure all node groups have the same version and image
+	for _, nodeGroup := range def.NodeGroups {
+		if clusterVersion == "" {
+			clusterVersion = nodeGroup.Version
+			serverImage = nodeGroup.Cloud.ServerImage
+		} else {
+			if clusterVersion != nodeGroup.Version || serverImage != nodeGroup.Cloud.ServerImage {
+				return nil, errors.New("all node groups must have the same version and image")
+			}
+		}
+	}
+
+	// Deploy cluster based on presence of server image
+	if serverImage != "" {
+		return p.deployNewCluster(ctx, def, clusterVersion, serverImage)
+	} else {
+		return p.createNewCluster(ctx, def, clusterVersion)
+	}
+}
+
 func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*clusterdef.Cluster, error) {
 	return nil, errors.New("clouddeploy does not support fetching the cluster definition")
 }
@@ -561,32 +839,80 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		return errors.Wrap(err, "failed to build cluster specs")
 	}
 
-	d.logger.Debug("generated new specification list", zap.Any("specs", newSpecs))
+	if !isServiceEqual(clusterInfo.Cluster.Services, newSpecs) {
+		d.logger.Info("cluster current spec is different from the def spec")
+		d.logger.Debug("generated new specification list", zap.Any("specs", newSpecs))
+		err = d.client.UpdateClusterSpecs(
+			ctx,
+			d.tenantID,
+			cloudProjectID,
+			cloudClusterID,
+			&capellacontrol.UpdateClusterSpecsRequest{
+				Specs: newSpecs,
+			})
+		if err != nil {
+			return errors.Wrap(err, "failed to update cluster specs")
+		}
 
-	err = d.client.UpdateClusterSpecs(
-		ctx,
-		d.tenantID,
-		cloudProjectID,
-		cloudClusterID,
-		&capellacontrol.UpdateClusterSpecsRequest{
-			Specs: newSpecs,
+		d.logger.Debug("waiting for cluster modification to begin")
+
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "scaling")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for cluster modification to begin")
+		}
+
+		d.logger.Debug("waiting for cluster to be healthy")
+
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for cluster to be healthy")
+		}
+	}
+
+	var (
+		clusterVersion = ""
+		serverImage    = ""
+		releaseId      = ""
+	)
+	for _, nodeGroup := range def.NodeGroups {
+		if clusterVersion == "" {
+			clusterVersion = nodeGroup.Version
+			serverImage = nodeGroup.Cloud.ServerImage
+		} else {
+			if clusterVersion != nodeGroup.Version || serverImage != nodeGroup.Cloud.ServerImage {
+				return errors.New("all node groups must have the same version and image")
+			}
+		}
+	}
+
+	if clusterVersion != clusterInfo.Cluster.Config.Version && serverImage != "" {
+		releaseId, err = getReleaseIdFromServerImage(serverImage)
+		if err != nil {
+			return errors.Wrap(err, "failed to get release id from server image")
+		}
+
+		d.logger.Info(fmt.Sprintf("Release id is: %s", releaseId))
+
+		err = d.client.UpdateServerVersion(ctx, d.tenantID, cloudProjectID, cloudClusterID, &capellacontrol.UpdateServerVersionRequest{
+			OverrideToken: d.overrideToken,
+			ServerImage:   serverImage,
+			ServerVersion: clusterVersion,
+			ReleaseId:     releaseId,
 		})
-	if err != nil {
-		return errors.Wrap(err, "failed to update cluster specs")
-	}
 
-	d.logger.Debug("waiting for cluster modification to begin")
+		if err != nil {
+			return errors.Wrap(err, "failed to update server version")
+		}
+		//time.Sleep(30 * time.Second)
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "upgrading")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for cluster upgrade to begin")
+		}
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "scaling")
-	if err != nil {
-		return errors.Wrap(err, "failed to wait for cluster modification to begin")
-	}
-
-	d.logger.Debug("waiting for cluster to be healthy")
-
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy")
-	if err != nil {
-		return errors.Wrap(err, "failed to wait for cluster to be healthy")
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for cluster returns to healthy")
+		}
 	}
 
 	return nil

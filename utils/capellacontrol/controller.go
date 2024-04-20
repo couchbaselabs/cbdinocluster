@@ -555,6 +555,53 @@ type CreateClusterRequest_Spec struct {
 	Services        []string                              `json:"services"`
 }
 
+type DeployClusterRequest struct {
+	CIDR        string                      `json:"cidr"`
+	Description string                      `json:"description"`
+	Name        string                      `json:"name"`
+	Package     string                      `json:"package"`
+	TenantId    string                      `json:"tenantId"`
+	ProjectId   string                      `json:"projectId"`
+	Provider    string                      `json:"provider"`
+	Region      string                      `json:"region"`
+	Server      string                      `json:"server"`
+	Override    CreateOverrideRequest       `json:"overRide"`
+	SingleAZ    bool                        `json:"singleAZ"`
+	Specs       []DeployClusterRequest_Spec `json:"specs"`
+	Timezone    string                      `json:"supportTimezone"`
+}
+
+type DeployClusterRequest_Spec struct {
+	Compute         DeployClusterRequest_Spec_Compute     `json:"compute"`
+	Count           int                                   `json:"count"`
+	Disk            CreateClusterRequest_Spec_Disk        `json:"disk"`
+	DiskAutoScaling CreateClusterRequest_Spec_DiskScaling `json:"diskAutoScaling"`
+	Services        []CreateServices                      `json:"services"`
+}
+
+type DeployClusterRequest_Spec_Compute struct {
+	Type   string `json:"type"`
+	Cpu    int    `json:"cpu"`
+	Memory int    `json:"memoryInGb"`
+}
+
+type CreateServices struct {
+	Type string `json:"type"`
+}
+
+type CreateOverrideRequest struct {
+	Image  string `json:"image"`
+	Token  string `json:"token"`
+	Server string `json:"server"`
+}
+
+func (o CreateOverrideRequest) IsEmpty() bool {
+	if o.Image == "" || o.Token == "" {
+		return false
+	}
+	return true
+}
+
 type CreateClusterRequest_Spec_Disk struct {
 	Type     string `json:"type"`
 	SizeInGb int    `json:"sizeInGb"`
@@ -577,6 +624,21 @@ func (c *Controller) CreateCluster(
 	resp := &CreateClusterResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/clusters", tenantID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func (c *Controller) DeployCluster(
+	ctx context.Context,
+	tenantID string,
+	req *DeployClusterRequest,
+) (*CreateClusterResponse, error) {
+	resp := &CreateClusterResponse{}
+	path := fmt.Sprintf("/v2/organizations/%s/clusters/deploy", tenantID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, &resp)
 	if err != nil {
 		return nil, err
@@ -1106,4 +1168,26 @@ func (c *Controller) GetTrustedCAs(
 	}
 
 	return resp, err
+}
+
+type UpdateServerVersionRequest struct {
+	OverrideToken string `json:"token"`
+	ServerImage   string `json:"image"`
+	ServerVersion string `json:"server"`
+	ReleaseId     string `json:"releaseId"`
+}
+
+func (c *Controller) UpdateServerVersion(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *UpdateServerVersionRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/version",
+		tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
 }

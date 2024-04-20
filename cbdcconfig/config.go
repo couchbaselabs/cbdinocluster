@@ -108,6 +108,7 @@ type Config_Capella struct {
 	Username       string     `yaml:"username"`
 	Password       string     `yaml:"password"`
 	OrganizationID string     `yaml:"organization-id"`
+	OverrideToken  string     `yaml:"override-token"`
 
 	DefaultCloud       string `yaml:"default-cloud"`
 	DefaultAwsRegion   string `yaml:"default-aws-region"`
