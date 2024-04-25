@@ -9,7 +9,7 @@ import (
 
 var versionCmd = &cobra.Command{
 	Use:     "version",
-	Aliases: []string{"rm"},
+	Aliases: []string{"ver"},
 	Short:   "Gets the version of cbdinocluster",
 	Run: func(cmd *cobra.Command, args []string) {
 		version := buildversion.GetVersion("github.com/couchbaselabs/cbdinocluster")
