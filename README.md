@@ -175,7 +175,7 @@ cbdinocluster commands.
 couchbase://192.168.107.130,192.168.107.128,192.168.107.129
 ```
 
-The same works with docker itself (first node ID starts with `a`):
+The same work with docker itself (first node ID starts with `a`):
 
 ```
 ~ $ docker exec -ti a /usr/bin/bash
