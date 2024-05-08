@@ -41,7 +41,8 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 	}
 	firstNodeCtrl := firstNodeMgr.Controller()
 
-	m.Logger.Info("setting up initial cluster node")
+	m.Logger.Info("setting up initial cluster node",
+		zap.String("endpoint", firstNodeEndpoint))
 
 	err := firstNodeMgr.SetupOneNodeCluster(ctx, &SetupOneNodeClusterOptions{
 		KvMemoryQuotaMB:       opts.KvMemoryQuotaMB,
