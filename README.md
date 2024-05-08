@@ -1,12 +1,12 @@
 # cbdinocluster
 
-cbdinocluster is the successor to cbdyncluster. It's intention is to provide tooling
-for the dynamic allocation of clusters on developer machines as well in various CI
+cbdinocluster is the successor to cbdyncluster. Its intention is to provide tooling
+for the dynamic allocation of clusters on developer machines as well as in various CI
 environments.
 
 ## Getting Started
 
-### Dependancies
+### Dependencies
 
 #### Mac OS (M1 and x86_64)
 
@@ -99,7 +99,7 @@ Useful for testing magma buckets, advanced search indexes (1536mb for KV, 1024mb
 In the case that your colima docker instance becomes corrupted, or stops working
 as expected, you can destroy it using `colima delete`. Once your colima instance
 has been destroyed, you can start it again using the same command from the
-_Dependancies_ steps above, followed by running `cbdinocluster init` again.
+_Dependencies_ steps above, followed by running `cbdinocluster init` again.
 Reinitializing dinocluster will maintain your existing configuration, but will
 apply the neccessary colima configurations that were lost during the recreation.
 
