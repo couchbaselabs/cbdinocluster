@@ -222,7 +222,10 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 				return
 			}
 
-			d.logger.Info("deployed node")
+			d.logger.Info("deployed node",
+				zap.String("address", node.IPAddress),
+				zap.String("id", node.NodeID),
+				zap.String("container", node.ContainerID))
 
 			nodes = append(nodes, node)
 			waitCh <- nil
@@ -235,7 +238,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 	}
 
-	d.logger.Info("nodes deployed")
+	d.logger.Info("nodes deployed", zap.String("cluster", clusterID))
 
 	// we cheat for now...
 	clusters, err := d.listClusters(ctx)
