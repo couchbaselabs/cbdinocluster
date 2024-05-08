@@ -284,8 +284,9 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 
 		setupNodeOpts = append(setupNodeOpts, &clustercontrol.SetupNewClusterNodeOptions{
-			Address:  node.IPAddress,
-			Services: nsServices,
+			Address:     node.IPAddress,
+			ServerGroup: nodeGrp.ServerGroup,
+			Services:    nsServices,
 		})
 	}
 
@@ -556,7 +557,7 @@ func (d *Deployer) addRemoveNodes(
 		}
 
 		setupNodeOpts = append(setupNodeOpts, &clustercontrol.AddNodeOptions{
-			ServerGroup: "0",
+			ServerGroup: nodeGrp.ServerGroup,
 			Address:     node.IPAddress,
 			Services:    nsServices,
 			Username:    "",
