@@ -1,0 +1,13 @@
+nodes:
+  - count: 4
+    server-group: group_1
+    version: 7.6.1
+    services:
+      - kv
+  - count: 4
+    server-group: group_2
+    version: 7.6.1
+    services:
+      - kv
+docker:
+  kv-memory: 400

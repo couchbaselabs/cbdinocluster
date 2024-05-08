@@ -48,7 +48,8 @@ type SetupOneNodeClusterOptions struct {
 	Username string
 	Password string
 
-	Services []string
+	Services    []string
+	ServerGroup string
 }
 
 func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNodeClusterOptions) error {
@@ -125,6 +126,17 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to configure credentials")
+	}
+
+	if opts.ServerGroup != "" {
+		// Just rename default server group for the first node
+		err = c.RenameServerGroup(ctx, &RenameServerGroupOptions{
+			GroupUUID: "0",
+			Name:      opts.ServerGroup,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to rename default server group")
+		}
 	}
 
 	return nil

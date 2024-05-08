@@ -283,6 +283,17 @@ func (c *Controller) SetupServices(ctx context.Context, opts *SetupServicesOptio
 	return c.doFormPost(ctx, "/node/controller/setupServices", form, true, nil)
 }
 
+type RenameServerGroupOptions struct {
+	GroupUUID string
+	Name      string
+}
+
+func (c *Controller) RenameServerGroup(ctx context.Context, opts *RenameServerGroupOptions) error {
+	form := make(url.Values)
+	form.Add("name", opts.Name)
+	return c.doFormPut(ctx, fmt.Sprintf("/pools/default/serverGroups/%s", opts.GroupUUID), form, true, nil)
+}
+
 type AddNodeOptions struct {
 	ServerGroup string
 
@@ -292,6 +303,73 @@ type AddNodeOptions struct {
 	Password string
 }
 
+type serverGroup struct {
+	Name       string `json:"name"`
+	AddNodeURI string `json:"addNodeURI"`
+}
+
+func (c *Controller) getServerGroups(ctx context.Context) ([]serverGroup, error) {
+	var resp struct {
+		Groups []serverGroup `json:"groups"`
+	}
+	err := c.doGet(ctx, "/pools/default/serverGroups", &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp.Groups, nil
+}
+
+func (c *Controller) waitForServerGroup(ctx context.Context, groupName string) (*serverGroup, error) {
+	for {
+		groups, err := c.getServerGroups(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, group := range groups {
+			if group.Name == groupName {
+				return &group, nil
+			}
+		}
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func (c *Controller) addServerGroup(ctx context.Context, groupName string) (*serverGroup, error) {
+	form := make(url.Values)
+	form.Add("name", groupName)
+
+	err := c.doFormPost(ctx, "/pools/default/serverGroups", form, true, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.waitForServerGroup(ctx, groupName)
+}
+
+func (c *Controller) getAddNodePath(ctx context.Context, groupName string) (string, error) {
+	if groupName == "" {
+		return "/pools/default/serverGroups/0/addNode", nil
+	}
+
+	groups, err := c.getServerGroups(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, group := range groups {
+		if group.Name == groupName {
+			return group.AddNodeURI, nil
+		}
+	}
+
+	group, err := c.addServerGroup(ctx, groupName)
+	if err != nil {
+		return "", err
+	}
+
+	return group.AddNodeURI, nil
+}
+
 func (c *Controller) AddNode(ctx context.Context, opts *AddNodeOptions) error {
 	form := make(url.Values)
 	form.Add("hostname", opts.Address)
@@ -299,7 +377,10 @@ func (c *Controller) AddNode(ctx context.Context, opts *AddNodeOptions) error {
 	form.Add("user", opts.Username)
 	form.Add("password", opts.Password)
 
-	path := fmt.Sprintf("/pools/default/serverGroups/%s/addNode", opts.ServerGroup)
+	path, err := c.getAddNodePath(ctx, opts.ServerGroup)
+	if err != nil {
+		return err
+	}
 	return c.doFormPost(ctx, path, form, true, nil)
 }
 

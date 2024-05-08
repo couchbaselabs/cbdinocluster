@@ -13,9 +13,9 @@ type ClusterManager struct {
 }
 
 type SetupNewClusterNodeOptions struct {
-	Address string
-
-	Services []string
+	Address     string
+	ServerGroup string
+	Services    []string
 }
 
 type SetupNewClusterOptions struct {
@@ -54,7 +54,8 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 		Username: opts.Username,
 		Password: opts.Password,
 
-		Services: firstNode.Services,
+		Services:    firstNode.Services,
+		ServerGroup: firstNode.ServerGroup,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to configure the first node")
@@ -71,7 +72,7 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 			}
 
 			err := firstNodeCtrl.AddNode(ctx, &AddNodeOptions{
-				ServerGroup: "0",
+				ServerGroup: node.ServerGroup,
 				Address:     node.Address,
 				Services:    node.Services,
 				Username:    "",
