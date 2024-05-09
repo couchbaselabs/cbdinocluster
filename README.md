@@ -92,6 +92,12 @@ Useful for testing magma buckets, advanced search indexes (1536mb for KV, 1024mb
 ./cbdinocluster buckets load-sample {{CLUSTER_ID}} travel-sample
 ```
 
+#### Use JSON output to get connection string of the first cluster
+
+```
+cbdinocluster connstr $(cbdinocluster ps --json | jq -r '.[0].id')
+```
+
 ### Advanced Usage
 
 #### Resetting Colima
