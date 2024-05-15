@@ -987,10 +987,12 @@ var initCmd = &cobra.Command{
 			fmt.Printf("  Password: %s\n", strings.Repeat("*", len(curConfig.Capella.Password)))
 			fmt.Printf("  Organization ID: %s\n", curConfig.Capella.OrganizationID)
 			fmt.Printf("  Override Token: %s\n", strings.Repeat("*", len(curConfig.Capella.OverrideToken)))
+			fmt.Printf("  Internal Support Token: %s\n", strings.Repeat("*", len(curConfig.Capella.InternalSupportToken)))
 			fmt.Printf("  Default Cloud: %s\n", curConfig.Capella.DefaultCloud)
 			fmt.Printf("  Default AWS Region: %s\n", curConfig.Capella.DefaultAwsRegion)
 			fmt.Printf("  Default Azure Region: %s\n", curConfig.Capella.DefaultAzureRegion)
 			fmt.Printf("  Default GCP Region: %s\n", curConfig.Capella.DefaultGcpRegion)
+			fmt.Printf("  Host name to upload server logs: %s\n", curConfig.Capella.UploadServerLogsHostName)
 		}
 		{
 			flagDisableCapella, _ := cmd.Flags().GetBool("disable-capella")
@@ -999,6 +1001,8 @@ var initCmd = &cobra.Command{
 			flagCapellaPass, _ := cmd.Flags().GetString("capella-pass")
 			flagCapellaOid, _ := cmd.Flags().GetString("capella-oid")
 			flagCapellaOverrideToken, _ := cmd.Flags().GetString("capella-override-token")
+			flagCapellaInternalSupportToken, _ := cmd.Flags().GetString("capella-internal-support-token")
+			flagUploadServerLogsHostName, _ := cmd.Flags().GetString("upload-server-logs-host-name")
 			flagCapellaProvider, _ := cmd.Flags().GetString("capella-provider")
 			flagCapellaAwsRegion, _ := cmd.Flags().GetString("capella-aws-region")
 			flagCapellaAzureRegion, _ := cmd.Flags().GetString("capella-azure-region")
@@ -1008,6 +1012,7 @@ var initCmd = &cobra.Command{
 			envCapellaPass := os.Getenv("CAPELLA_PASS")
 			envCapellaOid := os.Getenv("CAPELLA_OID")
 			envCapellaOverrideToken := os.Getenv("CAPELLA_OVERRIDE_TOKEN")
+			envCapellaInternalSupportToken := os.Getenv("CAPELLA_INTERNAL_SUPPORT_TOKEN")
 
 			capellaEnabled := curConfig.Capella.Enabled.ValueOr(true)
 			capellaEndpoint := curConfig.Capella.Endpoint
@@ -1015,6 +1020,8 @@ var initCmd = &cobra.Command{
 			capellaPass := curConfig.Capella.Password
 			capellaOid := curConfig.Capella.OrganizationID
 			capellaOverrideToken := curConfig.Capella.OverrideToken
+			capellaInternalSupportToken := curConfig.Capella.InternalSupportToken
+			UploadServerLogsHostName := curConfig.Capella.UploadServerLogsHostName
 			capellaProvider := curConfig.Capella.DefaultCloud
 			capellaAwsRegion := curConfig.Capella.DefaultAwsRegion
 			capellaAzureRegion := curConfig.Capella.DefaultAzureRegion
@@ -1132,6 +1139,23 @@ var initCmd = &cobra.Command{
 					continue
 				}
 
+				if flagCapellaInternalSupportToken != "" {
+					fmt.Printf("Capella internal support token specified via flags:\n  %s\n", flagCapellaInternalSupportToken)
+					capellaInternalSupportToken = flagCapellaInternalSupportToken
+				} else {
+					if capellaInternalSupportToken == "" && envCapellaInternalSupportToken != "" {
+						fmt.Printf("Defaulting to capella internal support token from environment.\n")
+						capellaInternalSupportToken = envCapellaInternalSupportToken
+					}
+
+					capellaInternalSupportToken = readString(
+						"What Capella internal support token should we use?",
+						capellaInternalSupportToken, true)
+				}
+				if capellaInternalSupportToken == "" {
+					fmt.Printf("Capella internal support token is required for functionalities like update server version, collect server logs\n")
+				}
+
 				if flagCapellaProvider != "" {
 					fmt.Printf("Capella default provider specified via flags:\n  %s\n", flagCapellaProvider)
 					capellaProvider = flagCapellaProvider
@@ -1223,6 +1247,18 @@ var initCmd = &cobra.Command{
 					continue
 				}
 
+				if flagUploadServerLogsHostName != "" {
+					fmt.Printf("Upload server logs host name specified via flag:\n  %s\n", flagUploadServerLogsHostName)
+					UploadServerLogsHostName = flagUploadServerLogsHostName
+				} else {
+					UploadServerLogsHostName = readString(
+						"What Host name should we use to upload server logs?",
+						UploadServerLogsHostName, false)
+				}
+				if UploadServerLogsHostName == "" {
+					fmt.Printf("host name is required to get server logs for a capella cluster\n")
+				}
+
 				break
 			}
 
@@ -1232,10 +1268,12 @@ var initCmd = &cobra.Command{
 			curConfig.Capella.Password = capellaPass
 			curConfig.Capella.OrganizationID = capellaOid
 			curConfig.Capella.OverrideToken = capellaOverrideToken
+			curConfig.Capella.InternalSupportToken = capellaInternalSupportToken
 			curConfig.Capella.DefaultCloud = capellaProvider
 			curConfig.Capella.DefaultAwsRegion = capellaAwsRegion
 			curConfig.Capella.DefaultAzureRegion = capellaAzureRegion
 			curConfig.Capella.DefaultGcpRegion = capellaGcpRegion
+			curConfig.Capella.UploadServerLogsHostName = UploadServerLogsHostName
 			saveConfig()
 		}
 
@@ -1327,6 +1365,7 @@ func init() {
 	initCmd.Flags().String("capella-pass", "", "Capella pass to use")
 	initCmd.Flags().String("capella-oid", "", "Capella organization id to use")
 	initCmd.Flags().String("capella-override-token", "", "Capella override token to use")
+	initCmd.Flags().String("capella-internal-support-token", "", "Capella internal support token to use")
 	initCmd.Flags().String("capella-provider", "", "Capella default cloud provider to use")
 	initCmd.Flags().String("capella-aws-region", "", "Capella default AWS region to use")
 	initCmd.Flags().String("capella-azure-region", "", "Capella default Azure region to use")

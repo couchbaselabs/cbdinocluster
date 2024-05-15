@@ -103,17 +103,20 @@ type Config_Azure struct {
 }
 
 type Config_Capella struct {
-	Enabled        StringBool `yaml:"enabled"`
-	Endpoint       string     `yaml:"endpoint"`
-	Username       string     `yaml:"username"`
-	Password       string     `yaml:"password"`
-	OrganizationID string     `yaml:"organization-id"`
-	OverrideToken  string     `yaml:"override-token"`
+	Enabled              StringBool `yaml:"enabled"`
+	Endpoint             string     `yaml:"endpoint"`
+	Username             string     `yaml:"username"`
+	Password             string     `yaml:"password"`
+	OrganizationID       string     `yaml:"organization-id"`
+	OverrideToken        string     `yaml:"override-token"`
+	InternalSupportToken string     `yaml:"Internal-support-token"`
 
 	DefaultCloud       string `yaml:"default-cloud"`
 	DefaultAwsRegion   string `yaml:"default-aws-region"`
 	DefaultAzureRegion string `yaml:"default-azure-region"`
 	DefaultGcpRegion   string `yaml:"default-gcp-region"`
+
+	UploadServerLogsHostName string `yaml:"upload-server-logs-host-name"`
 }
 
 func DefaultConfigPath() (string, error) {

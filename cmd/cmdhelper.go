@@ -161,6 +161,8 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	capellaPass := config.Capella.Password
 	capellaOid := config.Capella.OrganizationID
 	capellaOverrideToken := config.Capella.OverrideToken
+	capellaInternalSupportToken := config.Capella.InternalSupportToken
+	uploadServerLogsHostName := config.Capella.UploadServerLogsHostName
 
 	client, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
 		Logger:   logger,
@@ -180,14 +182,16 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	defaultGcpRegion := config.Capella.DefaultGcpRegion
 
 	prov, err := clouddeploy.NewDeployer(&clouddeploy.NewDeployerOptions{
-		Logger:             logger,
-		Client:             client,
-		TenantID:           capellaOid,
-		OverrideToken:      capellaOverrideToken,
-		DefaultCloud:       defaultCloud,
-		DefaultAwsRegion:   defaultAwsRegion,
-		DefaultAzureRegion: defaultAzureRegion,
-		DefaultGcpRegion:   defaultGcpRegion,
+		Logger:                   logger,
+		Client:                   client,
+		TenantID:                 capellaOid,
+		OverrideToken:            capellaOverrideToken,
+		InternalSupportToken:     capellaInternalSupportToken,
+		DefaultCloud:             defaultCloud,
+		DefaultAwsRegion:         defaultAwsRegion,
+		DefaultAzureRegion:       defaultAzureRegion,
+		DefaultGcpRegion:         defaultGcpRegion,
+		UploadServerLogsHostName: uploadServerLogsHostName,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create deployer")

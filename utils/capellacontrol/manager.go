@@ -180,3 +180,40 @@ func (m *Manager) WaitForPrivateEndpointLinkState(
 
 	return nil
 }
+
+func (m *Manager) WaitForServerLogsCollected(
+	ctx context.Context,
+	clusterID string,
+	token string,
+	req *DownloadServerLogsRequest,
+) (map[string]PerNode, error) {
+	desiredState := "completed"
+
+	for {
+		resp, err := m.Client.DownloadServerLogs(ctx, clusterID, token, req)
+		if err != nil {
+			return nil, errors.Wrap(err, "Download server logs request failed")
+		}
+
+		var logCollectionStatus *DownloadServerLogsStatus
+		for _, status := range resp.DownloadServerLogsStatuses {
+			if status.Type == "clusterLogsCollection" {
+				logCollectionStatus = &status
+				break
+			}
+		}
+
+		var perNode, status = logCollectionStatus.PerNode, logCollectionStatus.Status
+
+		m.Logger.Info("waiting for logs to be collected...",
+			zap.String("currentState", status),
+			zap.String("desiredState", desiredState))
+
+		if status != desiredState {
+			time.Sleep(15 * time.Second)
+			continue
+		}
+
+		return perNode, nil
+	}
+}
