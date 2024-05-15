@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/couchbaselabs/cbdinocluster/utils/webhelper"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,28 +20,32 @@ import (
 )
 
 type Deployer struct {
-	logger             *zap.Logger
-	client             *capellacontrol.Controller
-	mgr                *capellacontrol.Manager
-	tenantID           string
-	overrideToken      string
-	defaultCloud       string
-	defaultAwsRegion   string
-	defaultAzureRegion string
-	defaultGcpRegion   string
+	logger                   *zap.Logger
+	client                   *capellacontrol.Controller
+	mgr                      *capellacontrol.Manager
+	tenantID                 string
+	overrideToken            string
+	internalSupportToken     string
+	defaultCloud             string
+	defaultAwsRegion         string
+	defaultAzureRegion       string
+	defaultGcpRegion         string
+	uploadServerLogsHostName string
 }
 
 var _ deployment.Deployer = (*Deployer)(nil)
 
 type NewDeployerOptions struct {
-	Logger             *zap.Logger
-	Client             *capellacontrol.Controller
-	TenantID           string
-	OverrideToken      string
-	DefaultCloud       string
-	DefaultAwsRegion   string
-	DefaultAzureRegion string
-	DefaultGcpRegion   string
+	Logger                   *zap.Logger
+	Client                   *capellacontrol.Controller
+	TenantID                 string
+	OverrideToken            string
+	InternalSupportToken     string
+	DefaultCloud             string
+	DefaultAwsRegion         string
+	DefaultAzureRegion       string
+	DefaultGcpRegion         string
+	UploadServerLogsHostName string
 }
 
 func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
@@ -50,12 +56,14 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 			Logger: opts.Logger,
 			Client: opts.Client,
 		},
-		tenantID:           opts.TenantID,
-		overrideToken:      opts.OverrideToken,
-		defaultCloud:       opts.DefaultCloud,
-		defaultAwsRegion:   opts.DefaultAwsRegion,
-		defaultAzureRegion: opts.DefaultAzureRegion,
-		defaultGcpRegion:   opts.DefaultGcpRegion,
+		tenantID:                 opts.TenantID,
+		overrideToken:            opts.OverrideToken,
+		internalSupportToken:     opts.InternalSupportToken,
+		defaultCloud:             opts.DefaultCloud,
+		defaultAwsRegion:         opts.DefaultAwsRegion,
+		defaultAzureRegion:       opts.DefaultAzureRegion,
+		defaultGcpRegion:         opts.DefaultGcpRegion,
+		uploadServerLogsHostName: opts.UploadServerLogsHostName,
 	}, nil
 }
 
@@ -1462,6 +1470,68 @@ func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 	return strings.TrimSpace(lastCert.Pem), nil
 }
 
+func (d *Deployer) startLogCollection(ctx context.Context, cluster *clusterInfo) error {
+	var startCollectingServerLogsRequest = &capellacontrol.StartCollectingServerLogsRequest{
+		HostName: d.uploadServerLogsHostName,
+	}
+
+	var err = d.mgr.Client.StartCollectingServerLogs(ctx, cluster.Cluster.Id, d.internalSupportToken,
+		startCollectingServerLogsRequest)
+
+	if err != nil {
+		errors.Wrap(err,
+			fmt.Sprintf("failed to start server log collection: %s", err))
+	} else {
+		d.logger.Info(fmt.Sprintf("Log collection have started for cluster: %s", cluster.Cluster.Id))
+	}
+
+	return err
+}
+
+func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
+	cluster, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return []string{}, err
+	}
+
+	err = d.startLogCollection(ctx, cluster)
+
+	if err != nil {
+		return nil, err
+	}
+
+	var downloadServerLogsRequest = &capellacontrol.DownloadServerLogsRequest{
+		HostName: d.uploadServerLogsHostName,
+	}
+
+	perNodeMap, err := d.mgr.WaitForServerLogsCollected(ctx, cluster.Cluster.Id, d.internalSupportToken,
+		downloadServerLogsRequest)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to wait for logs to be collected")
+	}
+
+	var downloadedPaths []string
+	for node, logInfo := range perNodeMap {
+		if logInfo.Url == "" {
+			continue
+		}
+
+		logFileName := fmt.Sprintf("%s_logs", node)
+		logFilePath := filepath.Join(destPath, logFileName)
+		d.logger.Info(fmt.Sprintf("Downloading logs for %s", node))
+		err := webhelper.DownloadFileFromURL(logInfo.Url, logFilePath)
+		if err != nil {
+			d.logger.Info(fmt.Sprintf("Error downloading logs for %s: %v", node, err))
+			continue
+		}
+
+		d.logger.Info(fmt.Sprintf("Logs for %s downloaded successfully.", node))
+		downloadedPaths = append(downloadedPaths, logFilePath)
+	}
+
+	return downloadedPaths, nil
+}
+
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }
@@ -1496,10 +1566,6 @@ func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeI
 
 func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
 	return errors.New("clouddeploy does not support traffic control")
-}
-
-func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
-	return nil, errors.New("clouddeploy does not support log collection")
 }
 
 func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {

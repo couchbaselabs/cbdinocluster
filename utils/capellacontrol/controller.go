@@ -268,6 +268,40 @@ func (c *Controller) doBasicReq(
 	}, maxRetries, out)
 }
 
+func (c *Controller) doTokenRequest(
+	ctx context.Context,
+	method string,
+	path string,
+	token string,
+	body interface{},
+	out interface{},
+) error {
+	encodedBody, err := json.Marshal(body)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode request body")
+	}
+
+	var bodyRdr io.Reader
+	if body != nil {
+
+		bodyRdr = bytes.NewReader(encodedBody)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.endpoint+path, bodyRdr)
+	if err != nil {
+		return errors.Wrap(err, "failed to create request")
+	}
+
+	if bodyRdr != nil {
+		req.Header.Add("Content-Type", "application/json")
+	}
+	req.Header.Add("Authorization", "Bearer "+token)
+
+	err = c.doReq(ctx, req, out)
+
+	return err
+}
+
 func (c *Controller) updateJwtToken(ctx context.Context, auth *BasicCredentials) error {
 	var resp struct {
 		Jwt string `json:"jwt"`
@@ -1190,4 +1224,65 @@ func (c *Controller) UpdateServerVersion(
 	}
 
 	return err
+}
+
+type StartCollectingServerLogsRequest struct {
+	HostName string `json:"hostname"`
+}
+
+func (c *Controller) StartCollectingServerLogs(
+	ctx context.Context,
+	clusterID string,
+	internalSupportToken string,
+	req *StartCollectingServerLogsRequest,
+) error {
+	path := fmt.Sprintf("/internal/support/logcollections/clusters/%s", clusterID)
+	err := c.doTokenRequest(ctx, "POST", path, internalSupportToken, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+type DownloadServerLogsRequest struct {
+	HostName string `json:"hostname"`
+}
+
+type DownloadServerLogsResponse struct {
+	DownloadServerLogsStatuses []DownloadServerLogsStatus `json:"statuses,omitempty"`
+}
+
+type DownloadServerLogsStatus struct {
+	StatusId                 string             `json:"statusId,omitempty"`
+	Status                   string             `json:"status,omitempty"`
+	Type                     string             `json:"type,omitempty"`
+	Node                     string             `json:"node,omitempty"`
+	PerNode                  map[string]PerNode `json:"perNode,omitempty"`
+	Progress                 int                `json:"progress,omitempty"`
+	Ts                       string             `json:"ts,omitempty"`
+	RecommendedRefreshPeriod int                `json:"recommendedRefreshPeriod,omitempty"`
+}
+
+type PerNode struct {
+	Path   string `json:"path,omitempty"`
+	Status string `json:"status,omitempty"`
+	Url    string `json:"url,omitempty"`
+}
+
+func (c *Controller) DownloadServerLogs(
+	ctx context.Context,
+	clusterID string,
+	internalSupportToken string,
+	req *DownloadServerLogsRequest,
+) (*DownloadServerLogsResponse, error) {
+	var resp []DownloadServerLogsStatus
+	path := fmt.Sprintf("/internal/support/clusters/%s/pools/default/tasks", clusterID)
+	err := c.doTokenRequest(ctx, "GET", path, internalSupportToken, req, &resp) // Pass pointer to slice
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &DownloadServerLogsResponse{DownloadServerLogsStatuses: resp}, nil
 }
