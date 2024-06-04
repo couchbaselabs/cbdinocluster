@@ -204,3 +204,7 @@ func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID str
 func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error {
 	return errors.New("localdeploy does not support loading sample buckets")
 }
+
+func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
+	return errors.New("localdeploy does not support redeploy cluster")
+}

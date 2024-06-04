@@ -1471,3 +1471,7 @@ func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID str
 
 	return nil
 }
+
+func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
+	return errors.New("docker deploy does not support redeploy cluster")
+}
