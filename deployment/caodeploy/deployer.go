@@ -726,3 +726,7 @@ func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID strin
 func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
 	return errors.New("caodeploy does not support node pausing")
 }
+
+func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
+	return errors.New("caodeploy does not support redeploy cluster")
+}

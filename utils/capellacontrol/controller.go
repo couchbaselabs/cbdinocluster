@@ -1286,3 +1286,14 @@ func (c *Controller) DownloadServerLogs(
 
 	return &DownloadServerLogsResponse{DownloadServerLogsStatuses: resp}, nil
 }
+
+func (c *Controller) RedeployCluster(
+	ctx context.Context,
+	clusterID string,
+	internalSupportToken string,
+) error {
+	path := fmt.Sprintf("/internal/support/clusters/%s/deploy", clusterID)
+	err := c.doTokenRequest(ctx, "POST", path, internalSupportToken, nil, nil)
+
+	return err
+}

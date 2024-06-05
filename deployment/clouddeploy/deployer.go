@@ -1532,6 +1532,35 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 	return downloadedPaths, nil
 }
 
+func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
+	cluster, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	err = d.mgr.Client.RedeployCluster(ctx, cluster.Cluster.Id, d.internalSupportToken)
+
+	if err != nil {
+		errors.Wrap(err, "Failed to redeploy cluster")
+	}
+
+	d.logger.Debug("waiting for redeploy cluster to begin")
+
+	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "rebalancing")
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for cluster modification to begin")
+	}
+
+	d.logger.Debug("waiting for cluster to be healthy")
+
+	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "healthy")
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for cluster to be healthy")
+	}
+
+	return nil
+}
+
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }

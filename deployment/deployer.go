@@ -111,4 +111,5 @@ type Deployer interface {
 	SearchImages(ctx context.Context, version string) ([]Image, error)
 	PauseNode(ctx context.Context, clusterID string, nodeID string) error
 	UnpauseNode(ctx context.Context, clusterID string, nodeID string) error
+	RedeployCluster(ctx context.Context, clusterID string) error
 }
