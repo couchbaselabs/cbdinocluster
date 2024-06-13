@@ -1373,4 +1373,5 @@ func init() {
 	initCmd.Flags().Bool("disable-aws", false, "Disable AWS")
 	initCmd.Flags().String("aws-region", "", "AWS default region to use")
 	initCmd.Flags().Bool("disable-azure", false, "Disable Azure")
+	initCmd.Flags().String("upload-server-logs-host-name", "", "Upload server logs host name")
 }
