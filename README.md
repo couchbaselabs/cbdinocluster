@@ -172,7 +172,7 @@ Clusters:
     51024e57-660d-497d-8878-42ca7781ab4c                       192.168.107.129      2ca9e448...
 ```
 
-Note that the we have only one cluster, and its ID starts with `4`, so it is enough to refert to the cluster with
+Note that the we have only one cluster, and its ID starts with `4`, so it is enough to refer to the cluster with
 cbdinocluster commands.
 
 ```
