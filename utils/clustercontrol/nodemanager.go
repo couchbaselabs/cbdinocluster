@@ -38,6 +38,15 @@ func (m *NodeManager) WaitForOnline(ctx context.Context) error {
 	return nil
 }
 
+type AnalyticsSettings struct {
+	BlobStorageRegion        string
+	BlobStoragePrefix        string
+	BlobStorageBucket        string
+	BlobStorageScheme        string
+	BlobStorageEndpoint      string
+	BlobStorageAnonymousAuth bool
+}
+
 type SetupOneNodeClusterOptions struct {
 	KvMemoryQuotaMB       int
 	IndexMemoryQuotaMB    int
@@ -50,6 +59,7 @@ type SetupOneNodeClusterOptions struct {
 
 	Services    []string
 	ServerGroup string
+	AnalyticsSettings AnalyticsSettings
 }
 
 func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNodeClusterOptions) error {
@@ -78,6 +88,18 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to configure memory quotas")
+	}
+
+	err = c.SetupAnalytics(ctx, &SetupAnalyticsOptions{
+		BlobStorageRegion:        opts.AnalyticsSettings.BlobStorageRegion,
+		BlobStoragePrefix:        opts.AnalyticsSettings.BlobStoragePrefix,
+		BlobStorageBucket:        opts.AnalyticsSettings.BlobStorageBucket,
+		BlobStorageScheme:        opts.AnalyticsSettings.BlobStorageScheme,
+		BlobStorageEndpoint:      opts.AnalyticsSettings.BlobStorageEndpoint,
+		BlobStorageAnonymousAuth: opts.AnalyticsSettings.BlobStorageAnonymousAuth,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to configure analytics settings")
 	}
 
 	err = c.SetupServices(ctx, &SetupServicesOptions{

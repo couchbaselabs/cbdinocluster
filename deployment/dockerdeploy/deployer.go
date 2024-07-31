@@ -376,6 +376,16 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		eventingMemoryQuotaMB = 256
 	}
 
+	analyticsSettings := clustercontrol.AnalyticsSettings{
+		BlobStorageRegion:        def.Docker.Analytics.BlobStorage.Region,
+		BlobStoragePrefix:        def.Docker.Analytics.BlobStorage.Prefix,
+		BlobStorageBucket:        def.Docker.Analytics.BlobStorage.Bucket,
+		BlobStorageScheme:        def.Docker.Analytics.BlobStorage.Scheme,
+		BlobStorageEndpoint:      def.Docker.Analytics.BlobStorage.Endpoint,
+		BlobStorageAnonymousAuth: def.Docker.Analytics.BlobStorage.AnonymousAuth,
+	}
+	d.logger.Debug("analytics configuration", zap.Any("settings", analyticsSettings))
+
 	setupOpts := &clustercontrol.SetupNewClusterOptions{
 		KvMemoryQuotaMB:       kvMemoryQuotaMB,
 		IndexMemoryQuotaMB:    indexMemoryQuotaMB,
@@ -385,6 +395,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		Username:              username,
 		Password:              password,
 		Nodes:                 setupNodeOpts,
+		AnalyticsSettings:     analyticsSettings,
 	}
 
 	clusterMgr := clustercontrol.ClusterManager{

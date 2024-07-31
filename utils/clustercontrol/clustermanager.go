@@ -28,6 +28,8 @@ type SetupNewClusterOptions struct {
 	Username string
 	Password string
 
+	AnalyticsSettings AnalyticsSettings
+
 	Nodes []*SetupNewClusterNodeOptions
 }
 
@@ -56,6 +58,7 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 
 		Services:    firstNode.Services,
 		ServerGroup: firstNode.ServerGroup,
+		AnalyticsSettings: opts.AnalyticsSettings,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to configure the first node")

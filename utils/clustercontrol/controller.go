@@ -271,6 +271,38 @@ func (c *Controller) UpdateWebSettings(ctx context.Context, opts *UpdateWebSetti
 	return c.doFormPost(ctx, "/settings/web", form, true, nil)
 }
 
+type SetupAnalyticsOptions struct {
+	BlobStorageRegion        string
+	BlobStoragePrefix        string
+	BlobStorageBucket        string
+	BlobStorageScheme        string
+	BlobStorageEndpoint      string
+	BlobStorageAnonymousAuth bool
+}
+
+func (c *Controller) SetupAnalytics(ctx context.Context, opts *SetupAnalyticsOptions) error {
+	if opts.BlobStorageBucket == "" &&
+		opts.BlobStoragePrefix == "" &&
+		opts.BlobStorageRegion == "" &&
+		opts.BlobStorageScheme == "" &&
+		opts.BlobStorageEndpoint == "" &&
+		!opts.BlobStorageAnonymousAuth {
+		return nil
+	}
+
+	form := make(url.Values)
+	// if any are specified, all must be specified
+	form.Add("blobStorageRegion", opts.BlobStorageRegion)
+	form.Add("blobStoragePrefix", opts.BlobStoragePrefix)
+	form.Add("blobStorageBucket", opts.BlobStorageBucket)
+	form.Add("blobStorageScheme", opts.BlobStorageScheme)
+	form.Add("blobStorageEndpoint", opts.BlobStorageEndpoint)
+	if opts.BlobStorageAnonymousAuth {
+		form.Add("blobStorageAnonymousAuth", "true")
+	}
+	return c.doFormPost(ctx, "/settings/analytics", form, true, nil)
+}
+
 type SetupServicesOptions struct {
 	Services []string
 }
