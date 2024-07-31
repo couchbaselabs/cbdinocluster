@@ -126,6 +126,10 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 	}, nil
 }
 
+func (p *ServerlessImageProvider) GetImageRaw(ctx context.Context, imagePath string) (*ImageRef, error) {
+	return nil, errors.New("serverless provider does not support raw fetches")
+}
+
 func (p *ServerlessImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
 	return []deployment.Image{}, nil
 }

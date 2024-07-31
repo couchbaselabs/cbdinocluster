@@ -46,6 +46,14 @@ func (p *DockerHubImageProvider) GetImage(ctx context.Context, def *ImageDef) (*
 	}.Pull(ctx)
 }
 
+func (p *DockerHubImageProvider) GetImageRaw(ctx context.Context, imagePath string) (*ImageRef, error) {
+	return MultiArchImagePuller{
+		Logger:    p.Logger,
+		DockerCli: p.DockerCli,
+		ImagePath: imagePath,
+	}.Pull(ctx)
+}
+
 func (p *DockerHubImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
 	dkrImages, err := p.DockerCli.ImageList(ctx, types.ImageListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", "couchbase")),
