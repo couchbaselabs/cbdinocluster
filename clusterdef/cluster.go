@@ -24,6 +24,21 @@ type DockerCluster struct {
 	FtsMemoryMB      int `yaml:"fts-memory,omitempty"`
 	CbasMemoryMB     int `yaml:"cbas-memory,omitempty"`
 	EventingMemoryMB int `yaml:"eventing-memory,omitempty"`
+
+	Analytics AnalyticsSettings `yaml:"analytics,omitempty"`
+}
+
+type AnalyticsSettings struct {
+	BlobStorage AnalyticsBlobStorageSettings `yaml:"blob-storage,omitempty"`
+}
+
+type AnalyticsBlobStorageSettings struct {
+	Region        string `yaml:"region,omitempty"`
+	Prefix        string `yaml:"prefix,omitempty"`
+	Bucket        string `yaml:"bucket,omitempty"`
+	Scheme        string `yaml:"scheme,omitempty"`
+	Endpoint      string `yaml:"endpoint,omitempty"`
+	AnonymousAuth bool   `yaml:"anonymous-auth,omitempty"`
 }
 
 type CaoCluster struct {
