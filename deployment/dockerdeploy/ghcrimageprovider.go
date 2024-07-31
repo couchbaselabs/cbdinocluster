@@ -64,6 +64,19 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 	}.Pull(ctx)
 }
 
+func (p *GhcrImageProvider) GetImageRaw(ctx context.Context, imagePath string) (*ImageRef, error) {
+	if p.GhcrUsername == "" && p.GhcrPassword == "" {
+		return nil, errors.New("cannot use ghcr without credentials")
+	}
+
+	return MultiArchImagePuller{
+		Logger:       p.Logger,
+		DockerCli:    p.DockerCli,
+		RegistryAuth: p.genGhcrAuthStr(),
+		ImagePath:    imagePath,
+	}.Pull(ctx)
+}
+
 func (p *GhcrImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
 	dkrImages, err := p.DockerCli.ImageList(ctx, types.ImageListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", "ghcr.io/cb-vanilla/server")),

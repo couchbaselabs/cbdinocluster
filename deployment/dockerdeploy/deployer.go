@@ -123,6 +123,16 @@ func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*cluster
 	nodeGrpDefs := make([]*ImageDef, len(nodeGrps))
 	nodeGrpImages := make([]*ImageRef, len(nodeGrps))
 	for nodeGrpIdx, nodeGrp := range nodeGrps {
+		if nodeGrp.Docker.Image != "" {
+			foundImageRef, err := d.imageProvider.GetImageRaw(ctx, nodeGrp.Docker.Image)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to get image for a node")
+			}
+
+			nodeGrpImages[nodeGrpIdx] = foundImageRef
+			continue
+		}
+
 		versionInfo, err := versionident.Identify(ctx, nodeGrp.Version)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to identify version")

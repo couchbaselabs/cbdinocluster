@@ -22,6 +22,7 @@ type ImageProvider interface {
 	GetImage(ctx context.Context, def *ImageDef) (*ImageRef, error)
 	ListImages(ctx context.Context) ([]deployment.Image, error)
 	SearchImages(ctx context.Context, version string) ([]deployment.Image, error)
+	GetImageRaw(ctx context.Context, imagePath string) (*ImageRef, error)
 }
 
 func CompareImageDefs(a, b *ImageDef) int {

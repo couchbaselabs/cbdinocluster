@@ -19,6 +19,7 @@ type NodeGroup struct {
 }
 
 type DockerNodeGroup struct {
+	Image   string            `yaml:"image,omitempty"`
 	EnvVars map[string]string `yaml:"env,omitempty"`
 }
 

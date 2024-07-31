@@ -69,6 +69,22 @@ func (p *HybridImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Ima
 	return nil, errors.New("all providers failed to provide the image")
 }
 
+func (p *HybridImageProvider) GetImageRaw(ctx context.Context, imagePath string) (*ImageRef, error) {
+	allProviders := p.getProviders()
+
+	for _, provider := range allProviders {
+		image, err := provider.GetImageRaw(ctx, imagePath)
+		if err != nil {
+			p.Logger.Debug("hybrid provider variant failed to provide image", zap.Error(err))
+			continue
+		}
+
+		return image, nil
+	}
+
+	return nil, errors.New("all providers failed to provide the image")
+}
+
 func (p *HybridImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
 	allProviders := p.getProviders()
 
