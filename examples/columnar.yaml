@@ -1,0 +1,4 @@
+columnar: true
+nodes:
+  -   count: 3
+      version: 1.0.0-2239

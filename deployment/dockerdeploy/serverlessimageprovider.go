@@ -33,6 +33,10 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 		return nil, errors.New("cannot use serverless provider for non-serverless")
 	}
 
+	if def.UseColumnar {
+		return nil, errors.New("cannot use serverless provider for columnar images")
+	}
+
 	var serverVariant string
 	if def.UseCommunityEdition {
 		serverVariant = "community"

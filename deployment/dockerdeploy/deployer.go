@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -82,6 +83,7 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 		}
 		cluster := &ClusterInfo{
 			ClusterID: clusterID,
+			Type:      deployment.ClusterTypeServer,
 		}
 		clusters = append(clusters, cluster)
 		return cluster
@@ -95,12 +97,24 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 		if !node.Expiry.IsZero() && node.Expiry.After(cluster.Expiry) {
 			cluster.Expiry = node.Expiry
 		}
+
+		isClusterNode := false
+		if node.Type == "server-node" || node.Type == "columnar-node" {
+			isClusterNode = true
+		}
+
 		cluster.Nodes = append(cluster.Nodes, &ClusterNodeInfo{
 			ResourceID: node.ContainerID[0:8] + "...",
+			IsNode:     isClusterNode,
 			NodeID:     node.NodeID,
 			Name:       node.Name,
 			IPAddress:  node.IPAddress,
 		})
+
+		// if any nodes are columnar nodes, the cluster is a columnar cluster
+		if node.Type == "columnar-node" {
+			cluster.Type = deployment.ClusterTypeColumnar
+		}
 	}
 
 	return clusters, nil
@@ -119,7 +133,7 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 	return out, nil
 }
 
-func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*clusterdef.NodeGroup) ([]*ImageRef, error) {
+func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*clusterdef.NodeGroup, isColumnar bool) ([]*ImageRef, error) {
 	nodeGrpDefs := make([]*ImageDef, len(nodeGrps))
 	nodeGrpImages := make([]*ImageRef, len(nodeGrps))
 	for nodeGrpIdx, nodeGrp := range nodeGrps {
@@ -143,6 +157,7 @@ func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*cluster
 			BuildNo:             versionInfo.BuildNo,
 			UseCommunityEdition: versionInfo.CommunityEdition,
 			UseServerless:       versionInfo.Serverless,
+			UseColumnar:         isColumnar,
 		}
 		nodeGrpDefs[nodeGrpIdx] = imageDef
 
@@ -169,11 +184,64 @@ func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*cluster
 }
 
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
+	if def.Columnar {
+		for _, nodeGrp := range def.NodeGroups {
+			if len(nodeGrp.Services) != 0 {
+				return nil, errors.New("columnar clusters cannot specify services")
+			}
+
+			nodeGrp.Services = []clusterdef.Service{
+				clusterdef.KvService,
+				clusterdef.AnalyticsService,
+			}
+		}
+	}
+
 	clusterID := uuid.NewString()
+
+	if def.Columnar {
+		d.logger.Info("deploying mock s3 for blob storage")
+
+		d.logger.Debug("deploying s3mock container")
+
+		node, err := d.controller.DeployS3MockNode(ctx, clusterID, def.Expiry)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to deploy s3mock node")
+		}
+
+		d.logger.Debug("creating columnar bucket")
+
+		bucketName := "columnar"
+		req, err := http.NewRequest(
+			"PUT",
+			fmt.Sprintf("http://%s:9090/%s/", node.IPAddress, bucketName),
+			nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create columnar s3 bucket request")
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create columnar s3 bucket")
+		}
+		if resp.StatusCode != 200 {
+			return nil, fmt.Errorf("non-200 status code when creating columnar s3 bucket (code: %d)", resp.StatusCode)
+		}
+
+		d.logger.Info("s3 mock is ready")
+
+		def.Docker.Analytics.BlobStorage = clusterdef.AnalyticsBlobStorageSettings{
+			Region:        "local",
+			Bucket:        "columnar",
+			Scheme:        "s3",
+			Endpoint:      fmt.Sprintf("http://%s:9090", node.IPAddress),
+			AnonymousAuth: true,
+		}
+	}
 
 	d.logger.Info("gathering node images")
 
-	nodeGrpImages, err := d.getImagesForNodeGrps(ctx, def.NodeGroups)
+	nodeGrpImages, err := d.getImagesForNodeGrps(ctx, def.NodeGroups, def.Columnar)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to fetch images")
 	}
@@ -212,6 +280,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 				ClusterID:          clusterID,
 				Image:              image,
 				ImageServerVersion: nodeGrp.Version,
+				IsColumnar:         def.Columnar,
 				Expiry:             def.Expiry,
 				EnvVars:            nodeGrp.Docker.EnvVars,
 			}
@@ -428,10 +497,11 @@ type deployedNodeInfo struct {
 }
 
 type deployedClusterInfo struct {
-	ID      string
-	Purpose string
-	Expiry  time.Time
-	Nodes   []*deployedNodeInfo
+	ID         string
+	Purpose    string
+	Expiry     time.Time
+	Nodes      []*deployedNodeInfo
+	IsColumnar bool
 }
 
 func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deployedClusterInfo, error) {
@@ -442,10 +512,15 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 
 	var purpose string
 	var expiry time.Time
+	var isColumnar bool
 	var nodeInfo []*deployedNodeInfo
 
 	for _, node := range nodes {
 		if node.ClusterID == clusterID {
+			if node.Type == "columnar-node" {
+				isColumnar = true
+			}
+
 			if node.Purpose != "" {
 				purpose = node.Purpose
 			}
@@ -453,23 +528,30 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 				expiry = node.Expiry
 			}
 
-			nodeCtrl := clustercontrol.NodeManager{
-				Endpoint: fmt.Sprintf("http://%s:8091", node.IPAddress),
-			}
-			thisNodeInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to list a nodes services")
-			}
+			var otpNode string
+			var services []clusterdef.Service
 
-			services, err := clusterdef.NsServicesToServices(thisNodeInfo.Services)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to generate services list")
+			if node.Type == "server-node" || node.Type == "columnar-node" {
+				nodeCtrl := clustercontrol.NodeManager{
+					Endpoint: fmt.Sprintf("http://%s:8091", node.IPAddress),
+				}
+				thisNodeInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to list a nodes services")
+				}
+
+				services, err = clusterdef.NsServicesToServices(thisNodeInfo.Services)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to generate services list")
+				}
+
+				otpNode = thisNodeInfo.OTPNode
 			}
 
 			nodeInfo = append(nodeInfo, &deployedNodeInfo{
 				ContainerID: node.ContainerID,
 				IPAddress:   node.IPAddress,
-				OTPNode:     thisNodeInfo.OTPNode,
+				OTPNode:     otpNode,
 				Version:     node.InitialServerVersion,
 				Services:    services,
 			})
@@ -477,10 +559,11 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployedClusterInfo{
-		ID:      clusterID,
-		Purpose: purpose,
-		Expiry:  expiry,
-		Nodes:   nodeInfo,
+		ID:         clusterID,
+		Purpose:    purpose,
+		Expiry:     expiry,
+		Nodes:      nodeInfo,
+		IsColumnar: isColumnar,
 	}, nil
 }
 
@@ -547,7 +630,7 @@ func (d *Deployer) addRemoveNodes(
 
 	d.logger.Info("gathering node images")
 
-	nodesToAddImages, err := d.getImagesForNodeGrps(ctx, nodesToAdd)
+	nodesToAddImages, err := d.getImagesForNodeGrps(ctx, nodesToAdd, clusterInfo.IsColumnar)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to fetch images")
 	}
@@ -564,6 +647,7 @@ func (d *Deployer) addRemoveNodes(
 			ClusterID:          clusterInfo.ID,
 			Image:              image,
 			ImageServerVersion: nodeGrp.Version,
+			IsColumnar:         clusterInfo.IsColumnar,
 			Expiry:             time.Until(clusterInfo.Expiry),
 			EnvVars:            nodeGrp.Docker.EnvVars,
 		}
@@ -843,6 +927,10 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	var mgmtAddr string
 	var mgmtTlsAddr string
 	for _, node := range thisCluster.Nodes {
+		if !node.IsClusterNode() {
+			continue
+		}
+
 		kvPort := 11210
 		kvTlsPort := 11207
 		mgmtPort := 8091

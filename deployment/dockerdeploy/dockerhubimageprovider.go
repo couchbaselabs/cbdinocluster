@@ -28,6 +28,9 @@ func (p *DockerHubImageProvider) GetImage(ctx context.Context, def *ImageDef) (*
 	if def.UseServerless {
 		return nil, errors.New("cannot use dockerhub for serverless releases")
 	}
+	if def.UseColumnar {
+		return nil, errors.New("cannot use dockerhub for columnar releases")
+	}
 
 	var serverVersion string
 	if def.UseCommunityEdition {
