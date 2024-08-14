@@ -8,6 +8,7 @@ type Cluster struct {
 	Expiry  time.Duration `yaml:"expiry,omitempty"`
 	Purpose string        `yaml:"purpose,omitempty"`
 
+	Columnar   bool         `yaml:"columnar,omitempty"`
 	NodeGroups []*NodeGroup `yaml:"nodes,omitempty"`
 
 	Docker DockerCluster `yaml:"docker,omitempty"`

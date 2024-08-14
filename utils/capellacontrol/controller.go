@@ -390,6 +390,51 @@ type ProjectInfo struct {
 
 type ListProjectsResponse PagedResourceResponse[*ProjectInfo]
 
+type ColumnarData struct {
+	Config           ColumnarConfigInfo `json:"config"`
+	CIDR             string             `json:"cidr"`
+	CreatedByUser    string             `json:"createdByUser"`
+	Description      string             `json:"description"`
+	ID               string             `json:"id"`
+	Name             string             `json:"name"`
+	TenantID         string             `json:"tenantId"`
+	ProjectID        string             `json:"projectId"`
+	ProjectName      string             `json:"projectName"`
+	ScheduleCount    int                `json:"scheduleCount"`
+	State            string             `json:"state"`
+	Storage          ColumnarStorage    `json:"storage"`
+	CreatedByUserID  string             `json:"createdByUserID"`
+	UpsertedByUserID string             `json:"upsertedByUserID"`
+	CreatedAt        string             `json:"createdAt"`
+	UpsertedAt       string             `json:"upsertedAt"`
+	ModifiedByUserID string             `json:"modifiedByUserID"`
+	ModifiedAt       string             `json:"modifiedAt"`
+	Version          int                `json:"version"`
+}
+
+type ColumnarConfigInfo struct {
+	Provider         string `json:"provider"`
+	Region           string `json:"region"`
+	NodeCount        int    `json:"nodeCount"`
+	HaveNodes        int    `json:"haveNodes"`
+	WantNodes        int    `json:"wantNodes"`
+	Endpoint         string `json:"endpoint"`
+	Id               string `json:"clusterId"`
+	AvailabilityZone string `json:"availabilityZone"`
+	InstanceType     struct {
+		VCPUs  string `json:"vcpus"`
+		Memory string `json:"memory"`
+	} `json:"instanceType"`
+	Package struct {
+		Type     string `json:"type"`
+		Timezone string `json:"timezone"`
+	} `json:"package"`
+}
+
+type ColumnarStorage struct {
+	TotalBytes int `json:"totalBytes"`
+}
+
 func (c *Controller) ListProjects(
 	ctx context.Context,
 	tenantID string,
@@ -566,6 +611,25 @@ func (c *Controller) ListAllClusters(
 	return resp, nil
 }
 
+type ListColumnarsResponse PagedResourceResponse[*ColumnarData]
+
+func (c *Controller) ListAllColumnars(
+	ctx context.Context,
+	tenantID string,
+	req *PaginatedRequest,
+) (*ListColumnarsResponse, error) {
+	resp := &ListColumnarsResponse{}
+
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/v2/organizations/%s/instance?%s", tenantID, form.Encode())
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 type CreateClusterRequest struct {
 	CIDR        string                      `json:"cidr"`
 	Description string                      `json:"description"`
@@ -650,6 +714,44 @@ type CreateClusterResponse struct {
 	Id string `json:"id"`
 }
 
+type CreateColumnarInstanceRequest struct {
+	Name             string                `json:"name"`
+	Description      string                `json:"description"`
+	Provider         string                `json:"provider"`
+	Region           string                `json:"region"`
+	Nodes            int                   `json:"nodes"`
+	Package          Package               `json:"package"`
+	InstanceTypes    ColumnarInstanceTypes `json:"instanceTypes"`
+	AvailabilityZone string                `json:"availabilityZone"`
+}
+
+type ColumnarInstanceTypes struct {
+	VCPUs  string `json:"vcpus"`
+	Memory string `json:"memory"`
+}
+
+type Package struct {
+	Key      string `json:"key"`
+	Timezone string `json:"timezone"`
+}
+
+func (c *Controller) CreateColumnar(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	req *CreateColumnarInstanceRequest,
+) (*CreateClusterResponse, error) {
+	resp := &CreateClusterResponse{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance", tenantID, projectID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 func (c *Controller) CreateCluster(
 	ctx context.Context,
 	tenantID string,
@@ -686,6 +788,19 @@ func (c *Controller) DeleteCluster(
 	tenantID, projectID string, clusterID string,
 ) error {
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) DeleteColumnar(
+	ctx context.Context,
+	tenantID, projectID string, clusterID string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
 	if err != nil {
 		return err
@@ -866,6 +981,23 @@ func (c *Controller) ListAllowListEntries(
 	return resp, nil
 }
 
+func (c *Controller) ListAllowListEntriesColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *PaginatedRequest,
+) (*ListAllowListEntriesResponse, error) {
+	resp := &ListAllowListEntriesResponse{}
+
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/allowlists?%s", tenantID, projectID, clusterID, form.Encode())
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 type UpdateAllowListEntriesRequest struct {
 	Create []UpdateAllowListEntriesRequest_Entry `json:"create"`
 	Delete []string                              `json:"delete"`
@@ -884,6 +1016,34 @@ func (c *Controller) UpdateAllowListEntries(
 ) error {
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/allowlists-bulk", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) AddAllowListEntryColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *UpdateAllowListEntriesRequest_Entry,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/allowlists", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) DeleteAllowListEntryColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID, allowID string,
+) error {
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/allowlists/%s", tenantID, projectID, clusterID, allowID)
+	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -1109,6 +1269,116 @@ func (c *Controller) DeleteUser(
 	return nil
 }
 
+func (c *Controller) CreateColumnarUser(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *CreateColumnarUserRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/apikeys", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (c *Controller) GetColumnarRoles(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *PaginatedRequest,
+) (*ListColumnarRolesResponse, error) {
+	resp := &ListColumnarRolesResponse{}
+
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/roles?%s",
+		tenantID, projectID, clusterID, form.Encode())
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func (c *Controller) ListColumnarUsers(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *PaginatedRequest,
+) (*ListColumnarUsersResponse, error) {
+	resp := &ListColumnarUsersResponse{}
+
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/apikeys?%s",
+		tenantID, projectID, clusterID, form.Encode())
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func (c *Controller) DeleteColumnarUser(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	userId string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/apikeys/%s",
+		tenantID, projectID, clusterID,
+		userId)
+	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+type CreateColumnarUserRequest struct {
+	Name       string   `json:"name"`
+	Password   string   `json:"password"`
+	Roles      []string `json:"roles"`
+	Privileges struct {
+		Privileges []string `json:"privileges"`
+		Links      struct{} `json:"links"`
+		Databases  struct{} `json:"databases"`
+	} `json:"privileges"`
+}
+
+type ListColumnarUsersResponse PagedResourceResponse[*ColumnarGetUsersData]
+
+type ColumnarGetUsersData struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Roles      []string `json:"roles"`
+	Privileges struct{} `json:"privileges"`
+	CreatedAt  string   `json:"createdAt"`
+}
+
+type ListColumnarRolesResponse PagedResourceResponse[*ColumnarGetRolesData]
+
+type Privileges struct {
+	Privileges []string `json:"privileges,omitempty"`
+}
+
+type ColumnarGetRolesData struct {
+	ID               string     `json:"id"`
+	TenantID         string     `json:"tenantId"`
+	ProjectID        string     `json:"projectId"`
+	InstanceID       string     `json:"instanceId"`
+	Name             string     `json:"name"`
+	Description      string     `json:"description"`
+	Privileges       Privileges `json:"privileges"`
+	CreatedByUserID  string     `json:"createdByUserID"`
+	UpsertedByUserID string     `json:"upsertedByUserID"`
+	CreatedAt        string     `json:"createdAt"`
+	UpsertedAt       string     `json:"upsertedAt"`
+	ModifiedByUserID string     `json:"modifiedByUserID"`
+	ModifiedAt       string     `json:"modifiedAt"`
+	Version          int        `json:"version"`
+}
+
 type ListBucketsResponse struct {
 	Buckets         Resource[[]Resource[ListBucketsResponse_Bucket]] `json:"buckets"`
 	FreeMemoryInMb  int                                              `json:"freeMemoryInMb"`
@@ -1196,6 +1466,21 @@ func (c *Controller) GetTrustedCAs(
 	resp := &GetTrustedCAsResponse{}
 
 	path := fmt.Sprintf("/v2/databases/%s/proxy/pools/default/trustedCAs", clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func (c *Controller) GetTrustedCAsColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) (*GetTrustedCAsResponse, error) {
+	resp := &GetTrustedCAsResponse{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/certificates", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
