@@ -71,6 +71,7 @@ type clusterInfo struct {
 	Meta        *stringclustermeta.MetaData
 	Project     *capellacontrol.ProjectInfo
 	Cluster     *capellacontrol.ClusterInfo
+	Columnar    *capellacontrol.ColumnarData
 	IsCorrupted bool
 }
 
@@ -124,6 +125,60 @@ func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 		clusters := getClustersForProject(project.Data.ID)
 
 		if len(clusters) == 0 {
+			continue
+		} else if len(clusters) > 1 {
+			out = append(out, &clusterInfo{
+				Meta:        meta,
+				Project:     project.Data,
+				Cluster:     nil,
+				IsCorrupted: true,
+			})
+			continue
+		}
+
+		cluster := clusters[0]
+
+		out = append(out, &clusterInfo{
+			Meta:        meta,
+			Project:     project.Data,
+			Cluster:     cluster,
+			IsCorrupted: false,
+		})
+	}
+
+	columnars, err := p.client.ListAllColumnars(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
+		Page:          1,
+		PerPage:       1000,
+		SortBy:        "name",
+		SortDirection: "asc",
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list all clusters")
+	}
+
+	getColumnarsForProject := func(projectID string) []*capellacontrol.ColumnarData {
+		var out []*capellacontrol.ColumnarData
+		for _, cluster := range columnars.Data {
+			if cluster.Data.ProjectID == projectID {
+				out = append(out, cluster.Data)
+			}
+		}
+		return out
+	}
+
+	for _, project := range projects.Data {
+		meta, err := stringclustermeta.Parse(project.Data.Name)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse meta-data from project name")
+		}
+		if meta == nil {
+			// not a cbdc2 project
+			continue
+		}
+
+		clusters := getColumnarsForProject(project.Data.ID)
+
+		if len(clusters) == 0 {
 			out = append(out, &clusterInfo{
 				Meta:        meta,
 				Project:     project.Data,
@@ -146,7 +201,7 @@ func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 		out = append(out, &clusterInfo{
 			Meta:        meta,
 			Project:     project.Data,
-			Cluster:     cluster,
+			Columnar:    cluster,
 			IsCorrupted: false,
 		})
 	}
@@ -196,7 +251,7 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 				State:          "corrupted",
 			})
 			continue
-		} else if cluster.Cluster == nil {
+		} else if cluster.Cluster == nil && cluster.Columnar == nil {
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
 				CloudProjectID: cluster.Project.ID,
@@ -208,14 +263,25 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 			continue
 		}
 
-		out = append(out, &ClusterInfo{
-			ClusterID:      cluster.Meta.ID.String(),
-			CloudProjectID: cluster.Project.ID,
-			CloudClusterID: cluster.Cluster.Id,
-			Region:         cluster.Cluster.Provider.Region,
-			Expiry:         cluster.Meta.Expiry,
-			State:          cluster.Cluster.Status.State,
-		})
+		if cluster.Cluster != nil {
+			out = append(out, &ClusterInfo{
+				ClusterID:      cluster.Meta.ID.String(),
+				CloudProjectID: cluster.Project.ID,
+				CloudClusterID: cluster.Cluster.Id,
+				Region:         cluster.Cluster.Provider.Region,
+				Expiry:         cluster.Meta.Expiry,
+				State:          cluster.Cluster.Status.State,
+			})
+		} else if cluster.Columnar != nil {
+			out = append(out, &ClusterInfo{
+				ClusterID:      cluster.Meta.ID.String(),
+				CloudProjectID: cluster.Project.ID,
+				CloudClusterID: cluster.Columnar.ID,
+				Region:         cluster.Columnar.Config.Region,
+				Expiry:         cluster.Meta.Expiry,
+				State:          cluster.Columnar.State,
+			})
+		}
 	}
 
 	return out, nil
@@ -718,62 +784,117 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
 
-	specs, err := p.buildCreateSpecs(
-		ctx,
-		cloudProvider,
-		def.NodeGroups)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to build cluster specs")
-	}
-
-	createReq := &capellacontrol.CreateClusterRequest{
-		CIDR:        clusterCidr,
-		Description: "",
-		Name:        clusterName,
-		Plan:        "Developer Pro",
-		ProjectId:   cloudProjectID,
-		Provider:    clusterProvider,
-		Region:      cloudRegion,
-		Server:      clusterVersion,
-		SingleAZ:    false,
-		Specs:       specs,
-		Timezone:    "PT",
-	}
-	p.logger.Debug("creating cluster", zap.Any("req", createReq))
-
-	newCluster, err := p.client.CreateCluster(ctx, p.tenantID, createReq)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create cluster")
-	}
-
-	cloudClusterID := newCluster.Id
-
-	p.logger.Debug("waiting for cluster creation to complete")
-
-	err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy")
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to wait for cluster deployment")
-	}
-
-	// we cheat for now...
-	clusters, err := p.ListClusters(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list clusters")
-	}
-
-	var thisCluster *ClusterInfo
-	for _, cluster := range clusters {
-		cluster := cluster.(*ClusterInfo)
-
-		if cluster.ClusterID == clusterID.String() {
-			thisCluster = cluster
+	if !def.Columnar {
+		specs, err := p.buildCreateSpecs(
+			ctx,
+			cloudProvider,
+			def.NodeGroups)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to build cluster specs")
 		}
-	}
-	if thisCluster == nil {
-		return nil, errors.New("failed to find new cluster after deployment")
+
+		createReq := &capellacontrol.CreateClusterRequest{
+			CIDR:        clusterCidr,
+			Description: "",
+			Name:        clusterName,
+			Plan:        "Developer Pro",
+			ProjectId:   cloudProjectID,
+			Provider:    clusterProvider,
+			Region:      cloudRegion,
+			Server:      clusterVersion,
+			SingleAZ:    false,
+			Specs:       specs,
+			Timezone:    "PT",
+		}
+		p.logger.Debug("creating cluster", zap.Any("req", createReq))
+
+		newCluster, err := p.client.CreateCluster(ctx, p.tenantID, createReq)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create cluster")
+		}
+
+		cloudClusterID := newCluster.Id
+
+		p.logger.Debug("waiting for cluster creation to complete")
+
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy")
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wait for cluster deployment")
+		}
+
+		// we cheat for now...
+		clusters, err := p.ListClusters(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to list clusters")
+		}
+
+		var thisCluster *ClusterInfo
+		for _, cluster := range clusters {
+			cluster := cluster.(*ClusterInfo)
+
+			if cluster.ClusterID == clusterID.String() {
+				thisCluster = cluster
+			}
+		}
+		if thisCluster == nil {
+			return nil, errors.New("failed to find new cluster after deployment")
+		}
+		return thisCluster, nil
+
+	} else {
+		createReq := &capellacontrol.CreateColumnarInstanceRequest{
+			Name:        clusterName,
+			Description: "",
+			Provider:    clusterProvider,
+			Region:      cloudRegion,
+			Nodes:       def.NodeGroups[0].Count,
+			InstanceTypes: capellacontrol.ColumnarInstanceTypes{
+				VCPUs:  fmt.Sprintf("%dvCPUs", def.NodeGroups[0].Cloud.Cpu),
+				Memory: fmt.Sprintf("%dGB", def.NodeGroups[0].Cloud.Memory),
+			},
+			Package: capellacontrol.Package{
+				Key:      "developerPro",
+				Timezone: "PT",
+			},
+			AvailabilityZone: "single",
+		}
+		p.logger.Debug("creating columnar", zap.Any("req", createReq))
+
+		newCluster, err := p.client.CreateColumnar(ctx, p.tenantID, cloudProjectID, createReq)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create columnar")
+		}
+
+		cloudClusterID := newCluster.Id
+
+		p.logger.Debug("waiting for columnar creation to complete")
+
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy")
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wait for columnar deployment")
+		}
+
+		// we cheat for now...
+		clusters, err := p.ListClusters(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to list columnars")
+		}
+
+		var thisCluster *ClusterInfo
+		for _, cluster := range clusters {
+			cluster := cluster.(*ClusterInfo)
+
+			if cluster.ClusterID == clusterID.String() {
+				thisCluster = cluster
+			}
+		}
+		if thisCluster == nil {
+			return nil, errors.New("failed to find new columnar after deployment")
+		}
+		return thisCluster, nil
+
 	}
 
-	return thisCluster, nil
 }
 
 func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
@@ -949,6 +1070,18 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster destruction")
 		}
+	} else if clusterInfo.Columnar != nil {
+		err := p.client.DeleteColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete cluster")
+		}
+
+		p.logger.Debug("waiting for cluster deletion to finish")
+
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.Columnar.ID, "")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for cluster destruction")
+		}
 	}
 
 	p.logger.Debug("deleting the cloud project")
@@ -982,12 +1115,23 @@ func (p *Deployer) ListAllowListEntries(ctx context.Context, clusterID string) (
 		return nil, err
 	}
 
-	entries, err := p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       1000,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
+	var entries *capellacontrol.ListAllowListEntriesResponse
+	if clusterInfo.Cluster != nil {
+		entries, err = p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+	} else {
+		entries, err = p.client.ListAllowListEntriesColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+	}
+
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to fetch allow list entries")
 	}
@@ -1010,14 +1154,22 @@ func (p *Deployer) AddAllowListEntry(ctx context.Context, clusterID string, cidr
 		return err
 	}
 
-	err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
-		Create: []capellacontrol.UpdateAllowListEntriesRequest_Entry{
-			{
-				Cidr:    cidr,
-				Comment: "",
+	if clusterInfo.Cluster != nil {
+		err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
+			Create: []capellacontrol.UpdateAllowListEntriesRequest_Entry{
+				{
+					Cidr:    cidr,
+					Comment: "",
+				},
 			},
-		},
-	})
+		})
+	} else {
+		err = p.client.AddAllowListEntryColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.UpdateAllowListEntriesRequest_Entry{
+			Cidr:    cidr,
+			Comment: "",
+		})
+	}
+
 	if err != nil {
 		return errors.Wrap(err, "failed to update allow list entries")
 	}
@@ -1031,14 +1183,21 @@ func (p *Deployer) RemoveAllowListEntry(ctx context.Context, clusterID string, c
 		return err
 	}
 
-	entries, err := p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       1000,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to fetch allow list entries")
+	var entries *capellacontrol.ListAllowListEntriesResponse
+	if clusterInfo.Cluster != nil {
+		entries, err = p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+	} else {
+		entries, err = p.client.ListAllowListEntriesColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
 	}
 
 	foundEntryId := ""
@@ -1052,9 +1211,14 @@ func (p *Deployer) RemoveAllowListEntry(ctx context.Context, clusterID string, c
 		return errors.New("could not find matching cidr")
 	}
 
-	err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
-		Delete: []string{foundEntryId},
-	})
+	if clusterInfo.Cluster != nil {
+		err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
+			Delete: []string{foundEntryId},
+		})
+	} else {
+		err = p.client.DeleteAllowListEntryColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, foundEntryId)
+	}
+
 	if err != nil {
 		return errors.Wrap(err, "failed to update allow list entries")
 	}
@@ -1206,6 +1370,49 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		}
 	}
 
+	columnars, err := p.client.ListAllColumnars(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
+		Page:          1,
+		PerPage:       1000,
+		SortBy:        "name",
+		SortDirection: "asc",
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to list all columnars")
+	}
+
+	var columnarsToRemove []*capellacontrol.ColumnarData
+	for _, columnar := range columnars.Data {
+		if !strings.HasPrefix(columnar.Data.Name, "cbdc2_") {
+			continue
+		}
+
+		columnarsToRemove = append(columnarsToRemove, columnar.Data)
+	}
+
+	var columnarNamesToRemove []string
+	for _, cluster := range columnarsToRemove {
+		columnarNamesToRemove = append(columnarNamesToRemove, cluster.Name)
+	}
+	p.logger.Info("found columnar to remove", zap.Strings("columnar", columnarNamesToRemove))
+
+	for _, columnar := range columnarsToRemove {
+		p.logger.Info("removing a columnar", zap.String("cluster-id", columnar.ID))
+
+		err := p.client.DeleteColumnar(ctx, p.tenantID, columnar.ProjectID, columnar.ID)
+		if err != nil {
+			return errors.Wrap(err, "failed to remove cluster")
+		}
+	}
+
+	for _, columnar := range columnarsToRemove {
+		p.logger.Info("waiting for cluster columnar to complete", zap.String("cluster-id", columnar.ID))
+
+		err := p.mgr.WaitForClusterState(ctx, p.tenantID, columnar.ID, "")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for cluster removal to finish")
+		}
+	}
+
 	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
 		Page:          1,
 		PerPage:       100,
@@ -1249,7 +1456,12 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		return nil, err
 	}
 
-	connStr := fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.Connect.Srv)
+	var connStr string
+	if clusterInfo.Cluster != nil {
+		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.Connect.Srv)
+	} else {
+		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Columnar.Config.Endpoint)
+	}
 
 	return &deployment.ConnectInfo{
 		ConnStr:    "",
@@ -1285,36 +1497,63 @@ func (p *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deploymen
 		return nil, err
 	}
 
-	resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       1000,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list users")
-	}
-
-	var users []deployment.UserInfo
-	for _, user := range resp.Data {
-		canRead := false
-		canWrite := false
-		for permName := range user.Data.Permissions {
-			if permName == "data_writer" {
-				canWrite = true
-			} else if permName == "data_reader" {
-				canRead = true
-			}
+	if clusterInfo.Cluster != nil {
+		resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to list users")
 		}
 
-		users = append(users, deployment.UserInfo{
-			Username: user.Data.Name,
-			CanRead:  canRead,
-			CanWrite: canWrite,
+		var users []deployment.UserInfo
+		for _, user := range resp.Data {
+			canRead := false
+			canWrite := false
+			for permName := range user.Data.Permissions {
+				if permName == "data_writer" {
+					canWrite = true
+				} else if permName == "data_reader" {
+					canRead = true
+				}
+			}
+
+			users = append(users, deployment.UserInfo{
+				Username: user.Data.Name,
+				CanRead:  canRead,
+				CanWrite: canWrite,
+			})
+		}
+
+		return users, nil
+	} else {
+		resp, err := p.mgr.Client.ListColumnarUsers(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
 		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to list users")
+		}
+
+		var users []deployment.UserInfo
+		for _, user := range resp.Data {
+			canRead := user.Permissions.Read.Accessible
+			canWrite := user.Permissions.Create.Accessible
+
+			users = append(users, deployment.UserInfo{
+				Username: user.Data.Name,
+				CanRead:  canRead,
+				CanWrite: canWrite,
+			})
+		}
+
+		return users, nil
 	}
 
-	return users, nil
 }
 
 func (p *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deployment.CreateUserOptions) error {
@@ -1322,23 +1561,49 @@ func (p *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deplo
 	if err != nil {
 		return err
 	}
+	if clusterInfo.Cluster != nil {
+		perms := make(map[string]capellacontrol.CreateUserRequest_Permission)
 
-	perms := make(map[string]capellacontrol.CreateUserRequest_Permission)
+		if opts.CanRead {
+			perms["data_reader"] = capellacontrol.CreateUserRequest_Permission{}
+		}
+		if opts.CanWrite {
+			perms["data_writer"] = capellacontrol.CreateUserRequest_Permission{}
+		}
 
-	if opts.CanRead {
-		perms["data_reader"] = capellacontrol.CreateUserRequest_Permission{}
-	}
-	if opts.CanWrite {
-		perms["data_writer"] = capellacontrol.CreateUserRequest_Permission{}
-	}
+		err = p.mgr.Client.CreateUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateUserRequest{
+			Name:        opts.Username,
+			Password:    opts.Password,
+			Permissions: perms,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to create user")
+		}
+	} else {
+		roles, err := p.mgr.Client.GetColumnarRoles(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       250,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to get default roles")
+		}
 
-	err = p.mgr.Client.CreateUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateUserRequest{
-		Name:        opts.Username,
-		Password:    opts.Password,
-		Permissions: perms,
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to create user")
+		var roleIds []string
+		for _, role := range roles.Data {
+			roleIds = append(roleIds, role.Data.ID)
+		}
+
+		err = p.mgr.Client.CreateColumnarUser(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.CreateColumnarUserRequest{
+			Name:     opts.Username,
+			Password: opts.Password,
+			Roles:    roleIds,
+		})
+
+		if err != nil {
+			return errors.Wrap(err, "failed to create user")
+		}
 	}
 
 	return nil
@@ -1349,34 +1614,63 @@ func (p *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 	if err != nil {
 		return err
 	}
-
-	resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       1000,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to list users")
-	}
-
-	userId := ""
-	for _, user := range resp.Data {
-		if user.Data.Name == username {
-			userId = user.Data.ID
-			break
+	if clusterInfo.Cluster != nil {
+		resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to list users")
 		}
-	}
-	if userId == "" {
-		return errors.New("failed to find user by username")
+
+		userId := ""
+		for _, user := range resp.Data {
+			if user.Data.Name == username {
+				userId = user.Data.ID
+				break
+			}
+		}
+		if userId == "" {
+			return errors.New("failed to find user by username")
+		}
+
+		err = p.mgr.Client.DeleteUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, userId)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete user")
+		}
+
+		return nil
+	} else {
+		resp, err := p.mgr.Client.ListColumnarUsers(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+			Page:          1,
+			PerPage:       1000,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to list users")
+		}
+		userId := ""
+		for _, user := range resp.Data {
+			if user.Data.Name == username {
+				userId = user.Data.ID
+				break
+			}
+		}
+		if userId == "" {
+			return errors.New("failed to find user by username")
+		}
+
+		err = p.mgr.Client.DeleteColumnarUser(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, userId)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete user")
+		}
+
+		return nil
 	}
 
-	err = p.mgr.Client.DeleteUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, userId)
-	if err != nil {
-		return errors.Wrap(err, "failed to delete user")
-	}
-
-	return nil
 }
 
 func (p *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
@@ -1460,7 +1754,12 @@ func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 		return "", err
 	}
 
-	resp, err := p.mgr.Client.GetTrustedCAs(ctx, clusterInfo.Cluster.Id)
+	var resp *capellacontrol.GetTrustedCAsResponse
+	if clusterInfo.Cluster != nil {
+		resp, err = p.mgr.Client.GetTrustedCAs(ctx, clusterInfo.Cluster.Id)
+	} else {
+		resp, err = p.mgr.Client.GetTrustedCAsColumnar(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+	}
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get trusted CAs")
 	}
@@ -1492,6 +1791,10 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 	cluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return []string{}, err
+	}
+
+	if cluster.Columnar != nil {
+		return nil, errors.New("collectlogs not supported for columanr clusters yet")
 	}
 
 	err = d.startLogCollection(ctx, cluster)
@@ -1536,6 +1839,9 @@ func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error 
 	cluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return err
+	}
+	if cluster.Columnar != nil {
+		return errors.New("redeploy not supported for columanr clusters yet")
 	}
 
 	err = d.mgr.Client.RedeployCluster(ctx, cluster.Cluster.Id, d.internalSupportToken)

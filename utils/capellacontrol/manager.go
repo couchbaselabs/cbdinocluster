@@ -49,6 +49,45 @@ func (m *Manager) WaitForClusterState(
 		}
 
 		if clusterStatus == MISSING_STATE && desiredState != MISSING_STATE {
+			break
+			//return fmt.Errorf("cluster disappeared during wait for '%s' state", desiredState)
+		}
+
+		m.Logger.Info("waiting for cluster status...",
+			zap.String("current", clusterStatus),
+			zap.String("desired", desiredState))
+
+		if clusterStatus != desiredState {
+			time.Sleep(10 * time.Second)
+			continue
+		}
+
+		break
+	}
+
+	for {
+		clusters, err := m.Client.ListAllColumnars(ctx, tenantID, &PaginatedRequest{
+			Page:          1,
+			PerPage:       100,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to list clusters")
+		}
+
+		clusterStatus := ""
+		for _, cluster := range clusters.Data {
+			if cluster.Data.ID == clusterID {
+				clusterStatus = cluster.Data.State
+			}
+		}
+
+		if clusterStatus == "" {
+			clusterStatus = MISSING_STATE
+		}
+
+		if clusterStatus == MISSING_STATE && desiredState != MISSING_STATE {
 			return fmt.Errorf("cluster disappeared during wait for '%s' state", desiredState)
 		}
 

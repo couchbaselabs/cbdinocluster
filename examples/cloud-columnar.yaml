@@ -1,0 +1,10 @@
+columnar: true
+nodes:
+  -   count: 1
+      cloud:
+        cpu: 4
+        memory: 32
+deployer: cloud
+cloud:
+  cloud-provider: aws
+  region: us-west-2
