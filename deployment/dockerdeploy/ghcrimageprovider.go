@@ -42,18 +42,31 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 		return nil, errors.New("cannot use ghcr without credentials")
 	}
 
+	if def.UseServerless {
+		return nil, errors.New("cannot use ghcr for serverless releases")
+	}
+
 	if def.BuildNo == 0 {
 		return nil, errors.New("cannot use ghcr for ga releases")
 	}
 
 	serverVersion := fmt.Sprintf("%s-%d", def.Version, def.BuildNo)
-	if def.UseCommunityEdition {
-		serverVersion = "community-" + serverVersion
+
+	var ghcrImagePath string
+	if !def.UseColumnar {
+		if def.UseCommunityEdition {
+			serverVersion = "community-" + serverVersion
+		}
+
+		ghcrImagePath = fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", serverVersion)
+	} else {
+		if def.UseCommunityEdition {
+			return nil, errors.New("cannot pull community edition of columnar")
+		}
+
+		ghcrImagePath = fmt.Sprintf("ghcr.io/cb-vanilla/couchbase-columnar:%s", serverVersion)
 	}
 
-	p.Logger.Debug("pulling image from ghcr")
-
-	ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", serverVersion)
 	p.Logger.Debug("identified ghcr image to pull", zap.String("image", ghcrImagePath))
 
 	return MultiArchImagePuller{

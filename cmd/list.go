@@ -19,6 +19,7 @@ type ClusterListOutput []ClusterListOutput_Item
 
 type ClusterListOutput_Item struct {
 	ID       string                   `json:"id"`
+	Type     string                   `json:"type"`
 	State    string                   `json:"state"`
 	Expiry   *time.Time               `json:"expiry,omitempty"`
 	Deployer string                   `json:"deployer"`
@@ -26,10 +27,11 @@ type ClusterListOutput_Item struct {
 }
 
 type ClusterListOutput_Node struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	IPAddress  string `json:"ip_address"`
-	ResourceID string `json:"resource_id"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	IPAddress     string `json:"ip_address"`
+	ResourceID    string `json:"resource_id"`
+	IsClusterNode bool   `json:"is_cluster_node"`
 }
 
 var listCmd = &cobra.Command{
@@ -88,14 +90,20 @@ var listCmd = &cobra.Command{
 					expiryStr = time.Until(cluster.GetExpiry()).Round(time.Second).String()
 				}
 
-				fmt.Printf("  %s [State: %s, Timeout: %s, Deployer: %s]\n",
+				fmt.Printf("  %s [Type: %s, State: %s, Timeout: %s, Deployer: %s]\n",
 					cluster.GetID(),
+					cluster.GetType(),
 					cluster.GetState(),
 					expiryStr,
 					deployerName)
 				for _, node := range cluster.GetNodes() {
-					fmt.Printf("    %-16s  %-20s %-20s %s\n",
-						node.GetID(),
+					printId := node.GetID()
+					if !node.IsClusterNode() {
+						printId = "[UTIL] " + printId
+					}
+
+					fmt.Printf("    %-40s %-20s %-20s %s\n",
+						printId,
 						node.GetName(),
 						node.GetIPAddress(),
 						node.GetResourceID())
@@ -106,6 +114,7 @@ var listCmd = &cobra.Command{
 			for _, cluster := range clusters {
 				clusterItem := ClusterListOutput_Item{
 					ID:       cluster.Info.GetID(),
+					Type:     string(cluster.Info.GetType()),
 					State:    cluster.Info.GetState(),
 					Deployer: cluster.DeployerName,
 				}
@@ -117,10 +126,11 @@ var listCmd = &cobra.Command{
 
 				for _, node := range cluster.Info.GetNodes() {
 					clusterItem.Nodes = append(clusterItem.Nodes, ClusterListOutput_Node{
-						ID:         node.GetID(),
-						Name:       node.GetName(),
-						IPAddress:  node.GetIPAddress(),
-						ResourceID: node.GetResourceID(),
+						ID:            node.GetID(),
+						Name:          node.GetName(),
+						IPAddress:     node.GetIPAddress(),
+						ResourceID:    node.GetResourceID(),
+						IsClusterNode: node.IsClusterNode(),
 					})
 				}
 				out = append(out, clusterItem)

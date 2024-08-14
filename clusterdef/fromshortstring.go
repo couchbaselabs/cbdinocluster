@@ -65,6 +65,26 @@ func FromShortString(shortStr string) (*Cluster, error) {
 				FtsMemoryMB:   1024,
 			},
 		}, nil
+	} else if defName == "columnar" {
+		return &Cluster{
+			Columnar: true,
+			NodeGroups: []*NodeGroup{
+				{
+					Count:   3,
+					Version: defVersion,
+				},
+			},
+		}, nil
+	} else if defName == "columnar-single" {
+		return &Cluster{
+			Columnar: true,
+			NodeGroups: []*NodeGroup{
+				{
+					Count:   1,
+					Version: defVersion,
+				},
+			},
+		}, nil
 	}
 
 	return nil, fmt.Errorf("unknown short string name `%s`", defName)

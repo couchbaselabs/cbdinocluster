@@ -7,8 +7,16 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 )
 
+type ClusterType string
+
+const (
+	ClusterTypeServer   ClusterType = "server"
+	ClusterTypeColumnar ClusterType = "columnar"
+)
+
 type ClusterNodeInfo interface {
 	GetID() string
+	IsClusterNode() bool
 	GetResourceID() string
 	GetName() string
 	GetIPAddress() string
@@ -16,6 +24,7 @@ type ClusterNodeInfo interface {
 
 type ClusterInfo interface {
 	GetID() string
+	GetType() ClusterType
 	GetPurpose() string
 	GetExpiry() time.Time
 	GetState() string

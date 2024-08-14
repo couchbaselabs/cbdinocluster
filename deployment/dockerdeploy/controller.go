@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
@@ -28,6 +29,7 @@ type Controller struct {
 
 type NodeInfo struct {
 	ContainerID          string
+	Type                 string
 	NodeID               string
 	ClusterID            string
 	Name                 string
@@ -41,6 +43,7 @@ type NodeInfo struct {
 
 func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
 	clusterID := container.Labels["com.couchbase.dyncluster.cluster_id"]
+	nodeType := container.Labels["com.couchbase.dyncluster.type"]
 	nodeID := container.Labels["com.couchbase.dyncluster.node_id"]
 	nodeName := container.Labels["com.couchbase.dyncluster.node_name"]
 	creator := container.Labels["com.couchbase.dyncluster.creator"]
@@ -57,8 +60,14 @@ func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
 		pickedNetwork = network
 	}
 
+	// if the node type is unspecified, we default to server-node
+	if nodeType == "" {
+		nodeType = "server-node"
+	}
+
 	return &NodeInfo{
 		ContainerID:          container.ID,
+		Type:                 nodeType,
 		NodeID:               nodeID,
 		ClusterID:            clusterID,
 		Name:                 nodeName,
@@ -182,12 +191,100 @@ func (c *Controller) ReadNodeState(ctx context.Context, containerID string) (*Do
 	}, nil
 }
 
+func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, expiry time.Duration) (*NodeInfo, error) {
+	nodeID := "s3mock"
+	logger := c.Logger.With(zap.String("nodeId", nodeID))
+
+	logger.Debug("deploying s3mock node")
+
+	containerName := "cbdynnode-s3-" + clusterID
+
+	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
+		Image: "adobe/s3mock",
+		Labels: map[string]string{
+			"com.couchbase.dyncluster.cluster_id": clusterID,
+			"com.couchbase.dyncluster.type":       "s3mock",
+			"com.couchbase.dyncluster.purpose":    "s3mock backing for columnar",
+			"com.couchbase.dyncluster.node_id":    nodeID,
+		},
+		// same effect as ntp
+		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
+	}, &container.HostConfig{
+		AutoRemove:  true,
+		NetworkMode: container.NetworkMode(c.NetworkName),
+		CapAdd:      []string{"NET_ADMIN"},
+		Resources: container.Resources{
+			Ulimits: []*units.Ulimit{
+				{Name: "nofile", Soft: 200000, Hard: 200000},
+			},
+		},
+	}, nil, nil, containerName)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create container")
+	}
+
+	containerID := createResult.ID
+
+	logger.Debug("container created, starting", zap.String("container", containerID))
+
+	err = c.DockerCli.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to start container")
+	}
+
+	expiryTime := time.Time{}
+	if expiry > 0 {
+		expiryTime = time.Now().Add(expiry)
+	}
+
+	err = c.WriteNodeState(ctx, containerID, &DockerNodeState{
+		Expiry: expiryTime,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed write node state")
+	}
+
+	// Cheap hack for simpler parsing...
+	allNodes, err := c.ListNodes(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list nodes")
+	}
+
+	var node *NodeInfo
+	for _, allNode := range allNodes {
+		if allNode.ContainerID == containerID {
+			node = allNode
+		}
+	}
+	if node == nil {
+		return nil, errors.New("failed to find newly created container")
+	}
+
+	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
+
+	for {
+		resp, err := http.Get(fmt.Sprintf("http://%s:%d", node.IPAddress, 9090))
+		if err != nil || resp.StatusCode != 200 {
+			logger.Debug("s3mock not ready yet", zap.Error(err))
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		break
+	}
+
+	logger.Debug("container is ready!")
+
+	return node, nil
+}
+
 type DeployNodeOptions struct {
 	Purpose            string
 	Expiry             time.Duration
 	ClusterID          string
 	Image              *ImageRef
 	ImageServerVersion string
+	IsColumnar         bool
 	EnvVars            map[string]string
 }
 
@@ -204,10 +301,16 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		envVars = append(envVars, fmt.Sprintf("%s=%s", varName, varValue))
 	}
 
+	nodeType := "server-node"
+	if def.IsColumnar {
+		nodeType = "columnar-node"
+	}
+
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
 		Image: def.Image.ImagePath,
 		Labels: map[string]string{
 			"com.couchbase.dyncluster.cluster_id":             def.ClusterID,
+			"com.couchbase.dyncluster.type":                   nodeType,
 			"com.couchbase.dyncluster.purpose":                def.Purpose,
 			"com.couchbase.dyncluster.node_id":                nodeID,
 			"com.couchbase.dyncluster.initial_server_version": def.ImageServerVersion,

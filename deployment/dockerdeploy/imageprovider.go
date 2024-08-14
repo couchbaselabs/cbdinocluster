@@ -12,6 +12,7 @@ type ImageDef struct {
 	BuildNo             int
 	UseCommunityEdition bool
 	UseServerless       bool
+	UseColumnar         bool
 }
 
 type ImageRef struct {
@@ -46,6 +47,12 @@ func CompareImageDefs(a, b *ImageDef) int {
 	if !a.UseServerless && b.UseServerless {
 		return -1
 	} else if a.UseServerless && !b.UseServerless {
+		return +1
+	}
+
+	if !a.UseColumnar && b.UseColumnar {
+		return -1
+	} else if a.UseColumnar && !b.UseColumnar {
 		return +1
 	}
 
