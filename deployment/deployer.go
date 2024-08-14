@@ -10,6 +10,7 @@ import (
 type ClusterType string
 
 const (
+	ClusterTypeUnknown  ClusterType = "unknown"
 	ClusterTypeServer   ClusterType = "server"
 	ClusterTypeColumnar ClusterType = "columnar"
 )

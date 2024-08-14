@@ -8,6 +8,7 @@ import (
 
 type ClusterInfo struct {
 	ClusterID      string
+	Type           deployment.ClusterType
 	CloudProjectID string
 	CloudClusterID string
 	Region         string
@@ -18,7 +19,7 @@ type ClusterInfo struct {
 var _ (deployment.ClusterInfo) = (*ClusterInfo)(nil)
 
 func (i ClusterInfo) GetID() string                   { return i.ClusterID }
-func (i ClusterInfo) GetType() deployment.ClusterType { return deployment.ClusterTypeServer }
+func (i ClusterInfo) GetType() deployment.ClusterType { return i.Type }
 func (i ClusterInfo) GetPurpose() string              { return "" }
 func (i ClusterInfo) GetExpiry() time.Time            { return i.Expiry }
 func (i ClusterInfo) GetState() string                { return i.State }

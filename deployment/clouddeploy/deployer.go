@@ -4,10 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"github.com/couchbaselabs/cbdinocluster/utils/webhelper"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/couchbaselabs/cbdinocluster/utils/webhelper"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -244,6 +245,7 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 		if cluster.IsCorrupted {
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
+				Type:           deployment.ClusterTypeUnknown,
 				CloudProjectID: cluster.Project.ID,
 				CloudClusterID: "",
 				Region:         "",
@@ -254,6 +256,7 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 		} else if cluster.Cluster == nil && cluster.Columnar == nil {
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
+				Type:           deployment.ClusterTypeUnknown,
 				CloudProjectID: cluster.Project.ID,
 				CloudClusterID: "",
 				Region:         "",
@@ -266,6 +269,7 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 		if cluster.Cluster != nil {
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
+				Type:           deployment.ClusterTypeServer,
 				CloudProjectID: cluster.Project.ID,
 				CloudClusterID: cluster.Cluster.Id,
 				Region:         cluster.Cluster.Provider.Region,
@@ -275,6 +279,7 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 		} else if cluster.Columnar != nil {
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
+				Type:           deployment.ClusterTypeColumnar,
 				CloudProjectID: cluster.Project.ID,
 				CloudClusterID: cluster.Columnar.ID,
 				Region:         cluster.Columnar.Config.Region,
