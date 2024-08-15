@@ -41,6 +41,9 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	if len(def.NodeGroups) != 1 || def.NodeGroups[0].Count != 1 {
 		return nil, errors.New("local deployment only supports a single node")
 	}
+	if def.Columnar {
+		return nil, errors.New("columnar is not supported for local deploy")
+	}
 
 	nodeGrp := def.NodeGroups[0]
 
