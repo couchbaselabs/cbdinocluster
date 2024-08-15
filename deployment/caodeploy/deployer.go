@@ -210,7 +210,9 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to detect whether we are using openshift")
 	}
-
+	if def.Columnar {
+		return nil, errors.New("columnar is not supported for caodeploy")
+	}
 	clusterID := cbdcuuid.New()
 	namespace := "cbdc2-" + clusterID.String()
 
