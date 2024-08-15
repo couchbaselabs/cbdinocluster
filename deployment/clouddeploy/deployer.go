@@ -847,15 +847,32 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return thisCluster, nil
 
 	} else {
+		if len(def.NodeGroups) > 1 {
+			return nil, errors.New("columnar only supports 1 node group")
+		}
+
+		nodeCount := 1
+		cpu := 4
+		memory := 32
+		if def.NodeGroups[0].Count != 0 {
+			nodeCount = def.NodeGroups[0].Count
+		}
+		if def.NodeGroups[0].Cloud.Cpu != 0 {
+			cpu = def.NodeGroups[0].Cloud.Cpu
+		}
+		if def.NodeGroups[0].Cloud.Memory != 0 {
+			memory = def.NodeGroups[0].Cloud.Memory
+		}
+
 		createReq := &capellacontrol.CreateColumnarInstanceRequest{
 			Name:        clusterName,
 			Description: "",
 			Provider:    clusterProvider,
 			Region:      cloudRegion,
-			Nodes:       def.NodeGroups[0].Count,
+			Nodes:       nodeCount,
 			InstanceTypes: capellacontrol.ColumnarInstanceTypes{
-				VCPUs:  fmt.Sprintf("%dvCPUs", def.NodeGroups[0].Cloud.Cpu),
-				Memory: fmt.Sprintf("%dGB", def.NodeGroups[0].Cloud.Memory),
+				VCPUs:  fmt.Sprintf("%dvCPUs", cpu),
+				Memory: fmt.Sprintf("%dGB", memory),
 			},
 			Package: capellacontrol.Package{
 				Key:      "developerPro",
