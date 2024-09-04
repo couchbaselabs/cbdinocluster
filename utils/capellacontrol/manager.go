@@ -62,7 +62,7 @@ func (m *Manager) WaitForClusterState(
 			continue
 		}
 
-		break
+		return nil
 	}
 
 	for {

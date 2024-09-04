@@ -177,17 +177,12 @@ func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 			continue
 		}
 
-		clusters := getColumnarsForProject(project.Data.ID)
+		columnars := getColumnarsForProject(project.Data.ID)
 
-		if len(clusters) == 0 {
-			out = append(out, &clusterInfo{
-				Meta:        meta,
-				Project:     project.Data,
-				Cluster:     nil,
-				IsCorrupted: false,
-			})
+		if len(columnars) == 0 {
+			// Operational cluster
 			continue
-		} else if len(clusters) > 1 {
+		} else if len(columnars) > 1 {
 			out = append(out, &clusterInfo{
 				Meta:        meta,
 				Project:     project.Data,
@@ -197,12 +192,12 @@ func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 			continue
 		}
 
-		cluster := clusters[0]
+		columnar := columnars[0]
 
 		out = append(out, &clusterInfo{
 			Meta:        meta,
 			Project:     project.Data,
-			Columnar:    cluster,
+			Columnar:    columnar,
 			IsCorrupted: false,
 		})
 	}
@@ -1797,7 +1792,16 @@ func (p *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 }
 
 func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error {
-	return errors.New("clouddeploy does not support loading sample buckets")
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+	if clusterInfo.Columnar == nil {
+		req := &capellacontrol.LoadSampleBucketRequest{Name: bucketName}
+		return d.mgr.Client.LoadClusterSampleBucket(ctx, clusterInfo.Cluster.TenantId, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, req)
+	}
+	req := &capellacontrol.LoadColumnarSampleBucketRequest{SampleName: bucketName}
+	return d.mgr.Client.LoadColumnarSampleBucket(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, req)
 }
 
 func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
