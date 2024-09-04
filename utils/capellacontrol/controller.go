@@ -1600,3 +1600,41 @@ func (c *Controller) RedeployCluster(
 
 	return err
 }
+
+type LoadColumnarSampleBucketRequest struct {
+	SampleName string `url:"sampleName"`
+}
+
+func (c *Controller) LoadColumnarSampleBucket(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *LoadColumnarSampleBucketRequest,
+) error {
+
+	form, _ := query.Values(req)
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/api/v1/samples?%s", tenantID, projectID, clusterID, form.Encode())
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+type LoadSampleBucketRequest struct {
+	Name string `json:"name"`
+}
+
+func (c *Controller) LoadClusterSampleBucket(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *LoadSampleBucketRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/buckets/samples", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
