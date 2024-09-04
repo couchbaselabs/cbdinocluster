@@ -978,6 +978,36 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		return err
 	}
 
+	if clusterInfo.Columnar != nil {
+		d.logger.Warn("can only modify the node count for a columnar cluster")
+
+		newSpec := &capellacontrol.UpdateColumnarInstanceRequest{
+			Name:        clusterInfo.Columnar.Name,
+			Description: clusterInfo.Columnar.Description,
+			Nodes:       def.NodeGroups[0].Count,
+		}
+		err = d.client.UpdateColumnarSpecs(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, newSpec)
+		if err != nil {
+			return errors.Wrap(err, "failed to update specs")
+		}
+
+		d.logger.Debug("waiting for columnar modification to begin")
+
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "scaling")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for columnar modification to begin")
+		}
+
+		d.logger.Debug("waiting for columnar to be healthy")
+
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "healthy")
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for columnar to be healthy")
+		}
+
+		return nil
+	}
+
 	cloudProjectID := clusterInfo.Cluster.Project.Id
 	cloudClusterID := clusterInfo.Cluster.Id
 	cloudProvider := clusterInfo.Cluster.Provider.Name

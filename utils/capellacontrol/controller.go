@@ -725,6 +725,12 @@ type CreateColumnarInstanceRequest struct {
 	AvailabilityZone string                `json:"availabilityZone"`
 }
 
+type UpdateColumnarInstanceRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Nodes       int    `json:"nodes"`
+}
+
 type ColumnarInstanceTypes struct {
 	VCPUs  string `json:"vcpus"`
 	Memory string `json:"memory"`
@@ -870,6 +876,18 @@ func (c *Controller) UpdateClusterSpecs(
 	}
 
 	return nil
+}
+
+func (c *Controller) UpdateColumnarSpecs(
+	ctx context.Context,
+	tenantID string,
+	projectID string,
+	columnarID string,
+	req *UpdateColumnarInstanceRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s", tenantID, projectID, columnarID)
+	err := c.doBasicReq(ctx, false, "PATCH", path, req, nil)
+	return err
 }
 
 type ClusterJobInfo struct {
