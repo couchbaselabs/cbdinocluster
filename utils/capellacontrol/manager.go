@@ -18,6 +18,7 @@ func (m *Manager) WaitForClusterState(
 	ctx context.Context,
 	tenantID, clusterID string,
 	desiredState string,
+	columnar bool,
 ) error {
 	MISSING_STATE := "*MISSING*"
 
@@ -27,59 +28,38 @@ func (m *Manager) WaitForClusterState(
 	}
 
 	for {
-		clusters, err := m.Client.ListAllClusters(ctx, tenantID, &PaginatedRequest{
-			Page:          1,
-			PerPage:       100,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to list clusters")
-		}
-
 		clusterStatus := ""
-		for _, cluster := range clusters.Data {
-			if cluster.Data.Id == clusterID {
-				clusterStatus = cluster.Data.Status.State
+		if !columnar {
+			clusters, err := m.Client.ListAllClusters(ctx, tenantID, &PaginatedRequest{
+				Page:          1,
+				PerPage:       100,
+				SortBy:        "name",
+				SortDirection: "asc",
+			})
+			if err != nil {
+				return errors.Wrap(err, "failed to list clusters")
 			}
-		}
 
-		if clusterStatus == "" {
-			clusterStatus = MISSING_STATE
-		}
+			for _, cluster := range clusters.Data {
+				if cluster.Data.Id == clusterID {
+					clusterStatus = cluster.Data.Status.State
+				}
+			}
+		} else {
+			columnars, err := m.Client.ListAllColumnars(ctx, tenantID, &PaginatedRequest{
+				Page:          1,
+				PerPage:       100,
+				SortBy:        "name",
+				SortDirection: "asc",
+			})
+			if err != nil {
+				return errors.Wrap(err, "failed to list columnars")
+			}
 
-		if clusterStatus == MISSING_STATE && desiredState != MISSING_STATE {
-			break
-			//return fmt.Errorf("cluster disappeared during wait for '%s' state", desiredState)
-		}
-
-		m.Logger.Info("waiting for cluster status...",
-			zap.String("current", clusterStatus),
-			zap.String("desired", desiredState))
-
-		if clusterStatus != desiredState {
-			time.Sleep(10 * time.Second)
-			continue
-		}
-
-		return nil
-	}
-
-	for {
-		clusters, err := m.Client.ListAllColumnars(ctx, tenantID, &PaginatedRequest{
-			Page:          1,
-			PerPage:       100,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to list clusters")
-		}
-
-		clusterStatus := ""
-		for _, cluster := range clusters.Data {
-			if cluster.Data.ID == clusterID {
-				clusterStatus = cluster.Data.State
+			for _, columnar := range columnars.Data {
+				if columnar.Data.ID == clusterID {
+					clusterStatus = columnar.Data.State
+				}
 			}
 		}
 
@@ -102,7 +82,6 @@ func (m *Manager) WaitForClusterState(
 
 		break
 	}
-
 	return nil
 }
 
