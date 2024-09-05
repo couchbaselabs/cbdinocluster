@@ -669,7 +669,7 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 	p.logger.Debug("waiting for cluster creation to complete")
 
-	err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy")
+	err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", false)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to wait for cluster deployment")
 	}
@@ -817,7 +817,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 		p.logger.Debug("waiting for cluster creation to complete")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy")
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", false)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to wait for cluster deployment")
 		}
@@ -886,7 +886,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 		p.logger.Debug("waiting for columnar creation to complete")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy")
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", true)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to wait for columnar deployment")
 		}
@@ -974,7 +974,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	}
 
 	if clusterInfo.Columnar != nil {
-		d.logger.Warn("can only modify the node count for a columnar cluster")
+		d.logger.Debug("can/will only modify the node count for a columnar cluster")
 
 		newSpec := &capellacontrol.UpdateColumnarInstanceRequest{
 			Name:        clusterInfo.Columnar.Name,
@@ -988,14 +988,14 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 
 		d.logger.Debug("waiting for columnar modification to begin")
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "scaling")
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "scaling", true)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for columnar modification to begin")
 		}
 
 		d.logger.Debug("waiting for columnar to be healthy")
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "healthy")
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "healthy", true)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for columnar to be healthy")
 		}
@@ -1032,14 +1032,14 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 
 		d.logger.Debug("waiting for cluster modification to begin")
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "scaling")
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "scaling", false)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster modification to begin")
 		}
 
 		d.logger.Debug("waiting for cluster to be healthy")
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy")
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy", false)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster to be healthy")
 		}
@@ -1080,12 +1080,12 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 			return errors.Wrap(err, "failed to update server version")
 		}
 		//time.Sleep(30 * time.Second)
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "upgrading")
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "upgrading", false)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster upgrade to begin")
 		}
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy")
+		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy", false)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster returns to healthy")
 		}
@@ -1113,7 +1113,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 
 		p.logger.Debug("waiting for cluster deletion to finish")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.Cluster.Id, "")
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.Cluster.Id, "", false)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster destruction")
 		}
@@ -1125,7 +1125,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 
 		p.logger.Debug("waiting for cluster deletion to finish")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.Columnar.ID, "")
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.Columnar.ID, "", true)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster destruction")
 		}
@@ -1411,7 +1411,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 	for _, cluster := range clustersToRemove {
 		p.logger.Info("waiting for cluster removal to complete", zap.String("cluster-id", cluster.Id))
 
-		err := p.mgr.WaitForClusterState(ctx, p.tenantID, cluster.Id, "")
+		err := p.mgr.WaitForClusterState(ctx, p.tenantID, cluster.Id, "", false)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster removal to finish")
 		}
@@ -1454,7 +1454,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 	for _, columnar := range columnarsToRemove {
 		p.logger.Info("waiting for cluster columnar to complete", zap.String("cluster-id", columnar.ID))
 
-		err := p.mgr.WaitForClusterState(ctx, p.tenantID, columnar.ID, "")
+		err := p.mgr.WaitForClusterState(ctx, p.tenantID, columnar.ID, "", true)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster removal to finish")
 		}
@@ -1796,6 +1796,7 @@ func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucke
 	if err != nil {
 		return err
 	}
+
 	if clusterInfo.Columnar == nil {
 		req := &capellacontrol.LoadSampleBucketRequest{Name: bucketName}
 		return d.mgr.Client.LoadClusterSampleBucket(ctx, clusterInfo.Cluster.TenantId, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, req)
@@ -1908,14 +1909,14 @@ func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error 
 
 	d.logger.Debug("waiting for redeploy cluster to begin")
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "rebalancing")
+	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "rebalancing", false)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster modification to begin")
 	}
 
 	d.logger.Debug("waiting for cluster to be healthy")
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "healthy")
+	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "healthy", false)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster to be healthy")
 	}
