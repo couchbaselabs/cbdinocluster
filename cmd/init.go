@@ -1134,9 +1134,7 @@ var initCmd = &cobra.Command{
 						capellaOverrideToken, true)
 				}
 				if capellaOverrideToken == "" {
-					fmt.Printf("Capella override token is required.\n")
-					capellaEnabled = false
-					continue
+					fmt.Printf("No override token specified.  Functionalities like using custom server images will not be supported.\n")
 				}
 
 				if flagCapellaInternalSupportToken != "" {
@@ -1153,7 +1151,7 @@ var initCmd = &cobra.Command{
 						capellaInternalSupportToken, true)
 				}
 				if capellaInternalSupportToken == "" {
-					fmt.Printf("Capella internal support token is required for functionalities like update server version, collect server logs\n")
+					fmt.Printf("No internal support token specified.  Functionalities like updating server version, collect server logs will not be supported.\n")
 				}
 
 				if flagCapellaProvider != "" {
