@@ -3,6 +3,7 @@ package capellacontrol
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -69,6 +70,10 @@ func (m *Manager) WaitForClusterState(
 
 		if clusterStatus == MISSING_STATE && desiredState != MISSING_STATE {
 			return fmt.Errorf("cluster disappeared during wait for '%s' state", desiredState)
+		}
+
+		if strings.Contains(clusterStatus, "failed") {
+			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", clusterStatus)
 		}
 
 		m.Logger.Info("waiting for cluster status...",
