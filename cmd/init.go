@@ -1092,7 +1092,7 @@ var initCmd = &cobra.Command{
 					}
 
 					capellaPass = readString(
-						"What Capella user should we use?",
+						"What Capella pass should we use?",
 						capellaPass, true)
 				}
 				if capellaPass == "" {
