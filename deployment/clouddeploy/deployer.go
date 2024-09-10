@@ -1531,6 +1531,15 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 			p.logger.Info("removing cluster",
 				zap.String("cluster-id", cluster.Meta.ID.String()))
 
+			if cluster.Cluster != nil && cluster.Cluster.Status.State == "destroy_failed" {
+				p.logger.Warn("skipping due to destroy_failed state (cluster)")
+				continue
+			}
+			if cluster.Columnar != nil && cluster.Columnar.State == "destroy_failed" {
+				p.logger.Warn("skipping due to destroy_failed state (columnar)")
+				continue
+			}
+
 			p.removeCluster(ctx, cluster)
 		}
 	}
