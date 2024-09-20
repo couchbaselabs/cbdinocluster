@@ -226,6 +226,13 @@ var initCmd = &cobra.Command{
 				return ""
 			}
 
+			if instance.Address == "" {
+				fmt.Println(`Failed to detect colima address with 'colima ls'.
+* make sure colima started with '--network-address'
+* try to disable firewall at 'System Settings' -> Network -> Firewall.`)
+				return ""
+			}
+
 			return instance.Address
 		}
 
