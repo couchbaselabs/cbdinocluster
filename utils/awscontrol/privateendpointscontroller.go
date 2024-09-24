@@ -160,7 +160,7 @@ func (c *PrivateEndpointsController) EnableVPCEndpointPrivateDNS(ctx context.Con
 
 	// its safer for us to sleep here for 10s than to accidentally fetch the DNS
 	// entry before its been propagated and then need to wait 5m for it to update.
-	time.Sleep(10 * time.Second)
+	time.Sleep(30 * time.Second)
 
 	return nil
 }
