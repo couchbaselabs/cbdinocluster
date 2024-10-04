@@ -122,4 +122,7 @@ type Deployer interface {
 	PauseNode(ctx context.Context, clusterID string, nodeID string) error
 	UnpauseNode(ctx context.Context, clusterID string, nodeID string) error
 	RedeployCluster(ctx context.Context, clusterID string) error
+	CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error
+	CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error
+	DropLink(ctx context.Context, columnarID, linkName string) error
 }

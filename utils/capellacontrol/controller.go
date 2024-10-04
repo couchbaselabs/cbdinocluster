@@ -1614,10 +1614,6 @@ func (c *Controller) LoadColumnarSampleBucket(
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/api/v1/samples?%s", tenantID, projectID, clusterID, form.Encode())
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
-
 	return err
 }
 
@@ -1632,9 +1628,62 @@ func (c *Controller) LoadClusterSampleBucket(
 ) error {
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/buckets/samples", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
+	return err
+}
 
+type ProvisionedCluster struct {
+	ClusterId string `json:"clusterId"`
+}
+
+type CreateColumnarCapellaLinkRequest struct {
+	LinkName           string             `json:"linkName"`
+	ProvisionedCluster ProvisionedCluster `json:"provisionedCluster"`
+}
+
+func (c *Controller) CreateColumnarCapellaLink(
+	ctx context.Context,
+	tenantID, projectID, columnarID string,
+	req *CreateColumnarCapellaLinkRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/links", tenantID, projectID, columnarID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	return err
+}
+
+type CreateColumnarS3LinkRequest struct {
+	Region          string `url:"region"`
+	AccessKeyId     string `url:"accessKeyId"`
+	SecretAccessKey string `url:"secretAccessKey"`
+	SessionToken    string `url:"sessionToken"`
+	Endpoint        string `url:"endpoint"`
+	Type            string `url:"type"`
+}
+
+func (c *Controller) CreateColumnarS3Link(
+	ctx context.Context,
+	tenantID, projectID, columnarID, linkName string,
+	req *CreateColumnarS3LinkRequest,
+) error {
+	form, _ := query.Values(req)
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/analytics/link/%s?%s",
+		tenantID, projectID, columnarID, linkName, form.Encode())
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	return err
+}
+
+type ColumnarQueryRequest struct {
+	Statement   string `json:"statement"`
+	MaxWarnings int    `json:"max-warnings"`
+}
+
+// Expect no results
+func (c *Controller) DoBasicColumnarQuery(
+	ctx context.Context,
+	tenantID, projectID, columnarID string,
+	req *ColumnarQueryRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/analytics/service", tenantID, projectID, columnarID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
 	return err
 }

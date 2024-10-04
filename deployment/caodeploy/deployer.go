@@ -732,3 +732,15 @@ func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID str
 func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
 	return errors.New("caodeploy does not support redeploy cluster")
 }
+
+func (d *Deployer) CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error {
+	return errors.New("caodeploy does not support create capella link")
+}
+
+func (d *Deployer) CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error {
+	return errors.New("caodeploy does not support create S3 link")
+}
+
+func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) error {
+	return errors.New("caodeploy does not support drop link")
+}
