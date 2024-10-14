@@ -1933,6 +1933,70 @@ func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error 
 	return nil
 }
 
+func (d *Deployer) CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error {
+	columnarInfo, err := d.getCluster(ctx, columnarID)
+	if err != nil {
+		return err
+	}
+	if columnarInfo.Columnar == nil {
+		return errors.Wrap(err, "this is not a columnar cluster")
+	}
+
+	resolvedClusterId := directID
+	if directID == "" {
+		clusterInfo, err := d.getCluster(ctx, clusterId)
+		if err != nil {
+			return err
+		}
+		if clusterInfo.Columnar != nil {
+			return errors.Wrap(err, "can not link to another columnar cluster")
+		}
+		resolvedClusterId = clusterInfo.Cluster.Id
+	}
+
+	req := &capellacontrol.CreateColumnarCapellaLinkRequest{
+		LinkName:           linkName,
+		ProvisionedCluster: capellacontrol.ProvisionedCluster{ClusterId: resolvedClusterId},
+	}
+	return d.mgr.Client.CreateColumnarCapellaLink(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, req)
+}
+
+func (d *Deployer) CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error {
+	columnarInfo, err := d.getCluster(ctx, columnarID)
+	if err != nil {
+		return err
+	}
+	if columnarInfo.Columnar == nil {
+		return errors.Wrap(err, "this is not a columnar cluster")
+	}
+
+	req := &capellacontrol.CreateColumnarS3LinkRequest{
+		Region:          region,
+		AccessKeyId:     accessKey,
+		SecretAccessKey: secretKey,
+		SessionToken:    "",
+		Endpoint:        endpoint,
+		Type:            "s3",
+	}
+	return d.mgr.Client.CreateColumnarS3Link(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, linkName, req)
+}
+
+func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) error {
+	columnarInfo, err := d.getCluster(ctx, columnarID)
+	if err != nil {
+		return err
+	}
+	if columnarInfo.Columnar == nil {
+		return errors.Wrap(err, "this is not a columnar cluster")
+	}
+
+	req := &capellacontrol.ColumnarQueryRequest{
+		Statement:   fmt.Sprintf("DROP LINK `%s`", linkName),
+		MaxWarnings: 25,
+	}
+	return d.mgr.Client.DoBasicColumnarQuery(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, req)
+}
+
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }
