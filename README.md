@@ -147,6 +147,13 @@ Or running typically you might use:
 colima start --network-address --kubernetes --cpu 4 --memory 6
 ```
 
+In the source distribution for `cbdinocluster` there is an example defintion for deploying
+a Kubernetes cluster. This example can be used like this or edited to suit your needs:
+
+```
+cbdinocluster allocate --def-file examples/cao-cng.yaml --deployer cao
+```
+
 #### x86_64 Images
 
 Prior to Couchbase Server 7.1, our docker containers were not built for
