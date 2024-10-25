@@ -39,7 +39,7 @@ func (p *DockerHubImageProvider) GetImage(ctx context.Context, def *ImageDef) (*
 		serverVersion = fmt.Sprintf("enterprise-%s", def.Version)
 	}
 
-	dhImagePath := fmt.Sprintf("couchbase:%s", serverVersion)
+	dhImagePath := fmt.Sprintf("couchbase/server:%s", serverVersion)
 	p.Logger.Debug("identified dockerhub image to pull", zap.String("image", dhImagePath))
 
 	return MultiArchImagePuller{
