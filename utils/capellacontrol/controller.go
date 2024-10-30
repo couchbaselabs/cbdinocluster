@@ -690,7 +690,7 @@ type CreateServices struct {
 type CreateOverrideRequest struct {
 	Image  string `json:"image"`
 	Token  string `json:"token"`
-	Server string `json:"server"`
+	Server string `json:"server,omitempty"`
 }
 
 func (o CreateOverrideRequest) IsEmpty() bool {
@@ -723,6 +723,7 @@ type CreateColumnarInstanceRequest struct {
 	Package          Package               `json:"package"`
 	InstanceTypes    ColumnarInstanceTypes `json:"instanceTypes"`
 	AvailabilityZone string                `json:"availabilityZone"`
+	Override         CreateOverrideRequest `json:"overRide,omitempty"`
 }
 
 type UpdateColumnarInstanceRequest struct {

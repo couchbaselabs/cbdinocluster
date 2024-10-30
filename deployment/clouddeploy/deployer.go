@@ -875,6 +875,12 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			},
 			AvailabilityZone: "single",
 		}
+		if def.NodeGroups[0].Cloud.ServerImage != "" {
+			createReq.Override = capellacontrol.CreateOverrideRequest{
+				Image: def.NodeGroups[0].Cloud.ServerImage,
+				Token: p.overrideToken,
+			}
+		}
 		p.logger.Debug("creating columnar", zap.Any("req", createReq))
 
 		newCluster, err := p.client.CreateColumnar(ctx, p.tenantID, cloudProjectID, createReq)
@@ -931,8 +937,9 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 	}
 
-	// Deploy cluster based on presence of server image
-	if serverImage != "" {
+	// Deploy cluster based on presence of server image,
+	// specific Columnar images are deployed through the normal createCluster func
+	if serverImage != "" && !def.Columnar {
 		return p.deployNewCluster(ctx, def, clusterVersion, serverImage)
 	} else {
 		return p.createNewCluster(ctx, def, clusterVersion)
