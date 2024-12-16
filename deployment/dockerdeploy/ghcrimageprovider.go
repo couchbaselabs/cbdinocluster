@@ -135,20 +135,15 @@ func (p *GhcrImageProvider) ListImages(ctx context.Context) ([]deployment.Image,
 }
 
 func (p *GhcrImageProvider) SearchImages(ctx context.Context, version string) ([]deployment.Image, error) {
-	var respData struct {
-		Name string   `json:"name"`
-		Tags []string `json:"tags"`
-	}
-	err := doRegistryGet(ctx,
-		"https://ghcr.io/v2/cb-vanilla/server/tags/list?n=10000",
-		"Bearer "+base64.StdEncoding.EncodeToString([]byte(p.GhcrPassword)),
-		&respData)
+	tags, err := doRegistryListTags(ctx,
+		"https://ghcr.io", "cb-vanilla", "server",
+		"Bearer "+base64.StdEncoding.EncodeToString([]byte(p.GhcrPassword)))
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to search images")
 	}
 
 	var images []deployment.Image
-	for _, tagName := range respData.Tags {
+	for _, tagName := range tags {
 		parsedParts := strings.Split(tagName, "-")
 		if len(parsedParts) == 1 {
 			// we ignore generic tags with no build number
