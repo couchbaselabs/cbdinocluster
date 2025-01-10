@@ -158,6 +158,7 @@ func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*cluster
 			UseCommunityEdition: versionInfo.CommunityEdition,
 			UseServerless:       versionInfo.Serverless,
 			UseColumnar:         isColumnar,
+			Owner:               versionInfo.Owner,
 		}
 		nodeGrpDefs[nodeGrpIdx] = imageDef
 

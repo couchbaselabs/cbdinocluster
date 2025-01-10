@@ -2,6 +2,7 @@ package versionident
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -13,12 +14,14 @@ type Version struct {
 	BuildNo          int
 	CommunityEdition bool
 	Serverless       bool
+	Owner            string
 }
 
 func Identify(ctx context.Context, userInput string) (*Version, error) {
 	editionPart := "enterprise"
 	versionPart := ""
 	buildNoPart := "0"
+	ownerPart := ""
 
 	versionParts := strings.Split(userInput, "-")
 
@@ -43,6 +46,11 @@ func Identify(ctx context.Context, userInput string) (*Version, error) {
 		editionPart = versionParts[0]
 		versionPart = versionParts[1]
 		buildNoPart = versionParts[2]
+	} else if len(versionParts) == 4 {
+		ownerPart = versionParts[0]
+		editionPart = versionParts[1]
+		versionPart = versionParts[2]
+		buildNoPart = versionParts[3]
 	}
 
 	communityEdition := false
@@ -68,5 +76,6 @@ func Identify(ctx context.Context, userInput string) (*Version, error) {
 		BuildNo:          int(buildNo),
 		CommunityEdition: communityEdition,
 		Serverless:       serverless,
+		Owner:            ownerPart,
 	}, nil
 }

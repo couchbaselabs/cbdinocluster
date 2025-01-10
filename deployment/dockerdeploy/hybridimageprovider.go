@@ -31,6 +31,11 @@ func (p *HybridImageProvider) getProviders() []ImageProvider {
 		GhcrPassword: p.GhcrPassword,
 	}
 
+	toyProvider := &ToyImageProvider{
+		Logger:    p.Logger,
+		DockerCli: p.DockerCli,
+	}
+
 	dhServerlessProvider := &ServerlessImageProvider{
 		Logger:            p.Logger,
 		DockerCli:         p.DockerCli,
@@ -48,6 +53,7 @@ func (p *HybridImageProvider) getProviders() []ImageProvider {
 	return []ImageProvider{
 		dhProvider,
 		ghcrProvider,
+		toyProvider,
 		dhServerlessProvider,
 		ghcrServerlessProvider,
 	}
