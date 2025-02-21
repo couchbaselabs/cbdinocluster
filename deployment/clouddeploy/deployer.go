@@ -1837,9 +1837,15 @@ func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 		return "", errors.Wrap(err, "failed to get trusted CAs")
 	}
 
-	lastCert := (*resp)[len(*resp)-1]
+	var returnCert capellacontrol.GetTrustedCAsResponse_Certificate
+	for _, cert := range *resp {
+		if cert.Subject == "O=Couchbase, OU=Cloud" {
+			returnCert = cert
+			break
+		}
+	}
 
-	return strings.TrimSpace(lastCert.Pem), nil
+	return strings.TrimSpace(returnCert.Pem), nil
 }
 
 func (d *Deployer) startLogCollection(ctx context.Context, cluster *clusterInfo) error {
