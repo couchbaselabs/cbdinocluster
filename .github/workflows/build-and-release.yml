@@ -23,7 +23,7 @@ jobs:
         run: go get .
       - name: Build Binary
         run: GOOS=${{ matrix.platform }} GOARCH=${{ matrix.arch }} go build -o cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }} -ldflags="-X github.com/couchbaselabs/cbdinocluster/contrib/buildversion.MainPkgVersion=${{ github.ref_name }}"
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }}
           path: cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }}
@@ -32,22 +32,22 @@ jobs:
     needs: [build]
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: cbdinocluster-linux-amd64
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: cbdinocluster-linux-arm64
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: cbdinocluster-darwin-amd64
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: cbdinocluster-darwin-arm64
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: cbdinocluster-windows-amd64
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: cbdinocluster-windows-arm64
       - name: Rename Windows Amd64 Binary

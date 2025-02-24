@@ -21,7 +21,7 @@ jobs:
         run: go get .
       - name: Build Binary
         run: GOOS=${{ matrix.platform }} GOARCH=amd64 go build -o cbdinocluster-${{ matrix.platform }} -ldflags="-X github.com/couchbaselabs/cbdinocluster/contrib/buildversion.MainPkgVersion=${{ github.sha }}"
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: cbdinocluster-${{ matrix.platform }}
           path: cbdinocluster-${{ matrix.platform }}
@@ -30,7 +30,7 @@ jobs:
     needs: [build]
     runs-on: ubuntu-20.04
     steps:
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: cbdinocluster-linux
       - run: |
