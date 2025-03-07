@@ -876,7 +876,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			AvailabilityZone: "single",
 		}
 		if def.NodeGroups[0].Cloud.ServerImage != "" {
-			createReq.Override = capellacontrol.CreateOverrideRequest{
+			createReq.Override = &capellacontrol.CreateOverrideRequest{
 				Image: def.NodeGroups[0].Cloud.ServerImage,
 				Token: p.overrideToken,
 			}
