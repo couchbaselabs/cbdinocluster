@@ -715,15 +715,15 @@ type CreateClusterResponse struct {
 }
 
 type CreateColumnarInstanceRequest struct {
-	Name             string                `json:"name"`
-	Description      string                `json:"description"`
-	Provider         string                `json:"provider"`
-	Region           string                `json:"region"`
-	Nodes            int                   `json:"nodes"`
-	Package          Package               `json:"package"`
-	InstanceTypes    ColumnarInstanceTypes `json:"instanceTypes"`
-	AvailabilityZone string                `json:"availabilityZone"`
-	Override         CreateOverrideRequest `json:"overRide,omitempty"`
+	Name             string                 `json:"name"`
+	Description      string                 `json:"description"`
+	Provider         string                 `json:"provider"`
+	Region           string                 `json:"region"`
+	Nodes            int                    `json:"nodes"`
+	Package          Package                `json:"package"`
+	InstanceTypes    ColumnarInstanceTypes  `json:"instanceTypes"`
+	AvailabilityZone string                 `json:"availabilityZone"`
+	Override         *CreateOverrideRequest `json:"overRide,omitempty"`
 }
 
 type UpdateColumnarInstanceRequest struct {
