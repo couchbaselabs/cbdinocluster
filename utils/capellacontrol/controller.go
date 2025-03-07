@@ -164,7 +164,7 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 			// for JWT authentication, we refresh the token when this happens
 			var capellaErr *capellaError
 			if errors.As(err, &capellaErr) {
-				if capellaErr.ErrorName == "Unauthorized" {
+				if capellaErr.ErrorType == "Unauthorized" {
 					basicAuth, _ := c.auth.(*BasicCredentials)
 					if basicAuth != nil {
 						c.logger.Debug("received unauthenticated error with basic credentials, refreshing jwt",
