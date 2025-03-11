@@ -1839,7 +1839,7 @@ func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 
 	var returnCert capellacontrol.GetTrustedCAsResponse_Certificate
 	for _, cert := range *resp {
-		if cert.Subject == "O=Couchbase, OU=Cloud" {
+		if strings.Contains(cert.Subject, "O=Couchbase, OU=Cloud") {
 			returnCert = cert
 			break
 		}
