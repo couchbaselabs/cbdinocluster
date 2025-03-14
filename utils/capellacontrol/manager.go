@@ -92,12 +92,19 @@ func (m *Manager) WaitForClusterState(
 
 func (m *Manager) WaitForPrivateEndpointsEnabled(
 	ctx context.Context,
+	columnar bool,
 	tenantID, projectID, clusterID string,
 ) error {
 	desiredState := "enabled"
 
 	for {
-		pe, err := m.Client.GetPrivateEndpoint(ctx, tenantID, projectID, clusterID)
+		var pe *GetPrivateEndpointResponse
+		var err error
+		if !columnar {
+			pe, err = m.Client.GetPrivateEndpoint(ctx, tenantID, projectID, clusterID)
+		} else {
+			pe, err = m.Client.GetPrivateEndpointColumnar(ctx, tenantID, projectID, clusterID)
+		}
 		if err != nil {
 			return errors.Wrap(err, "failed to list private endpoint links")
 		}
@@ -117,11 +124,18 @@ func (m *Manager) WaitForPrivateEndpointsEnabled(
 
 func (m *Manager) WaitForPrivateEndpointLink(
 	ctx context.Context,
+	columnar bool,
 	tenantID, projectID, clusterID string,
 	vpceID string,
 ) (*PrivateEndpointLinkInfo, error) {
 	for {
-		peLinks, err := m.Client.ListPrivateEndpointLinks(ctx, tenantID, projectID, clusterID)
+		var peLinks *ListPrivateEndpointLinksResponse
+		var err error
+		if !columnar {
+			peLinks, err = m.Client.ListPrivateEndpointLinks(ctx, tenantID, projectID, clusterID)
+		} else {
+			peLinks, err = m.Client.ListPrivateEndpointLinksColumnar(ctx, tenantID, projectID, clusterID)
+		}
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to list private endpoint links")
 		}
@@ -150,6 +164,7 @@ func (m *Manager) WaitForPrivateEndpointLink(
 
 func (m *Manager) WaitForPrivateEndpointLinkState(
 	ctx context.Context,
+	columnar bool,
 	tenantID, projectID string, clusterID string,
 	vpceID string,
 	desiredState string,
@@ -162,7 +177,13 @@ func (m *Manager) WaitForPrivateEndpointLinkState(
 	}
 
 	for {
-		links, err := m.Client.ListPrivateEndpointLinks(ctx, tenantID, projectID, clusterID)
+		var links *ListPrivateEndpointLinksResponse
+		var err error
+		if !columnar {
+			links, err = m.Client.ListPrivateEndpointLinks(ctx, tenantID, projectID, clusterID)
+		} else {
+			links, err = m.Client.ListPrivateEndpointLinksColumnar(ctx, tenantID, projectID, clusterID)
+		}
 		if err != nil {
 			return errors.Wrap(err, "failed to list clusters")
 		}

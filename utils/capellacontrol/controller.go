@@ -1096,6 +1096,32 @@ func (c *Controller) DisablePrivateEndpoints(
 	return nil
 }
 
+func (c *Controller) EnablePrivateEndpointsColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) DisablePrivateEndpointsColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type PrivateEndpointInfo struct {
 	Enabled bool   `json:"enabled"`
 	Status  string `json:"status"` // idle, enabling, enabled
@@ -1110,6 +1136,21 @@ func (c *Controller) GetPrivateEndpoint(
 	resp := &GetPrivateEndpointResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func (c *Controller) GetPrivateEndpointColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) (*GetPrivateEndpointResponse, error) {
+	resp := &GetPrivateEndpointResponse{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
@@ -1139,6 +1180,21 @@ func (c *Controller) GetPrivateEndpointDetails(
 	return resp, err
 }
 
+func (c *Controller) GetPrivateEndpointDetailsColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) (*ResourceResponse[PrivateEndpointDetailsInfo], error) {
+	resp := &ResourceResponse[PrivateEndpointDetailsInfo]{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/details", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
 type PrivateEndpointLinkInfo struct {
 	EndpointID string    `json:"endpointId"`
 	Status     string    `json:"status"` // pendingAcceptance, pending, linked, rejected
@@ -1154,6 +1210,21 @@ func (c *Controller) ListPrivateEndpointLinks(
 	resp := &ListPrivateEndpointLinksResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/connection", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func (c *Controller) ListPrivateEndpointLinksColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) (*ListPrivateEndpointLinksResponse, error) {
+	resp := &ListPrivateEndpointLinksResponse{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/connection", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
@@ -1210,6 +1281,20 @@ func (c *Controller) AcceptPrivateEndpointLink(
 	req *PrivateEndpointAcceptLinkRequest,
 ) error {
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/connection", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (c *Controller) AcceptPrivateEndpointLinkColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+	req *PrivateEndpointAcceptLinkRequest,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/connection", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
 	if err != nil {
 		return err
