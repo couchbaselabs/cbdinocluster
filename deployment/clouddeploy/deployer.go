@@ -1286,12 +1286,20 @@ func (p *Deployer) EnablePrivateEndpoints(ctx context.Context, clusterID string)
 		return err
 	}
 
-	err = p.client.EnablePrivateEndpoints(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
-	if err != nil {
-		return errors.Wrap(err, "failed to enable private endpoints")
+	if clusterInfo.Columnar == nil {
+		err = p.client.EnablePrivateEndpoints(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+		if err != nil {
+			return errors.Wrap(err, "failed to enable private endpoints")
+		}
+		err = p.mgr.WaitForPrivateEndpointsEnabled(ctx, false, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+	} else {
+		err = p.client.EnablePrivateEndpointsColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		if err != nil {
+			return errors.Wrap(err, "failed to enable private endpoints")
+		}
+		err = p.mgr.WaitForPrivateEndpointsEnabled(ctx, true, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
 	}
 
-	err = p.mgr.WaitForPrivateEndpointsEnabled(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for private endpoints to be enabled")
 	}
@@ -1319,19 +1327,36 @@ func (p *Deployer) GetPrivateEndpointDetails(ctx context.Context, clusterID stri
 		return nil, err
 	}
 
-	details, err := p.client.GetPrivateEndpointDetails(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to fetch private endpoint link details")
+	if clusterInfo.Columnar == nil {
+		details, err := p.client.GetPrivateEndpointDetails(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to fetch private endpoint link details")
+		}
+
+		if !details.Data.Enabled {
+			return nil, errors.New("private endpoints are not enabled")
+		}
+
+		return &PrivateEndpointDetails{
+			ServiceName: details.Data.ServiceName,
+			PrivateDNS:  details.Data.PrivateDNS,
+		}, nil
+	} else {
+		details, err := p.client.GetPrivateEndpointDetailsColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to fetch private endpoint link details")
+		}
+
+		if !details.Data.Enabled {
+			return nil, errors.New("private endpoints are not enabled")
+		}
+
+		return &PrivateEndpointDetails{
+			ServiceName: details.Data.ServiceName,
+			PrivateDNS:  details.Data.PrivateDNS,
+		}, nil
 	}
 
-	if !details.Data.Enabled {
-		return nil, errors.New("private endpoints are not enabled")
-	}
-
-	return &PrivateEndpointDetails{
-		ServiceName: details.Data.ServiceName,
-		PrivateDNS:  details.Data.PrivateDNS,
-	}, nil
 }
 
 func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID string, endpointID string) error {

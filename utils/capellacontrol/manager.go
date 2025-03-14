@@ -92,12 +92,19 @@ func (m *Manager) WaitForClusterState(
 
 func (m *Manager) WaitForPrivateEndpointsEnabled(
 	ctx context.Context,
+	columnar bool,
 	tenantID, projectID, clusterID string,
 ) error {
 	desiredState := "enabled"
 
 	for {
-		pe, err := m.Client.GetPrivateEndpoint(ctx, tenantID, projectID, clusterID)
+		var pe *GetPrivateEndpointResponse
+		var err error
+		if !columnar {
+			pe, err = m.Client.GetPrivateEndpoint(ctx, tenantID, projectID, clusterID)
+		} else {
+			pe, err = m.Client.GetPrivateEndpointColumnar(ctx, tenantID, projectID, clusterID)
+		}
 		if err != nil {
 			return errors.Wrap(err, "failed to list private endpoint links")
 		}

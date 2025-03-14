@@ -1096,6 +1096,32 @@ func (c *Controller) DisablePrivateEndpoints(
 	return nil
 }
 
+func (c *Controller) EnablePrivateEndpointsColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "POST", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (c *Controller) DisablePrivateEndpointsColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type PrivateEndpointInfo struct {
 	Enabled bool   `json:"enabled"`
 	Status  string `json:"status"` // idle, enabling, enabled
@@ -1118,6 +1144,21 @@ func (c *Controller) GetPrivateEndpoint(
 	return resp, err
 }
 
+func (c *Controller) GetPrivateEndpointColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) (*GetPrivateEndpointResponse, error) {
+	resp := &GetPrivateEndpointResponse{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
 type PrivateEndpointDetailsInfo struct {
 	Enabled     bool   `json:"enabled"`
 	PrivateDNS  string `json:"privateDns"`
@@ -1131,6 +1172,21 @@ func (c *Controller) GetPrivateEndpointDetails(
 	resp := &ResourceResponse[PrivateEndpointDetailsInfo]{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/details", tenantID, projectID, clusterID)
+	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, err
+}
+
+func (c *Controller) GetPrivateEndpointDetailsColumnar(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) (*ResourceResponse[PrivateEndpointDetailsInfo], error) {
+	resp := &ResourceResponse[PrivateEndpointDetailsInfo]{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/details", tenantID, projectID, clusterID)
 	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
