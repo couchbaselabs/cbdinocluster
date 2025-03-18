@@ -90,6 +90,10 @@ func GetGatewayImage(ctx context.Context, version string, needRhcc bool) (string
 }
 
 func GetServerImage(ctx context.Context, version string, needRhcc bool) (string, error) {
+	if len(version) == 0 {
+		return "", errors.New("server version is required to fetch an image")
+	}
+
 	if version[0] == '@' {
 		return version[1:], nil
 	}
