@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -980,31 +981,115 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		return err
 	}
 
+	var (
+		clusterVersion     = ""
+		serverImage        = ""
+		currentServerImage = ""
+		releaseId          = ""
+	)
+	for _, nodeGroup := range def.NodeGroups {
+		if serverImage == "" {
+			clusterVersion = nodeGroup.Version
+			serverImage = nodeGroup.Cloud.ServerImage
+			currentServerImage = nodeGroup.Cloud.CurrentServerImage
+		} else {
+			if clusterVersion != nodeGroup.Version ||
+				serverImage != nodeGroup.Cloud.ServerImage ||
+				currentServerImage != nodeGroup.Cloud.CurrentServerImage {
+				return errors.New("all node groups must have the same version and image")
+			}
+		}
+	}
+
 	if clusterInfo.Columnar != nil {
-		d.logger.Debug("can/will only modify the node count for a columnar cluster")
+		d.logger.Debug("can/will only modify the node count and upgrade server image for a columnar cluster")
+
+		columnarInstanceId := clusterInfo.Columnar.ID
 
 		newSpec := &capellacontrol.UpdateColumnarInstanceRequest{
 			Name:        clusterInfo.Columnar.Name,
 			Description: clusterInfo.Columnar.Description,
 			Nodes:       def.NodeGroups[0].Count,
 		}
-		err = d.client.UpdateColumnarSpecs(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, newSpec)
-		if err != nil {
-			return errors.Wrap(err, "failed to update specs")
+
+		if clusterInfo.Columnar.Config.NodeCount != newSpec.Nodes {
+			err = d.client.UpdateColumnarSpecs(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, columnarInstanceId, newSpec)
+			if err != nil {
+				return errors.Wrap(err, "failed to update specs")
+			}
+
+			d.logger.Debug("waiting for columnar modification to begin")
+
+			err = d.mgr.WaitForClusterState(ctx, d.tenantID, columnarInstanceId, "scaling", true)
+			if err != nil {
+				return errors.Wrap(err, "failed to wait for columnar modification to begin")
+			}
+
+			d.logger.Debug("waiting for columnar to be healthy")
+
+			err = d.mgr.WaitForClusterState(ctx, d.tenantID, columnarInstanceId, "healthy", true)
+			if err != nil {
+				return errors.Wrap(err, "failed to wait for columnar to be healthy")
+			}
 		}
 
-		d.logger.Debug("waiting for columnar modification to begin")
+		if serverImage != "" {
+			columnarClusterID := clusterInfo.Columnar.Config.Id
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "scaling", true)
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for columnar modification to begin")
-		}
+			var provider string
 
-		d.logger.Debug("waiting for columnar to be healthy")
+			switch def.Cloud.CloudProvider {
+			case "gcp":
+				provider = "hostedGCP"
+			case "aws":
+				provider = "hostedAWS"
+			default:
+				log.Fatalf("Error: Cloud provider %s not supported", def.Cloud.CloudProvider)
+			}
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.Columnar.ID, "healthy", true)
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for columnar to be healthy")
+			images := &capellacontrol.Images{
+				CurrentImages: []string{def.NodeGroups[0].Cloud.CurrentServerImage},
+				NewImage:      serverImage,
+				Provider:      provider,
+			}
+
+			config := &capellacontrol.Config{
+				Type:       "upgradeClusterImage",
+				Visibility: "visible",
+				Title:      "Upgrade columnar version",
+				Priority:   "Upgrade",
+				Images:     *images,
+			}
+
+			currTime := time.Now().UTC()
+
+			window := &capellacontrol.Window{
+				StartDate: currTime.Add(1 * time.Minute).Format(time.RFC3339Nano),
+				EndDate:   currTime.Add(1 * time.Hour).Format(time.RFC3339Nano),
+			}
+
+			err = d.client.UpgradeServerVersionColumnar(ctx, d.internalSupportToken, &capellacontrol.UpgradeServerVersionColumnarRequest{
+				Config:     *config,
+				ClusterIds: []string{columnarClusterID},
+				Window:     *window,
+				Scope:      "all",
+			})
+
+			if err != nil {
+				return errors.Wrap(err, "failed to update server version")
+			}
+
+			err = d.mgr.WaitForClusterState(ctx, d.tenantID, columnarInstanceId, "upgrading", true)
+			if err != nil {
+				return errors.Wrap(err, "failed to wait for cluster upgrade to begin")
+			}
+
+			d.logger.Debug("waiting for columnar to be healthy")
+
+			err = d.mgr.WaitForClusterState(ctx, d.tenantID, columnarInstanceId, "healthy", true)
+			if err != nil {
+				return errors.Wrap(err, "failed to wait for columnar to be healthy")
+			}
 		}
 
 		return nil
@@ -1049,22 +1134,6 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy", false)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster to be healthy")
-		}
-	}
-
-	var (
-		clusterVersion = ""
-		serverImage    = ""
-		releaseId      = ""
-	)
-	for _, nodeGroup := range def.NodeGroups {
-		if clusterVersion == "" {
-			clusterVersion = nodeGroup.Version
-			serverImage = nodeGroup.Cloud.ServerImage
-		} else {
-			if clusterVersion != nodeGroup.Version || serverImage != nodeGroup.Cloud.ServerImage {
-				return errors.New("all node groups must have the same version and image")
-			}
 		}
 	}
 
