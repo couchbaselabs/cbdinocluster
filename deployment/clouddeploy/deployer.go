@@ -784,7 +784,38 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
 
-	if !def.Columnar {
+	cloudClusterID := ""
+	if def.Cloud.FreeTier {
+		if len(def.NodeGroups) != 0 {
+			return nil, errors.New("free-tier cluster cannot have node groups")
+		}
+
+		createReq := &capellacontrol.CreateTrialClusterRequest{
+			CIDR:           clusterCidr,
+			Description:    "",
+			Name:           clusterName,
+			ProjectId:      cloudProjectID,
+			Provider:       clusterProvider,
+			Region:         cloudRegion,
+			Server:         clusterVersion,
+			DeliveryMethod: "hosted",
+		}
+		p.logger.Debug("creating cluster", zap.Any("req", createReq))
+
+		newCluster, err := p.client.CreateTrialCluster(ctx, p.tenantID, createReq)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create cluster")
+		}
+
+		cloudClusterID = newCluster.Id
+
+		p.logger.Debug("waiting for creation to complete")
+
+		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", false)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wait for deployment")
+		}
+	} else if !def.Columnar {
 		specs, err := p.buildCreateSpecs(
 			ctx,
 			cloudProvider,
@@ -813,34 +844,14 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.Wrap(err, "failed to create cluster")
 		}
 
-		cloudClusterID := newCluster.Id
+		cloudClusterID = newCluster.Id
 
-		p.logger.Debug("waiting for cluster creation to complete")
+		p.logger.Debug("waiting for creation to complete")
 
 		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", false)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to wait for cluster deployment")
+			return nil, errors.Wrap(err, "failed to wait for deployment")
 		}
-
-		// we cheat for now...
-		clusters, err := p.ListClusters(ctx)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to list clusters")
-		}
-
-		var thisCluster *ClusterInfo
-		for _, cluster := range clusters {
-			cluster := cluster.(*ClusterInfo)
-
-			if cluster.ClusterID == clusterID.String() {
-				thisCluster = cluster
-			}
-		}
-		if thisCluster == nil {
-			return nil, errors.New("failed to find new cluster after deployment")
-		}
-		return thisCluster, nil
-
 	} else {
 		if len(def.NodeGroups) > 1 {
 			return nil, errors.New("columnar only supports 1 node group")
@@ -888,36 +899,34 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.Wrap(err, "failed to create columnar")
 		}
 
-		cloudClusterID := newCluster.Id
+		cloudClusterID = newCluster.Id
 
-		p.logger.Debug("waiting for columnar creation to complete")
+		p.logger.Debug("waiting for creation to complete")
 
 		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", true)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to wait for columnar deployment")
+			return nil, errors.Wrap(err, "failed to wait for deployment")
 		}
-
-		// we cheat for now...
-		clusters, err := p.ListClusters(ctx)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to list columnars")
-		}
-
-		var thisCluster *ClusterInfo
-		for _, cluster := range clusters {
-			cluster := cluster.(*ClusterInfo)
-
-			if cluster.ClusterID == clusterID.String() {
-				thisCluster = cluster
-			}
-		}
-		if thisCluster == nil {
-			return nil, errors.New("failed to find new columnar after deployment")
-		}
-		return thisCluster, nil
-
 	}
 
+	// we cheat for now...
+	clusters, err := p.ListClusters(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list clusters")
+	}
+
+	var thisCluster *ClusterInfo
+	for _, cluster := range clusters {
+		cluster := cluster.(*ClusterInfo)
+
+		if cluster.ClusterID == clusterID.String() {
+			thisCluster = cluster
+		}
+	}
+	if thisCluster == nil {
+		return nil, errors.New("failed to find new cluster after deployment")
+	}
+	return thisCluster, nil
 }
 
 func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
