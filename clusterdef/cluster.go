@@ -56,4 +56,5 @@ type CloudCluster struct {
 	CloudProvider string `yaml:"cloud-provider,omitempty"`
 	Region        string `yaml:"region,omitempty"`
 	Cidr          string `yaml:"cidr,omitempty"`
+	FreeTier      bool   `yaml:"free-tier,omitempty"`
 }
