@@ -653,6 +653,17 @@ type CreateClusterRequest_Spec struct {
 	Services        []string                              `json:"services"`
 }
 
+type CreateTrialClusterRequest struct {
+	CIDR           string `json:"cidr"`
+	Description    string `json:"description"`
+	Name           string `json:"name"`
+	ProjectId      string `json:"projectId"`
+	Provider       string `json:"provider"`
+	Region         string `json:"region"`
+	Server         string `json:"server"`
+	DeliveryMethod string `json:"deliveryMethod"` // hosted
+}
+
 type DeployClusterRequest struct {
 	CIDR        string                      `json:"cidr"`
 	Description string                      `json:"description"`
@@ -767,6 +778,22 @@ func (c *Controller) CreateCluster(
 	resp := &CreateClusterResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/clusters", tenantID)
+	err := c.doBasicReq(ctx, false, "POST", path, req, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+func (c *Controller) CreateTrialCluster(
+	ctx context.Context,
+	tenantID string,
+	req *CreateTrialClusterRequest,
+) (*CreateClusterResponse, error) {
+	resp := &CreateClusterResponse{}
+
+	path := fmt.Sprintf("/v2/organizations/%s/trial/cluster", tenantID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, &resp)
 	if err != nil {
 		return nil, err
