@@ -744,3 +744,7 @@ func (d *Deployer) CreateS3Link(ctx context.Context, columnarID, linkName, regio
 func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) error {
 	return errors.New("caodeploy does not support drop link")
 }
+
+func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
+	return errors.New("caodeploy does not support upgrade cluster command")
+}

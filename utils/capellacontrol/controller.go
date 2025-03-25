@@ -1556,7 +1556,7 @@ type UpgradeServerVersionColumnarRequest struct {
 	Scope      string   `json:"scope"`
 }
 
-func (c *Controller) UpgradeServerVersionColumnar(
+func (c *Controller) UpgradeCloudServerVersion(
 	ctx context.Context,
 	internalSupportToken string,
 	req *UpgradeServerVersionColumnarRequest,
