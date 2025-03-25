@@ -125,4 +125,5 @@ type Deployer interface {
 	CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error
 	CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error
 	DropLink(ctx context.Context, columnarID, linkName string) error
+	EnableDataApi(ctx context.Context, clusterID string) error
 }
