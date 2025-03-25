@@ -1101,6 +1101,89 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	return nil
 }
 
+func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+
+	if err != nil {
+		return err
+	}
+
+	var (
+		instanceId    = ""
+		clusterId     = ""
+		cloudProvider = ""
+		columnar      = false
+	)
+
+	if clusterInfo.Columnar != nil {
+		instanceId = clusterInfo.Columnar.ID
+		clusterId = clusterInfo.Columnar.Config.Id
+		cloudProvider = clusterInfo.Columnar.Config.Provider
+		columnar = true
+	} else if clusterInfo.Cluster != nil {
+		instanceId = clusterInfo.Cluster.Id
+		clusterId = clusterInfo.Cluster.Id
+		cloudProvider = clusterInfo.Cluster.Provider.Name
+	}
+
+	var provider string
+
+	switch cloudProvider {
+	case "gcp":
+		provider = "hostedGCP"
+	case "aws":
+		provider = "hostedAWS"
+	default:
+		return errors.New("invalid cloud provider for setup info")
+	}
+
+	images := &capellacontrol.Images{
+		CurrentImages: []string{CurrentImages},
+		NewImage:      NewImage,
+		Provider:      provider,
+	}
+
+	config := &capellacontrol.Config{
+		Type:       "upgradeClusterImage",
+		Visibility: "visible",
+		Title:      "Upgrade cluster version",
+		Priority:   "Upgrade",
+		Images:     *images,
+	}
+
+	currTime := time.Now().UTC()
+
+	window := &capellacontrol.Window{
+		StartDate: currTime.Add(30 * time.Second).Format(time.RFC3339Nano),
+		EndDate:   currTime.Add(1 * time.Hour).Format(time.RFC3339Nano),
+	}
+
+	err = d.client.UpgradeCloudServerVersion(ctx, d.internalSupportToken, &capellacontrol.UpgradeServerVersionColumnarRequest{
+		Config:     *config,
+		ClusterIds: []string{clusterId},
+		Window:     *window,
+		Scope:      "all",
+	})
+
+	if err != nil {
+		return errors.Wrap(err, "failed to upgrade server version")
+	}
+
+	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "upgrading", columnar)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for cluster upgrade to begin")
+	}
+
+	d.logger.Debug("waiting for cluster to be healthy")
+
+	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "healthy", columnar)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for cluster to be healthy")
+	}
+
+	return nil
+}
+
 func (d *Deployer) AddNode(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("clouddeploy does not support cluster node addition")
 }

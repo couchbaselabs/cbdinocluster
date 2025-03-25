@@ -1530,6 +1530,46 @@ func (c *Controller) UpdateServerVersion(
 	return err
 }
 
+type Images struct {
+	CurrentImages []string `json:"currentImages"`
+	NewImage      string   `json:"newImage"`
+	Provider      string   `json:"provider"`
+}
+
+type Config struct {
+	Type       string `json:"type"`
+	Visibility string `json:"visibility"`
+	Title      string `json:"title"`
+	Priority   string `json:"priority"`
+	Images     Images `json:"images"`
+}
+
+type Window struct {
+	StartDate string `json:"startDate"`
+	EndDate   string `json:"endDate"`
+}
+
+type UpgradeServerVersionColumnarRequest struct {
+	Config     Config   `json:"config"`
+	ClusterIds []string `json:"clusterIds"`
+	Window     Window   `json:"window"`
+	Scope      string   `json:"scope"`
+}
+
+func (c *Controller) UpgradeCloudServerVersion(
+	ctx context.Context,
+	internalSupportToken string,
+	req *UpgradeServerVersionColumnarRequest,
+) error {
+	path := fmt.Sprintf("/internal/support/maintenance/schedules")
+	err := c.doTokenRequest(ctx, "POST", path, internalSupportToken, req, nil)
+	if err != nil {
+		return err
+	}
+
+	return err
+}
+
 type StartCollectingServerLogsRequest struct {
 	HostName string `json:"hostname"`
 }

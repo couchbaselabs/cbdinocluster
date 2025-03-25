@@ -745,6 +745,10 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 	return errors.New("caodeploy does not support drop link")
 }
 
+func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
+	return errors.New("caodeploy does not support upgrade cluster command")
+}
+
 func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
 	return errors.New("caodeploy does not support enabling data api")
 }
