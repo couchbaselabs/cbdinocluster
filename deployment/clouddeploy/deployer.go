@@ -2093,6 +2093,23 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 	return d.mgr.Client.DoBasicColumnarQuery(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, req)
 }
 
+func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return err
+	}
+
+	cloudProjectID := clusterInfo.Cluster.Project.Id
+	cloudClusterID := clusterInfo.Cluster.Id
+
+	err = d.client.EnableDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to enable Data API")
+	}
+
+	return nil
+}
+
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }

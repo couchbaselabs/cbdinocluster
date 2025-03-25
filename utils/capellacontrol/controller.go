@@ -1728,3 +1728,17 @@ func (c *Controller) DoBasicColumnarQuery(
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
 	return err
 }
+
+type EnableDataApiRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (c *Controller) EnableDataApi(
+	ctx context.Context,
+	tenantID, projectID, clusterID string,
+) error {
+	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/data-api", tenantID, projectID, clusterID)
+	req := EnableDataApiRequest{Enabled: true}
+	err := c.doBasicReq(ctx, false, "PUT", path, req, nil)
+	return err
+}
