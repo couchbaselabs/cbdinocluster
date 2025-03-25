@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -1135,7 +1134,7 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 	case "aws":
 		provider = "hostedAWS"
 	default:
-		log.Fatalf("Error: Something went wrong when reading cloud provider - %s", cloudProvider)
+		return errors.New("invalid cloud provider for setup info")
 	}
 
 	images := &capellacontrol.Images{
@@ -1167,7 +1166,7 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 	})
 
 	if err != nil {
-		return errors.Wrap(err, "failed to update server version")
+		return errors.Wrap(err, "failed to upgrade server version")
 	}
 
 	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "upgrading", columnar)
@@ -1179,7 +1178,7 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 
 	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "healthy", columnar)
 	if err != nil {
-		return errors.Wrap(err, "failed to wait for columnar to be healthy")
+		return errors.Wrap(err, "failed to wait for cluster to be healthy")
 	}
 
 	return nil
