@@ -261,3 +261,46 @@ func (m *Manager) WaitForServerLogsCollected(
 		return perNode, nil
 	}
 }
+
+func (m *Manager) WaitForDataApiEnabled(
+	ctx context.Context,
+	tenantID, clusterID string) error {
+	desiredState := "enabled"
+
+	for {
+		dataApiState := ""
+
+		clusters, err := m.Client.ListAllClusters(ctx, tenantID, &PaginatedRequest{
+			Page:          1,
+			PerPage:       100,
+			SortBy:        "name",
+			SortDirection: "asc",
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to list clusters")
+		}
+
+		for _, cluster := range clusters.Data {
+			if cluster.Data.Id == clusterID {
+				dataApiState = cluster.Data.DataApiState
+			}
+		}
+
+		if dataApiState == "" {
+			return fmt.Errorf("cluster disappeared while waiting for data API to be enabled")
+		}
+
+		m.Logger.Info("waiting for data api state...",
+			zap.String("current", dataApiState),
+			zap.String("desired", desiredState))
+
+		if dataApiState != desiredState {
+			time.Sleep(10 * time.Second)
+			continue
+		}
+
+		break
+	}
+
+	return nil
+}

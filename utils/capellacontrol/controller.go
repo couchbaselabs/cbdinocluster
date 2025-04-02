@@ -517,6 +517,7 @@ type ClusterInfo struct {
 	CreatedAt        time.Time           `json:"createdAt"`
 	CreatedBy        string              `json:"createdBy"`
 	CreatedByUserID  string              `json:"createdByUserID"`
+	DataApiState     string              `json:"dataApiState"`
 	Description      string              `json:"description"`
 	HasOnOffSchedule bool                `json:"hasOnOffSchedule"`
 	Id               string              `json:"id"`
