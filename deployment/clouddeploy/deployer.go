@@ -2102,9 +2102,18 @@ func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
 	cloudProjectID := clusterInfo.Cluster.Project.Id
 	cloudClusterID := clusterInfo.Cluster.Id
 
+	d.logger.Debug("enabling data API")
+
 	err = d.client.EnableDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to enable Data API")
+	}
+
+	d.logger.Debug("waiting for Data API to enable")
+
+	err = d.mgr.WaitForDataApiEnabled(ctx, d.tenantID, cloudClusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for Data API enablement")
 	}
 
 	return nil
