@@ -264,8 +264,9 @@ func (m *Manager) WaitForServerLogsCollected(
 
 func (m *Manager) WaitForDataApiEnabled(
 	ctx context.Context,
-	tenantID, clusterID string) error {
+	tenantID, clusterID string) (string, error) {
 	desiredState := "enabled"
+	dataApiHostname := ""
 
 	for {
 		dataApiState := ""
@@ -277,17 +278,18 @@ func (m *Manager) WaitForDataApiEnabled(
 			SortDirection: "asc",
 		})
 		if err != nil {
-			return errors.Wrap(err, "failed to list clusters")
+			return "", errors.Wrap(err, "failed to list clusters")
 		}
 
 		for _, cluster := range clusters.Data {
 			if cluster.Data.Id == clusterID {
 				dataApiState = cluster.Data.DataApiState
+				dataApiHostname = cluster.Data.DataApiHostname
 			}
 		}
 
 		if dataApiState == "" {
-			return fmt.Errorf("cluster disappeared while waiting for data API to be enabled")
+			return "", fmt.Errorf("cluster disappeared while waiting for data API to be enabled")
 		}
 
 		m.Logger.Info("waiting for data api state...",
@@ -302,5 +304,5 @@ func (m *Manager) WaitForDataApiEnabled(
 		break
 	}
 
-	return nil
+	return dataApiHostname, nil
 }

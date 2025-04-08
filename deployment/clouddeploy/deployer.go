@@ -2154,10 +2154,10 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 	return d.mgr.Client.DoBasicColumnarQuery(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, req)
 }
 
-func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
+func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) (string, error) {
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	cloudProjectID := clusterInfo.Cluster.Project.Id
@@ -2167,17 +2167,17 @@ func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
 
 	err = d.client.EnableDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID)
 	if err != nil {
-		return errors.Wrap(err, "failed to enable Data API")
+		return "", errors.Wrap(err, "failed to enable Data API")
 	}
 
 	d.logger.Debug("waiting for Data API to enable")
 
-	err = d.mgr.WaitForDataApiEnabled(ctx, d.tenantID, cloudClusterID)
+	hostname, err := d.mgr.WaitForDataApiEnabled(ctx, d.tenantID, cloudClusterID)
 	if err != nil {
-		return errors.Wrap(err, "failed to wait for Data API enablement")
+		return "", errors.Wrap(err, "failed to wait for Data API enablement")
 	}
 
-	return nil
+	return hostname, nil
 }
 
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {

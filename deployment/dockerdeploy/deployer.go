@@ -1601,6 +1601,6 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 	return errors.New("docker deploy does not support upgrade cluster command")
 }
 
-func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
-	return errors.New("docker deploy does not support enabling data api")
+func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) (string, error) {
+	return "", errors.New("docker deploy does not support enabling data api")
 }
