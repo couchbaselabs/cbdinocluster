@@ -38,6 +38,7 @@ type ConnectInfo struct {
 	ConnStrCb2 string
 	Mgmt       string
 	MgmtTls    string
+	DataApiConnstr string
 }
 
 type UserInfo struct {
