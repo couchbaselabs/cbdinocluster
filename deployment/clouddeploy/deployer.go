@@ -312,7 +312,7 @@ func (p *Deployer) buildDeploySpecs(
 	if cloudProvider == "aws" {
 		diskAutoExpansionEnabled = true
 	} else if cloudProvider == "gcp" {
-		diskAutoExpansionEnabled = false
+		diskAutoExpansionEnabled = true
 	} else if cloudProvider == "azure" {
 		diskAutoExpansionEnabled = false
 	} else {
@@ -336,13 +336,11 @@ func (p *Deployer) buildDeploySpecs(
 			diskSize = 50
 			diskIops = 3000
 		} else if cloudProvider == "gcp" {
-			// add defaults for gcp provider
-			instanceType = ""
-			cpu = 0
-			memory = 0
-			diskType = ""
-			diskSize = 0
-			diskIops = 0
+			instanceType = "n2-standard-4"
+			cpu = 4
+			memory = 16
+			diskType = "pd-ssd"
+			diskSize = 50
 		} else if cloudProvider == "azure" {
 			instanceType = "Standard_D4s_v5"
 			cpu = 8
@@ -422,7 +420,7 @@ func (p *Deployer) buildCreateSpecs(
 		diskAutoExpansionEnabled = true
 	} else if cloudProvider == "gcp" {
 		nodeProvider = "gcp"
-		diskAutoExpansionEnabled = false
+		diskAutoExpansionEnabled = true
 	} else if cloudProvider == "azure" {
 		nodeProvider = "azure"
 		diskAutoExpansionEnabled = false
@@ -443,11 +441,9 @@ func (p *Deployer) buildCreateSpecs(
 			diskSize = 50
 			diskIops = 3000
 		} else if cloudProvider == "gcp" {
-			// add defaults for gcp provider
-			instanceType = ""
-			diskType = ""
-			diskSize = 0
-			diskIops = 0
+			instanceType = "n2-standard-4"
+			diskType = "pd-ssd"
+			diskSize = 50
 		} else if cloudProvider == "azure" {
 			instanceType = "Standard_D4s_v5"
 			diskType = "P6"
@@ -602,7 +598,7 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		clusterProvider = "hostedAWS"
 	} else if cloudProvider == "gcp" {
 		deploymentProvider = "gcp"
-		clusterProvider = "gcp"
+		clusterProvider = "hostedGCP"
 	} else if cloudProvider == "azure" {
 		deploymentProvider = "azure"
 		clusterProvider = "hostedAzure"
@@ -753,10 +749,10 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 	clusterProvider := ""
 	if cloudProvider == "aws" {
 		deploymentProvider = "aws"
-		clusterProvider = "aws"
+		clusterProvider = "hostedAWS"
 	} else if cloudProvider == "gcp" {
 		deploymentProvider = "gcp"
-		clusterProvider = "gcp"
+		clusterProvider = "hostedGCP"
 	} else if cloudProvider == "azure" {
 		deploymentProvider = "azure"
 		clusterProvider = "hostedAzure"

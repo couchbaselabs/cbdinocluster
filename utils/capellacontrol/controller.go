@@ -577,7 +577,7 @@ type ClusterInfo_Service_Compute struct {
 type ClusterInfo_Service_Disk struct {
 	Type           string `json:"type"`
 	SizeInGb       int    `json:"sizeInGb"`
-	Iops           int    `json:"iops"`
+	Iops           int    `json:"iops,omitempty"`
 	ThroughputMBPS int    `json:"throughputMbps"`
 }
 
@@ -716,7 +716,7 @@ func (o CreateOverrideRequest) IsEmpty() bool {
 type CreateClusterRequest_Spec_Disk struct {
 	Type     string `json:"type"`
 	SizeInGb int    `json:"sizeInGb"`
-	Iops     int    `json:"iops"`
+	Iops     int    `json:"iops,omitempty"`
 }
 
 type CreateClusterRequest_Spec_DiskScaling struct {
@@ -879,7 +879,7 @@ type UpdateClusterSpecsRequest_Spec_Compute struct {
 type UpdateClusterSpecsRequest_Spec_Disk struct {
 	Type     string `json:"type"`
 	SizeInGb int    `json:"sizeInGb"`
-	Iops     int    `json:"iops"`
+	Iops     int    `json:"iops,omitempty"`
 }
 
 type UpdateClusterSpecsRequest_Spec_DiskScaling struct {
