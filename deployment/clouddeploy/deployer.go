@@ -1651,8 +1651,10 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	var connStr string
+	var dataApiConnstr string
 	if clusterInfo.Cluster != nil {
 		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.Connect.Srv)
+		dataApiConnstr = fmt.Sprintf("https://%s", clusterInfo.Cluster.DataApiHostname)
 	} else {
 		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Columnar.Config.Endpoint)
 	}
@@ -1662,6 +1664,7 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		ConnStrTls: connStr,
 		Mgmt:       "",
 		MgmtTls:    "",
+		DataApiConnstr: dataApiConnstr,
 	}, nil
 }
 
