@@ -551,6 +551,7 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		ConnStrCb2: connstrCb2,
 		Mgmt:       mgmtAddr,
 		MgmtTls:    mgmtTlsAddr,
+		DataApiConnstr: "",
 	}, nil
 }
 
