@@ -1,4 +1,5 @@
 columnar: true
 nodes:
-  -   count: 3
+  -   count: 1
       version: 1.0.0-2239
+deployer: cloud
