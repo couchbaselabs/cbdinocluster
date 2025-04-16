@@ -286,6 +286,7 @@ var initCmd = &cobra.Command{
 			fmt.Printf("-- GitHub Configuration\n")
 			fmt.Printf("This is used to access non-public server builds on the GitHub Package Registry,\n")
 			fmt.Printf("the personal access token must allow the 'read:packages' scope.\n")
+			fmt.Printf("  (see: https://github.com/settings/tokens)\n")
 
 			flagDisableGithub, _ := cmd.Flags().GetBool("disable-github")
 			flagGithubToken, _ := cmd.Flags().GetString("github-token")
