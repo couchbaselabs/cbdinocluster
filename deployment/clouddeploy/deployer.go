@@ -749,7 +749,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 	clusterProvider := ""
 	if cloudProvider == "aws" {
 		deploymentProvider = "aws"
-		clusterProvider = "hostedAWS"
+		clusterProvider = "aws"
 	} else if cloudProvider == "gcp" {
 		deploymentProvider = "gcp"
 		clusterProvider = "hostedGCP"
@@ -1660,10 +1660,10 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:    "",
-		ConnStrTls: connStr,
-		Mgmt:       "",
-		MgmtTls:    "",
+		ConnStr:        "",
+		ConnStrTls:     connStr,
+		Mgmt:           "",
+		MgmtTls:        "",
 		DataApiConnstr: dataApiConnstr,
 	}, nil
 }
