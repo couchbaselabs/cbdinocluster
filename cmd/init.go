@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	DefaultCaoVersion = "2.6.0"
+	DefaultCaoVersion = "2.8.0"
 )
 
 var initCmd = &cobra.Command{
