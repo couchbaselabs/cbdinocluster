@@ -37,6 +37,11 @@ environments.
   ```
   https://github.com/couchbaselabs/cbdinocluster/releases
   ```
+
+- [Generate personal access token (classic)](https://github.com/settings/tokens) with `read:packages` to access
+non-public server builds on the GitHub Package Registry.
+See [Managing your personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+
 - Setup cbdinocluster
   ```
   ./cbdinocluster init
