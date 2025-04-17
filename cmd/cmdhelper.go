@@ -20,6 +20,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/deployment/caodeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/deployment/dockerdeploy"
+	"github.com/couchbaselabs/cbdinocluster/deployment/localdeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 	"github.com/docker/docker/client"
@@ -80,6 +81,19 @@ func (h *CmdHelper) GetConfig(ctx context.Context) *cbdcconfig.Config {
 	}
 
 	return h.config
+}
+
+func (h *CmdHelper) getLocalDeployer() (*localdeploy.Deployer, error) {
+	logger := h.GetLogger()
+
+	localDeployer, err := localdeploy.NewDeployer(&localdeploy.DeployerOptions{
+		Logger: logger,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to initialize local deployer")
+	}
+
+	return localDeployer, nil
 }
 
 func (h *CmdHelper) getDockerDeployer(ctx context.Context) (*dockerdeploy.Deployer, error) {
@@ -205,6 +219,11 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 
 	out := make(map[string]deployment.Deployer)
 
+	localDeployer, _ := h.getLocalDeployer()
+	if localDeployer != nil {
+		out["local"] = localDeployer
+	}
+
 	dockerDeployer, _ := h.getDockerDeployer(ctx)
 	if dockerDeployer != nil {
 		out["docker"] = dockerDeployer
@@ -233,7 +252,9 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 func (h *CmdHelper) GetDeployer(ctx context.Context) deployment.Deployer {
 	config := h.GetConfig(ctx)
 
-	if config.DefaultDeployer == "cao" {
+	if config.DefaultDeployer == "local" {
+		return h.GetLocalDeployer(ctx)
+	} else if config.DefaultDeployer == "cao" {
 		return h.GetCaoDeployer(ctx)
 	} else if config.DefaultDeployer == "cloud" {
 		return h.GetCloudDeployer(ctx)
@@ -267,6 +288,22 @@ func (h *CmdHelper) GetDefaultDeployer(ctx context.Context) deployment.Deployer 
 		logger.Fatal("failed to find default deployer",
 			zap.String("defaultDeployer", deployerName),
 			zap.Strings("availableDeployers", maps.Keys(allDeployers)))
+	}
+
+	return deployer
+}
+
+func (h *CmdHelper) GetLocalDeployer(ctx context.Context) *localdeploy.Deployer {
+	logger := h.GetLogger()
+
+	deployer, err := h.getLocalDeployer()
+	if err != nil {
+		logger.Fatal("failed to get local deployer", zap.Error(err))
+	}
+
+	err = deployer.Cleanup(ctx)
+	if err != nil {
+		logger.Fatal("failed to run pre-cleanup", zap.Error(err))
 	}
 
 	return deployer

@@ -12,6 +12,7 @@ import (
 
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
 	"github.com/pkg/errors"
+	"github.com/shirou/gopsutil/process"
 	"go.uber.org/zap"
 )
 
@@ -33,7 +34,19 @@ type OsxController struct {
 func (c *OsxController) IsInstalled(ctx context.Context) (bool, error) {
 	_, err := os.Stat("/Applications/Couchbase Server.app")
 	if err != nil {
-		return true, nil
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (c *OsxController) IsRunning(ctx context.Context) (bool, error) {
+	processes, _ := process.ProcessesWithContext(ctx)
+	for _, process := range processes {
+		name, _ := process.Exe()
+		if strings.Contains(name, "/Applications/Couchbase Server.app") {
+			return true, nil
+		}
 	}
 
 	return false, nil
@@ -74,7 +87,7 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 	archTag := ""
 	if runtime.GOARCH == "amd64" {
 		archTag = "x86_64"
-	} else if runtime.GOARCH == "arm" {
+	} else if runtime.GOARCH == "arm64" {
 		archTag = "arm64"
 	} else {
 		return errors.New("unsupported architecture")
