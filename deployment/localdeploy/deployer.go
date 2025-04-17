@@ -2,6 +2,7 @@ package localdeploy
 
 import (
 	"context"
+	"runtime"
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
@@ -12,14 +13,28 @@ import (
 )
 
 type Deployer struct {
-	Logger *zap.Logger
+	logger *zap.Logger
 }
 
 var _ deployment.Deployer = (*Deployer)(nil)
 
+type DeployerOptions struct {
+	Logger *zap.Logger
+}
+
+func NewDeployer(opts *DeployerOptions) (*Deployer, error) {
+	if runtime.GOOS != "darwin" {
+		return nil, errors.New("localdeploy is only supported on macOS")
+	}
+
+	return &Deployer{
+		logger: opts.Logger,
+	}, nil
+}
+
 func (d *Deployer) controller() *OsxController {
 	return &OsxController{
-		Logger: d.Logger,
+		Logger: d.logger,
 	}
 }
 
@@ -29,9 +44,14 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 		return nil, errors.Wrap(err, "failed to check if couchbase is installed")
 	}
 
+	isRunning, err := d.controller().IsRunning(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to check if couchbase is running")
+	}
+
 	var out []deployment.ClusterInfo
-	if isInstalled {
-		out = append(out, ClusterInfo{})
+	if isInstalled && isRunning {
+		out = append(out, &ClusterInfo{})
 	}
 
 	return out, nil
@@ -62,7 +82,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to start cluster")
 	}
 
-	return nil, nil
+	return &ClusterInfo{}, nil
 }
 
 func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*clusterdef.Cluster, error) {
@@ -86,7 +106,7 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 }
 
 func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
-	if clusterID != "a" {
+	if clusterID != "local" {
 		return errors.New("invalid cluster-id")
 	}
 
@@ -226,4 +246,8 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 
 func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
 	return errors.New("localdeploy does not support upgrade cluster command")
+}
+
+func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
+	return errors.New("localdeploy does not support enabling data api")
 }
