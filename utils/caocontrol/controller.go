@@ -902,6 +902,7 @@ func (c *Controller) CreateCouchbaseCluster(
 	namespace string,
 	name string,
 	labels map[string]string,
+	annotations map[string]string,
 	spec interface{},
 ) error {
 	c.logger.Info("creating couchbase cluster", zap.String("namespace", namespace))
@@ -916,8 +917,9 @@ func (c *Controller) CreateCouchbaseCluster(
 			"apiVersion": "couchbase.com/v2",
 			"kind":       "CouchbaseCluster",
 			"metadata": map[string]interface{}{
-				"name":   name,
-				"labels": labels,
+				"name":        name,
+				"labels":      labels,
+				"annotations": annotations,
 			},
 			"spec": spec,
 		},
@@ -940,6 +942,7 @@ func (c *Controller) UpdateCouchbaseClusterSpec(
 	ctx context.Context,
 	namespace string,
 	name string,
+	clusterAnnotations map[string]string,
 	spec interface{},
 ) error {
 	c.logger.Info("updating couchbase cluster", zap.String("namespace", namespace))
@@ -955,6 +958,15 @@ func (c *Controller) UpdateCouchbaseClusterSpec(
 	}
 
 	existingResource.Object["spec"] = spec
+
+	var metaData map[string]interface{}
+	metaData, _ = existingResource.Object["metadata"].(map[string]interface{})
+	if metaData == nil {
+		metaData = make(map[string]interface{})
+		existingResource.Object["metadata"] = metaData
+	}
+
+	metaData["annotations"] = clusterAnnotations
 
 	err = c.updateUnstructuredResource(ctx, namespace, existingResource)
 	if err != nil {

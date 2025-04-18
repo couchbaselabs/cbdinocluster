@@ -49,7 +49,8 @@ type CaoCluster struct {
 	OperatorVersion string `yaml:"operator-version,omitempty"`
 	GatewayVersion  string `yaml:"gateway-version,omitempty"`
 
-	GatewayLogLevel string `yaml:"gateway-log-level,omitempty"`
+	GatewayLogLevel     string `yaml:"gateway-log-level,omitempty"`
+	GatewayOtlpEndpoint string `yaml:"gateway-otlp-endpoint,omitempty"`
 }
 
 type CloudCluster struct {
