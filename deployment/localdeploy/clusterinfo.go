@@ -11,7 +11,7 @@ type ClusterNodeInfo struct {
 
 var _ (deployment.ClusterNodeInfo) = (*ClusterNodeInfo)(nil)
 
-func (i ClusterNodeInfo) GetID() string         { return "a" }
+func (i ClusterNodeInfo) GetID() string         { return "local" }
 func (i ClusterNodeInfo) IsClusterNode() bool   { return true }
 func (i ClusterNodeInfo) GetName() string       { return "" }
 func (i ClusterNodeInfo) GetResourceID() string { return "" }
@@ -22,7 +22,7 @@ type ClusterInfo struct {
 
 var _ (deployment.ClusterInfo) = (*ClusterInfo)(nil)
 
-func (i ClusterInfo) GetID() string                   { return "a" }
+func (i ClusterInfo) GetID() string                   { return "local" }
 func (i ClusterInfo) GetType() deployment.ClusterType { return deployment.ClusterTypeServer }
 func (i ClusterInfo) GetPurpose() string              { return "" }
 func (i ClusterInfo) GetExpiry() time.Time            { return time.Time{} }
