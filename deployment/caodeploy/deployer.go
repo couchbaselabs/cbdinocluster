@@ -118,27 +118,27 @@ func (d *Deployer) generateClusterSpec(
 	ctx context.Context,
 	def *clusterdef.Cluster,
 	isOpenShift bool,
-) (map[string]interface{}, error) {
+) (map[string]string, map[string]interface{}, error) {
 	clusterVersion := ""
 	for _, nodeGrp := range def.NodeGroups {
 		if clusterVersion == "" {
 			clusterVersion = nodeGrp.Version
 		}
 		if clusterVersion != nodeGrp.Version {
-			return nil, errors.New("all node groups must have the same couchbase version")
+			return nil, nil, errors.New("all node groups must have the same couchbase version")
 		}
 	}
 
 	serverImagePath, err := caocontrol.GetServerImage(ctx, clusterVersion, isOpenShift)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to identify server image")
+		return nil, nil, errors.Wrap(err, "failed to identify server image")
 	}
 
 	gatewayImagePath := ""
 	if def.Cao.GatewayVersion != "" {
 		foundGatewayImagePath, err := caocontrol.GetGatewayImage(ctx, def.Cao.GatewayVersion, isOpenShift)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to identify gateway image")
+			return nil, nil, errors.Wrap(err, "failed to identify gateway image")
 		}
 
 		gatewayImagePath = foundGatewayImagePath
@@ -149,11 +149,16 @@ func (d *Deployer) generateClusterSpec(
 		gatewayLogLevel = def.Cao.GatewayLogLevel
 	}
 
+	gatewayOtlpEndpoint := ""
+	if def.Cao.GatewayOtlpEndpoint != "" {
+		gatewayOtlpEndpoint = def.Cao.GatewayOtlpEndpoint
+	}
+
 	var serversRes []interface{}
 	for nodeGrpIdx, nodeGrp := range def.NodeGroups {
 		caoServices, err := clusterdef.ServicesToCaoServices(nodeGrp.Services)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to generate cao server services list")
+			return nil, nil, errors.Wrap(err, "failed to generate cao server services list")
 		}
 
 		serversRes = append(serversRes, map[string]interface{}{
@@ -179,6 +184,7 @@ func (d *Deployer) generateClusterSpec(
 	if gatewayLogLevel != "" {
 		cngSpec["logLevel"] = gatewayLogLevel
 	}
+
 	if len(cngSpec) == 0 {
 		cngSpec = nil
 	}
@@ -202,7 +208,12 @@ func (d *Deployer) generateClusterSpec(
 		"servers": serversRes,
 	}
 
-	return clusterSpec, nil
+	annotations := make(map[string]string)
+	if gatewayOtlpEndpoint != "" {
+		annotations["cao.couchbase.com/networking.cloudNativeGateway.otlp.endpoint"] = gatewayOtlpEndpoint
+	}
+
+	return annotations, clusterSpec, nil
 }
 
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
@@ -255,14 +266,14 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to create admin auth")
 	}
 
-	clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
+	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate cluster spec")
 	}
 
 	err = d.client.CreateCouchbaseCluster(ctx,
 		namespace, CouchbaseClusterName, nil,
-		clusterSpec)
+		clusterAnnotations, clusterSpec)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create cluster resource")
 	}
@@ -317,12 +328,12 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		return err
 	}
 
-	clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
+	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
 	if err != nil {
 		return errors.Wrap(err, "failed to generate cluster spec")
 	}
 
-	err = d.client.UpdateCouchbaseClusterSpec(ctx, namespaceName, CouchbaseClusterName, clusterSpec)
+	err = d.client.UpdateCouchbaseClusterSpec(ctx, namespaceName, CouchbaseClusterName, clusterAnnotations, clusterSpec)
 	if err != nil {
 		return errors.Wrap(err, "failed to update cluster spec")
 	}
@@ -546,11 +557,11 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:    connstr,
-		ConnStrTls: connstrTls,
-		ConnStrCb2: connstrCb2,
-		Mgmt:       mgmtAddr,
-		MgmtTls:    mgmtTlsAddr,
+		ConnStr:        connstr,
+		ConnStrTls:     connstrTls,
+		ConnStrCb2:     connstrCb2,
+		Mgmt:           mgmtAddr,
+		MgmtTls:        mgmtTlsAddr,
 		DataApiConnstr: "",
 	}, nil
 }
