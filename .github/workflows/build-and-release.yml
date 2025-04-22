@@ -22,7 +22,7 @@ jobs:
       - name: Install dependencies
         run: go get .
       - name: Build Binary
-        run: GOOS=${{ matrix.platform }} GOARCH=${{ matrix.arch }} go build -o cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }} -ldflags="-X github.com/couchbaselabs/cbdinocluster/contrib/buildversion.MainPkgVersion=${{ github.ref_name }}"
+        run: GOOS=${{ matrix.platform }} GOARCH=${{ matrix.arch }} CGO_ENABLED=0 go build -o cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }} -ldflags="-X github.com/couchbaselabs/cbdinocluster/contrib/buildversion.MainPkgVersion=${{ github.ref_name }}"
       - uses: actions/upload-artifact@v4
         with:
           name: cbdinocluster-${{ matrix.platform }}-${{ matrix.arch }}
