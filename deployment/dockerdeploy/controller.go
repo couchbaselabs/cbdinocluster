@@ -83,7 +83,7 @@ func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
 func (c *Controller) ListNodes(ctx context.Context) ([]*NodeInfo, error) {
 	c.Logger.Debug("listing nodes")
 
-	containers, err := c.DockerCli.ContainerList(ctx, types.ContainerListOptions{
+	containers, err := c.DockerCli.ContainerList(ctx, container.ListOptions{
 		All: true,
 	})
 	if err != nil {
@@ -138,7 +138,7 @@ func (c *Controller) WriteNodeState(ctx context.Context, containerID string, sta
 	tarFile.Write(jsonBytes)
 	tarFile.Flush()
 
-	err = c.DockerCli.CopyToContainer(ctx, containerID, "/var/", tarBuf, types.CopyToContainerOptions{})
+	err = c.DockerCli.CopyToContainer(ctx, containerID, "/var/", tarBuf, container.CopyToContainerOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to write dyncluster node state")
 	}
@@ -227,7 +227,7 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 
 	logger.Debug("container created, starting", zap.String("container", containerID))
 
-	err = c.DockerCli.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
+	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start container")
 	}
@@ -336,7 +336,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 
 	logger.Debug("container created, starting", zap.String("container", containerID))
 
-	err = c.DockerCli.ContainerStart(context.Background(), containerID, types.ContainerStartOptions{})
+	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start container")
 	}
@@ -399,7 +399,7 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 	logger.Debug("removing container")
 
 	// we try to call remove to force it to be removed
-	c.DockerCli.ContainerRemove(ctx, containerID, types.ContainerRemoveOptions{})
+	c.DockerCli.ContainerRemove(ctx, containerID, container.RemoveOptions{})
 
 	logger.Debug("waiting for container to disappear")
 
@@ -494,7 +494,7 @@ func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, 
 	logger.Debug("setting up traffic control",
 		zap.String("blockType", string(tcType)))
 
-	netInfo, err := c.DockerCli.NetworkInspect(ctx, c.NetworkName, types.NetworkInspectOptions{})
+	netInfo, err := c.DockerCli.NetworkInspect(ctx, c.NetworkName, network.InspectOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to inspect network")
 	}

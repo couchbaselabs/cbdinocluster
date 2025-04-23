@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -24,8 +24,13 @@ type GhcrImageProvider struct {
 
 var _ ImageProvider = (*GhcrImageProvider)(nil)
 
-func (p *GhcrImageProvider) genGhcrAuthConfig() types.AuthConfig {
-	return types.AuthConfig{
+type DockerAuthConfig struct {
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+func (p *GhcrImageProvider) genGhcrAuthConfig() DockerAuthConfig {
+	return DockerAuthConfig{
 		Username: p.GhcrUsername,
 		Password: p.GhcrPassword,
 	}
@@ -91,7 +96,7 @@ func (p *GhcrImageProvider) GetImageRaw(ctx context.Context, imagePath string) (
 }
 
 func (p *GhcrImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
-	dkrImages, err := p.DockerCli.ImageList(ctx, types.ImageListOptions{
+	dkrImages, err := p.DockerCli.ImageList(ctx, image.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", "ghcr.io/cb-vanilla/server")),
 	})
 	if err != nil {

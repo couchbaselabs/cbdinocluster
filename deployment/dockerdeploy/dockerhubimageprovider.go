@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -58,7 +58,7 @@ func (p *DockerHubImageProvider) GetImageRaw(ctx context.Context, imagePath stri
 }
 
 func (p *DockerHubImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
-	dkrImages, err := p.DockerCli.ImageList(ctx, types.ImageListOptions{
+	dkrImages, err := p.DockerCli.ImageList(ctx, image.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", "couchbase")),
 	})
 	if err != nil {

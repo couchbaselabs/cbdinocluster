@@ -3,8 +3,8 @@ package dockerdeploy
 import (
 	"context"
 
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -18,7 +18,7 @@ type MultiArchImagePuller struct {
 }
 
 func (p MultiArchImagePuller) Pull(ctx context.Context) (*ImageRef, error) {
-	images, err := p.DockerCli.ImageList(ctx, types.ImageListOptions{
+	images, err := p.DockerCli.ImageList(ctx, image.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", p.ImagePath)),
 	})
 	if err != nil {
@@ -33,14 +33,14 @@ func (p MultiArchImagePuller) Pull(ctx context.Context) (*ImageRef, error) {
 
 	p.Logger.Debug("image is not available locally, attempting to pull")
 
-	err = dockerPullAndPipe(ctx, p.Logger, p.DockerCli, p.ImagePath, types.ImagePullOptions{
+	err = dockerPullAndPipe(ctx, p.Logger, p.DockerCli, p.ImagePath, image.PullOptions{
 		RegistryAuth: p.RegistryAuth,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to pull from dockerhub registry")
 	}
 
-	images, err = p.DockerCli.ImageList(ctx, types.ImageListOptions{
+	images, err = p.DockerCli.ImageList(ctx, image.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", p.ImagePath)),
 	})
 	if err != nil {
@@ -55,7 +55,7 @@ func (p MultiArchImagePuller) Pull(ctx context.Context) (*ImageRef, error) {
 
 	p.Logger.Debug("image is still not available locally, attempting to pull amd64 image")
 
-	err = dockerPullAndPipe(ctx, p.Logger, p.DockerCli, p.ImagePath, types.ImagePullOptions{
+	err = dockerPullAndPipe(ctx, p.Logger, p.DockerCli, p.ImagePath, image.PullOptions{
 		Platform:     "linux/amd64",
 		RegistryAuth: p.RegistryAuth,
 	})
@@ -63,7 +63,7 @@ func (p MultiArchImagePuller) Pull(ctx context.Context) (*ImageRef, error) {
 		return nil, errors.Wrap(err, "failed to pull from dockerhub registry")
 	}
 
-	images, err = p.DockerCli.ImageList(ctx, types.ImageListOptions{
+	images, err = p.DockerCli.ImageList(ctx, image.ListOptions{
 		Filters: filters.NewArgs(filters.Arg("reference", p.ImagePath)),
 	})
 	if err != nil {

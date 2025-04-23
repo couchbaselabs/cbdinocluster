@@ -10,6 +10,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/tarhelper"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -55,7 +56,7 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 	tagVersion := fmt.Sprintf("%s-%s", serverVariant, serverVersion)
 	fullTagPath := fmt.Sprintf("%s:%s", tagName, tagVersion)
 
-	images, err := p.DockerCli.ImageList(ctx, types.ImageListOptions{})
+	images, err := p.DockerCli.ImageList(ctx, image.ListOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list images")
 	}
