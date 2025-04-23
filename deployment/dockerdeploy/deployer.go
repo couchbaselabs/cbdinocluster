@@ -70,8 +70,8 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 	}
 
 	// sort the nodes by their name for nicer printing later
-	slices.SortFunc(nodes, func(a *NodeInfo, b *NodeInfo) bool {
-		return strings.Compare(a.Name, b.Name) < 0
+	slices.SortFunc(nodes, func(a *NodeInfo, b *NodeInfo) int {
+		return strings.Compare(a.Name, b.Name)
 	})
 
 	var clusters []*ClusterInfo
@@ -341,8 +341,8 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	// is the first one initialized, otherwise in mixed-version clusters, we might
 	// end up initializing the higher version nodes first, disallowing older nodes
 	// from being initialized into the cluster (couchbase does not permit downgrades).
-	slices.SortFunc(nodes, func(a, b *NodeInfo) bool {
-		return semver.Compare("v"+a.InitialServerVersion, "v"+b.InitialServerVersion) < 0
+	slices.SortFunc(nodes, func(a, b *NodeInfo) int {
+		return semver.Compare("v"+a.InitialServerVersion, "v"+b.InitialServerVersion)
 	})
 	d.logger.Debug("reordered setup order", zap.Any("nodes", nodes))
 
@@ -958,10 +958,10 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	mgmtTls := fmt.Sprintf("https://%s", mgmtTlsAddr)
 
 	return &deployment.ConnectInfo{
-		ConnStr:    connStr,
-		ConnStrTls: connStrTls,
-		Mgmt:       mgmt,
-		MgmtTls:    mgmtTls,
+		ConnStr:        connStr,
+		ConnStrTls:     connStrTls,
+		Mgmt:           mgmt,
+		MgmtTls:        mgmtTls,
 		DataApiConnstr: "",
 	}, nil
 }

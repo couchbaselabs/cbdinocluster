@@ -24,7 +24,6 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/google/go-github/v53/github"
@@ -454,7 +453,7 @@ var initCmd = &cobra.Command{
 					dockerNetwork = flagDockerNetwork
 				} else {
 					fmt.Printf("Listing docker networks:\n")
-					networks, _ := dockerCli.NetworkList(ctx, types.NetworkListOptions{})
+					networks, _ := dockerCli.NetworkList(ctx, network.ListOptions{})
 					for _, network := range networks {
 						fmt.Printf("  %s\n", network.Name)
 					}
@@ -490,7 +489,7 @@ var initCmd = &cobra.Command{
 									fmt.Printf("Creating dinonet network (subnet: %s, %s, %s).\n",
 										subnet, ipRange, gateway)
 
-									_, err := dockerCli.NetworkCreate(ctx, "dinonet", types.NetworkCreate{
+									_, err := dockerCli.NetworkCreate(ctx, "dinonet", network.CreateOptions{
 										Driver: "ipvlan",
 										IPAM: &network.IPAM{
 											Driver: "default",

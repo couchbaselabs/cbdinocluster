@@ -8,6 +8,8 @@ import (
 	"io"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -50,7 +52,7 @@ func dockerBuildAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Cli
 	return nil
 }
 
-func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, refStr string, options types.ImagePullOptions) error {
+func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, refStr string, options image.PullOptions) error {
 	pullResp, err := cli.ImagePull(ctx, refStr, options)
 	if err != nil {
 		return errors.Wrap(err, "failed to pull image")
@@ -81,7 +83,7 @@ func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 }
 
 func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, containerID string, cmd []string) error {
-	execID, err := cli.ContainerExecCreate(ctx, containerID, types.ExecConfig{
+	execID, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		AttachStdout: true,
 		AttachStderr: true,
 		Tty:          true,
@@ -91,7 +93,7 @@ func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 		return errors.Wrap(err, "failed to create exec")
 	}
 
-	resp, err := cli.ContainerExecAttach(ctx, execID.ID, types.ExecStartCheck{
+	resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{
 		Tty: true,
 	})
 	if err != nil {
