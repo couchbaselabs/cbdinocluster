@@ -57,29 +57,51 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 
 	serverVersion := fmt.Sprintf("%s-%d", def.Version, def.BuildNo)
 
-	var ghcrImagePath string
 	if !def.UseColumnar {
 		if def.UseCommunityEdition {
 			serverVersion = "community-" + serverVersion
 		}
 
-		ghcrImagePath = fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", serverVersion)
+		ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/server:%s", serverVersion)
+		return MultiArchImagePuller{
+			Logger:       p.Logger,
+			DockerCli:    p.DockerCli,
+			RegistryAuth: p.genGhcrAuthStr(),
+			ImagePath:    ghcrImagePath,
+		}.Pull(ctx)
 	} else {
 		if def.UseCommunityEdition {
 			return nil, errors.New("cannot pull community edition of columnar")
 		}
 
-		ghcrImagePath = fmt.Sprintf("ghcr.io/cb-vanilla/couchbase-columnar:%s", serverVersion)
+		ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/columnar:%s", serverVersion)
+		image, err := MultiArchImagePuller{
+			Logger:       p.Logger,
+			DockerCli:    p.DockerCli,
+			RegistryAuth: p.genGhcrAuthStr(),
+			ImagePath:    ghcrImagePath,
+		}.Pull(ctx)
+		if err != nil {
+			p.Logger.Debug("ghcr provider failed to provide image from columnar repo", zap.Error(err))
+
+			ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/couchbase-columnar:%s", serverVersion)
+			image, err := MultiArchImagePuller{
+				Logger:       p.Logger,
+				DockerCli:    p.DockerCli,
+				RegistryAuth: p.genGhcrAuthStr(),
+				ImagePath:    ghcrImagePath,
+			}.Pull(ctx)
+			if err != nil {
+				p.Logger.Debug("ghcr provider failed to provide image from couchbase-columnar repo", zap.Error(err))
+
+				return nil, errors.New("failed to pull image from both columnar and couchbase-columnar repos")
+			}
+
+			return image, nil
+		}
+
+		return image, nil
 	}
-
-	p.Logger.Debug("identified ghcr image to pull", zap.String("image", ghcrImagePath))
-
-	return MultiArchImagePuller{
-		Logger:       p.Logger,
-		DockerCli:    p.DockerCli,
-		RegistryAuth: p.genGhcrAuthStr(),
-		ImagePath:    ghcrImagePath,
-	}.Pull(ctx)
 }
 
 func (p *GhcrImageProvider) GetImageRaw(ctx context.Context, imagePath string) (*ImageRef, error) {
