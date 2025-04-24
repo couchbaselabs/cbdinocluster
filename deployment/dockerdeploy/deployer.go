@@ -574,7 +574,7 @@ func (d *Deployer) updateDnsRecords(
 
 	var records []DnsRecord
 	for _, node := range nodes {
-		if node.Type == "server-node" || node.Type == "columnar-node" {
+		if node.Type != "server-node" && node.Type != "columnar-node" {
 			continue
 		}
 
@@ -939,6 +939,19 @@ func (d *Deployer) addRemoveNodes(
 }
 
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
+	if def.Columnar {
+		for _, nodeGrp := range def.NodeGroups {
+			if len(nodeGrp.Services) != 0 {
+				return errors.New("columnar clusters cannot specify services")
+			}
+
+			nodeGrp.Services = []clusterdef.Service{
+				clusterdef.KvService,
+				clusterdef.AnalyticsService,
+			}
+		}
+	}
+
 	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get cluster info")
@@ -963,6 +976,16 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 				nodesToAdd = append(nodesToAdd, nodeGrp)
 			}
 		}
+
+		// remove all utility nodes from auto-deletion
+		nodesToRemove = slices.DeleteFunc(nodesToRemove, func(node *deployedNodeInfo) bool {
+			isClusterNode := false
+			if node.nodeInfo.Type == "server-node" ||
+				node.nodeInfo.Type == "columnar-node" {
+				isClusterNode = true
+			}
+			return !isClusterNode
+		})
 
 		// first iterate and find any exact matches and use those
 		nodesToAdd = slices.DeleteFunc(nodesToAdd, func(nodeGrp *clusterdef.NodeGroup) bool {
@@ -990,16 +1013,6 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 			}
 
 			return false
-		})
-
-		// remove all utility nodes from auto-deletion
-		nodesToRemove = slices.DeleteFunc(nodesToRemove, func(node *deployedNodeInfo) bool {
-			isClusterNode := false
-			if node.nodeInfo.Type == "server-node" ||
-				node.nodeInfo.Type == "columnar-node" {
-				isClusterNode = true
-			}
-			return !isClusterNode
 		})
 
 		d.logger.Debug("identified nodes to add",
