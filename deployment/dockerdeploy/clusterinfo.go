@@ -32,6 +32,9 @@ type ClusterInfo struct {
 	Expiry    time.Time
 	Nodes     []*ClusterNodeInfo
 	DnsName   string
+
+	// TODO(brett19): this should not be here
+	LoadBalancerIPAddress string
 }
 
 var _ (deployment.ClusterInfo) = (*ClusterInfo)(nil)

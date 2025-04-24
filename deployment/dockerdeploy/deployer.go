@@ -123,6 +123,10 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 			DnsName:    node.DnsName,
 		})
 
+		if node.Type == "nginx" {
+			cluster.LoadBalancerIPAddress = node.IPAddress
+		}
+
 		// if any nodes are columnar nodes, the cluster is a columnar cluster
 		if node.Type == "columnar-node" {
 			cluster.Type = deployment.ClusterTypeColumnar
@@ -265,6 +269,20 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 	}
 
+	nginxContainerId := ""
+	if def.Docker.EnableLoadBalancer {
+		d.logger.Info("deploying nginx for load balancing")
+
+		node, err := d.controller.DeployNginxNode(ctx, clusterID, def.Expiry)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to deploy nginx node")
+		}
+
+		d.logger.Debug("nginx started", zap.String("ip", node.IPAddress))
+
+		nginxContainerId = node.ContainerID
+	}
+
 	d.logger.Info("gathering node images")
 
 	nodeGrpImages, err := d.getImagesForNodeGrps(ctx, def.NodeGroups, def.Columnar)
@@ -369,6 +387,13 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		err = d.updateDnsRecords(ctx, dnsName, nodes, def.Columnar, true, false)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to update dns records")
+		}
+	}
+
+	if nginxContainerId != "" {
+		err = d.updateLoadBalancer(ctx, nginxContainerId, nodes)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to update load balancer")
 		}
 	}
 
@@ -518,6 +543,23 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	return thisCluster, nil
 }
 
+func (d *Deployer) updateLoadBalancer(
+	ctx context.Context,
+	loadBalancerContainerId string,
+	nodes []*NodeInfo,
+) error {
+	var addrs []string
+	for _, node := range nodes {
+		if node.Type != "server-node" && node.Type != "columnar-node" {
+			continue
+		}
+
+		addrs = append(addrs, node.IPAddress)
+	}
+
+	return d.controller.UpdateNginxConfig(ctx, loadBalancerContainerId, addrs)
+}
+
 func (d *Deployer) updateDnsRecords(
 	ctx context.Context,
 	dnsName string,
@@ -532,6 +574,10 @@ func (d *Deployer) updateDnsRecords(
 
 	var records []DnsRecord
 	for _, node := range nodes {
+		if node.Type == "server-node" || node.Type == "columnar-node" {
+			continue
+		}
+
 		/* don't spam the dns names for now...
 		records = append(records, DnsRecord{
 			RecordType: "A",
@@ -586,12 +632,13 @@ type deployedNodeInfo struct {
 }
 
 type deployedClusterInfo struct {
-	ID         string
-	Purpose    string
-	Expiry     time.Time
-	Nodes      []*deployedNodeInfo
-	IsColumnar bool
-	DnsSuffix  string
+	ID                      string
+	Purpose                 string
+	Expiry                  time.Time
+	Nodes                   []*deployedNodeInfo
+	IsColumnar              bool
+	DnsSuffix               string
+	LoadBalancerContainerID string
 }
 
 func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deployedClusterInfo, error) {
@@ -604,6 +651,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	var expiry time.Time
 	var isColumnar bool
 	var dnsSuffix string
+	var loadBalancerContainerID string
 	var nodeInfo []*deployedNodeInfo
 
 	for _, node := range nodes {
@@ -643,6 +691,10 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 				otpNode = thisNodeInfo.OTPNode
 			}
 
+			if node.Type == "nginx" {
+				loadBalancerContainerID = node.ContainerID
+			}
+
 			nodeInfo = append(nodeInfo, &deployedNodeInfo{
 				nodeInfo:    node,
 				ContainerID: node.ContainerID,
@@ -655,12 +707,13 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployedClusterInfo{
-		ID:         clusterID,
-		Purpose:    purpose,
-		Expiry:     expiry,
-		Nodes:      nodeInfo,
-		IsColumnar: isColumnar,
-		DnsSuffix:  dnsSuffix,
+		ID:                      clusterID,
+		Purpose:                 purpose,
+		Expiry:                  expiry,
+		Nodes:                   nodeInfo,
+		IsColumnar:              isColumnar,
+		DnsSuffix:               dnsSuffix,
+		LoadBalancerContainerID: loadBalancerContainerID,
 	}, nil
 }
 
@@ -781,23 +834,30 @@ func (d *Deployer) addRemoveNodes(
 		}
 	}
 
+	var nodeIpsBeingRemoved []string
+	for _, node := range nodesToRemove {
+		nodeIpsBeingRemoved = append(nodeIpsBeingRemoved, node.IPAddress)
+	}
+
+	var postRemovalNodes []*NodeInfo
+	for _, clusterNode := range clusterInfo.Nodes {
+		if !slices.Contains(nodeIpsBeingRemoved, clusterNode.IPAddress) {
+			postRemovalNodes = append(postRemovalNodes, clusterNode.nodeInfo)
+		}
+	}
+
 	if len(nodesToRemove) > 0 {
 		if clusterInfo.DnsSuffix != "" {
-			var nodeIpsBeingRemoved []string
-			for _, node := range nodesToRemove {
-				nodeIpsBeingRemoved = append(nodeIpsBeingRemoved, node.IPAddress)
-			}
-
-			var postRemovalNodes []*NodeInfo
-			for _, clusterNode := range clusterInfo.Nodes {
-				if !slices.Contains(nodeIpsBeingRemoved, clusterNode.IPAddress) {
-					postRemovalNodes = append(postRemovalNodes, clusterNode.nodeInfo)
-				}
-			}
-
-			err := d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, postRemovalNodes, clusterInfo.IsColumnar, false, false)
+			err = d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, postRemovalNodes, clusterInfo.IsColumnar, false, false)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to update dns records")
+			}
+		}
+
+		if clusterInfo.LoadBalancerContainerID != "" {
+			err = d.updateLoadBalancer(ctx, clusterInfo.LoadBalancerContainerID, postRemovalNodes)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to update load balancer")
 			}
 		}
 	}
@@ -811,6 +871,11 @@ func (d *Deployer) addRemoveNodes(
 	// not being removed from the cluster, which can now include the new nodes...
 
 	for _, clusterNode := range clusterInfo.Nodes {
+		if clusterNode.nodeInfo.Type != "server-node" &&
+			clusterNode.nodeInfo.Type != "columnar-node" {
+			continue
+		}
+
 		if !slices.Contains(otpsToRemove, clusterNode.OTPNode) {
 			ctrlNode = clusterNode
 		}
@@ -845,20 +910,27 @@ func (d *Deployer) addRemoveNodes(
 	}
 
 	if len(nodesToAdd) > 0 {
-		if clusterInfo.DnsSuffix != "" {
-			thisCluster, err := d.getClusterInfo(ctx, clusterInfo.ID)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to get cluster info for post-rebalance dns update")
-			}
+		thisCluster, err := d.getClusterInfo(ctx, clusterInfo.ID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get post-rebalance cluster info")
+		}
 
-			var allNodes []*NodeInfo
-			for _, node := range thisCluster.Nodes {
-				allNodes = append(allNodes, node.nodeInfo)
-			}
+		var allNodes []*NodeInfo
+		for _, node := range thisCluster.Nodes {
+			allNodes = append(allNodes, node.nodeInfo)
+		}
 
-			err := d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, allNodes, clusterInfo.IsColumnar, false, false)
+		if thisCluster.DnsSuffix != "" {
+			err := d.updateDnsRecords(ctx, thisCluster.DnsSuffix, allNodes, thisCluster.IsColumnar, false, false)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to update dns records")
+			}
+		}
+
+		if thisCluster.LoadBalancerContainerID != "" {
+			err := d.updateLoadBalancer(ctx, thisCluster.LoadBalancerContainerID, allNodes)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to update load balancer")
 			}
 		}
 	}
@@ -918,6 +990,16 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 			}
 
 			return false
+		})
+
+		// remove all utility nodes from auto-deletion
+		nodesToRemove = slices.DeleteFunc(nodesToRemove, func(node *deployedNodeInfo) bool {
+			isClusterNode := false
+			if node.nodeInfo.Type == "server-node" ||
+				node.nodeInfo.Type == "columnar-node" {
+				isClusterNode = true
+			}
+			return !isClusterNode
 		})
 
 		d.logger.Debug("identified nodes to add",
@@ -1157,6 +1239,14 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	analyticsTls := fmt.Sprintf("https://%s:18095", mgmtTlsAddr)
 	mgmt := fmt.Sprintf("http://%s", mgmtAddr)
 	mgmtTls := fmt.Sprintf("https://%s", mgmtTlsAddr)
+
+	lbIp := thisCluster.LoadBalancerIPAddress
+	if lbIp != "" {
+		analytics = fmt.Sprintf("http://%s:8095", lbIp)
+		analyticsTls = fmt.Sprintf("https://%s:18095", lbIp)
+		mgmt = fmt.Sprintf("http://%s:8091", lbIp)
+		mgmtTls = fmt.Sprintf("https://%s:8091", lbIp)
+	}
 
 	return &deployment.ConnectInfo{
 		ConnStr:        connStr,

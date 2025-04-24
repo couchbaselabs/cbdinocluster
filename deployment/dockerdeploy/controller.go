@@ -291,6 +291,146 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 	return node, nil
 }
 
+func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expiry time.Duration) (*NodeInfo, error) {
+	nodeID := "nginx"
+	logger := c.Logger.With(zap.String("nodeId", nodeID))
+
+	logger.Debug("deploying nginx node")
+
+	containerName := "cbdynnode-nginx-" + clusterID
+
+	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
+		Image: "nginx",
+		Labels: map[string]string{
+			"com.couchbase.dyncluster.cluster_id": clusterID,
+			"com.couchbase.dyncluster.type":       "nginx",
+			"com.couchbase.dyncluster.purpose":    "nginx backing for cluster",
+			"com.couchbase.dyncluster.node_id":    nodeID,
+		},
+		// same effect as ntp
+		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
+	}, &container.HostConfig{
+		AutoRemove:  true,
+		NetworkMode: container.NetworkMode(c.NetworkName),
+		CapAdd:      []string{"NET_ADMIN"},
+		Resources: container.Resources{
+			Ulimits: []*units.Ulimit{
+				{Name: "nofile", Soft: 200000, Hard: 200000},
+			},
+		},
+	}, nil, nil, containerName)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create container")
+	}
+
+	containerID := createResult.ID
+
+	logger.Debug("container created, starting", zap.String("container", containerID))
+
+	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to start container")
+	}
+
+	expiryTime := time.Time{}
+	if expiry > 0 {
+		expiryTime = time.Now().Add(expiry)
+	}
+
+	err = c.WriteNodeState(ctx, containerID, &DockerNodeState{
+		Expiry: expiryTime,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed write node state")
+	}
+
+	// Cheap hack for simpler parsing...
+	allNodes, err := c.ListNodes(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list nodes")
+	}
+
+	var node *NodeInfo
+	for _, allNode := range allNodes {
+		if allNode.ContainerID == containerID {
+			node = allNode
+		}
+	}
+	if node == nil {
+		return nil, errors.New("failed to find newly created container")
+	}
+
+	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
+
+	for {
+		resp, err := http.Get(fmt.Sprintf("http://%s:%d", node.IPAddress, 80))
+		if err != nil || resp.StatusCode != 200 {
+			logger.Debug("nginx not ready yet", zap.Error(err))
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		break
+	}
+
+	logger.Debug("container is ready!")
+
+	return node, nil
+}
+
+func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string) error {
+	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("addrs", addrs))
+
+	var nginxConf string
+	writeForwardedPort := func(port string) {
+		if len(addrs) > 0 {
+			nginxConf += "upstream backend" + port + " {\n"
+			for _, addr := range addrs {
+				nginxConf += "    server " + addr + ":" + port + ";\n"
+			}
+			nginxConf += "}\n"
+			nginxConf += "server {\n"
+			nginxConf += "    listen " + port + ";\n"
+			nginxConf += "    location / {\n"
+			nginxConf += "        proxy_pass http://backend" + port + ";\n"
+			nginxConf += "        proxy_set_header Host $http_host;\n"
+			nginxConf += "        proxy_set_header X-Real-IP $remote_addr;\n"
+			nginxConf += "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+			nginxConf += "    }\n"
+			nginxConf += "}\n"
+		}
+	}
+	writeForwardedPort("8091")
+	writeForwardedPort("8092")
+	writeForwardedPort("8093")
+	writeForwardedPort("8094")
+	writeForwardedPort("8095")
+	writeForwardedPort("8096")
+
+	confBytes := []byte(nginxConf)
+
+	tarBuf := bytes.NewBuffer(nil)
+	tarFile := tar.NewWriter(tarBuf)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "cb.conf",
+		Size: int64(len(confBytes)),
+	})
+	tarFile.Write(confBytes)
+	tarFile.Flush()
+
+	err := c.DockerCli.CopyToContainer(ctx, containerID, "/etc/nginx/conf.d/", tarBuf, container.CopyToContainerOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to write nginx config")
+	}
+
+	err = c.execCmd(ctx, containerID, []string{"nginx", "-s", "reload"})
+	if err != nil {
+		return errors.Wrap(err, "failed to reload nginx config")
+	}
+
+	return nil
+}
+
 type DeployNodeOptions struct {
 	Purpose            string
 	Expiry             time.Duration
