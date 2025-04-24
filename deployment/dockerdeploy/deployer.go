@@ -28,6 +28,13 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+var DEFAULT_SERVICES []clusterdef.Service = []clusterdef.Service{
+	clusterdef.KvService,
+	clusterdef.IndexService,
+	clusterdef.QueryService,
+	clusterdef.SearchService,
+}
+
 type Deployer struct {
 	logger        *zap.Logger
 	dockerCli     *client.Client
@@ -352,12 +359,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 		services := nodeGrp.Services
 		if len(services) == 0 {
-			services = []clusterdef.Service{
-				clusterdef.KvService,
-				clusterdef.IndexService,
-				clusterdef.QueryService,
-				clusterdef.SearchService,
-			}
+			services = DEFAULT_SERVICES
 		}
 
 		nsServices, err := clusterdef.ServicesToNsServices(services)
@@ -740,7 +742,8 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	}
 
 	if len(def.NodeGroups) > 0 {
-		nodesToRemove := clusterInfo.Nodes
+		nodesToRemove := make([]*deployedNodeInfo, len(clusterInfo.Nodes))
+		copy(nodesToRemove, clusterInfo.Nodes)
 		nodesToAdd := []*clusterdef.NodeGroup{}
 
 		// build the list of individualized nodes we need
@@ -765,7 +768,12 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 					continue
 				}
 
-				serviceCmp := clusterdef.CompareServices(node.Services, nodeGrp.Services)
+				nodeGrpServices := nodeGrp.Services
+				if len(nodeGrpServices) == 0 {
+					nodeGrpServices = DEFAULT_SERVICES
+				}
+
+				serviceCmp := clusterdef.CompareServices(node.Services, nodeGrpServices)
 				if serviceCmp != 0 {
 					continue
 				}
