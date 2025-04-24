@@ -26,8 +26,9 @@ type DockerCluster struct {
 	CbasMemoryMB     int `yaml:"cbas-memory,omitempty"`
 	EventingMemoryMB int `yaml:"eventing-memory,omitempty"`
 
-	Analytics AnalyticsSettings `yaml:"analytics,omitempty"`
-	EnableDNS bool              `yaml:"dns,omitempty"`
+	Analytics          AnalyticsSettings `yaml:"analytics,omitempty"`
+	EnableDNS          bool              `yaml:"dns,omitempty"`
+	EnableLoadBalancer bool              `yaml:"load-balancer,omitempty"`
 }
 
 type AnalyticsSettings struct {
