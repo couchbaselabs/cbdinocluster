@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -382,8 +383,10 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("addrs", addrs))
 
 	var nginxConf string
-	writeForwardedPort := func(port string, stickySession bool) {
+	writeForwardedPort := func(portInt int, stickySession bool) {
 		if len(addrs) > 0 {
+			port := strconv.Itoa(portInt)
+
 			nginxConf += "upstream backend" + port + " {\n"
 			if stickySession {
 				nginxConf += "    ip_hash;\n"
@@ -403,12 +406,13 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 			nginxConf += "}\n"
 		}
 	}
-	writeForwardedPort("8091", true)
-	writeForwardedPort("8092", false)
-	writeForwardedPort("8093", false)
-	writeForwardedPort("8094", false)
-	writeForwardedPort("8095", false)
-	writeForwardedPort("8096", false)
+	writeForwardedPort(8091, true)
+	writeForwardedPort(8092, false)
+	writeForwardedPort(8093, false)
+	writeForwardedPort(8094, false)
+	writeForwardedPort(8095, false)
+	writeForwardedPort(8096, false)
+	writeForwardedPort(8097, false)
 
 	confBytes := []byte(nginxConf)
 
