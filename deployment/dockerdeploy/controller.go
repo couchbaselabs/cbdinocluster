@@ -382,9 +382,12 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("addrs", addrs))
 
 	var nginxConf string
-	writeForwardedPort := func(port string) {
+	writeForwardedPort := func(port string, stickySession bool) {
 		if len(addrs) > 0 {
 			nginxConf += "upstream backend" + port + " {\n"
+			if stickySession {
+				nginxConf += "    ip_hash;\n"
+			}
 			for _, addr := range addrs {
 				nginxConf += "    server " + addr + ":" + port + ";\n"
 			}
@@ -400,12 +403,12 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 			nginxConf += "}\n"
 		}
 	}
-	writeForwardedPort("8091")
-	writeForwardedPort("8092")
-	writeForwardedPort("8093")
-	writeForwardedPort("8094")
-	writeForwardedPort("8095")
-	writeForwardedPort("8096")
+	writeForwardedPort("8091", true)
+	writeForwardedPort("8092", false)
+	writeForwardedPort("8093", false)
+	writeForwardedPort("8094", false)
+	writeForwardedPort("8095", false)
+	writeForwardedPort("8096", false)
 
 	confBytes := []byte(nginxConf)
 
