@@ -51,6 +51,7 @@ type Config struct {
 	GCP     Config_GCP     `yaml:"gcp"`
 	Azure   Config_Azure   `yaml:"azure"`
 	Capella Config_Capella `yaml:"capella"`
+	DNS     Config_DNS     `yaml:"dns"`
 
 	DefaultDeployer string        `yaml:"default-deployer"`
 	DefaultExpiry   time.Duration `yaml:"default-expiry"`
@@ -117,6 +118,11 @@ type Config_Capella struct {
 	DefaultGcpRegion   string `yaml:"default-gcp-region"`
 
 	UploadServerLogsHostName string `yaml:"upload-server-logs-host-name"`
+}
+
+type Config_DNS struct {
+	Enabled  StringBool `yaml:"enabled"`
+	Hostname string     `yaml:"hostname"`
 }
 
 func DefaultConfigPath() (string, error) {

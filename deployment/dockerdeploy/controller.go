@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
-	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
@@ -30,6 +30,8 @@ type Controller struct {
 type NodeInfo struct {
 	ContainerID          string
 	Type                 string
+	DnsName              string
+	DnsSuffix            string
 	NodeID               string
 	ClusterID            string
 	Name                 string
@@ -41,9 +43,10 @@ type NodeInfo struct {
 	InitialServerVersion string
 }
 
-func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
+func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
 	clusterID := container.Labels["com.couchbase.dyncluster.cluster_id"]
 	nodeType := container.Labels["com.couchbase.dyncluster.type"]
+	dnsName := container.Labels["com.couchbase.dyncluster.dns_name"]
 	nodeID := container.Labels["com.couchbase.dyncluster.node_id"]
 	nodeName := container.Labels["com.couchbase.dyncluster.node_name"]
 	creator := container.Labels["com.couchbase.dyncluster.creator"]
@@ -65,9 +68,19 @@ func (c *Controller) parseContainerInfo(container types.Container) *NodeInfo {
 		nodeType = "server-node"
 	}
 
+	var dnsSuffix string
+	if dnsName != "" {
+		dnsParts := strings.SplitN(dnsName, ".", 2)
+		if len(dnsParts) >= 2 {
+			dnsSuffix = dnsParts[1]
+		}
+	}
+
 	return &NodeInfo{
 		ContainerID:          container.ID,
 		Type:                 nodeType,
+		DnsName:              dnsName,
+		DnsSuffix:            dnsSuffix,
 		NodeID:               nodeID,
 		ClusterID:            clusterID,
 		Name:                 nodeName,
@@ -285,6 +298,7 @@ type DeployNodeOptions struct {
 	Image              *ImageRef
 	ImageServerVersion string
 	IsColumnar         bool
+	DnsSuffix          string
 	EnvVars            map[string]string
 }
 
@@ -295,6 +309,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 	logger.Debug("deploying node", zap.Any("def", def))
 
 	containerName := "cbdynnode-" + nodeID
+
+	dnsName := ""
+	if def.DnsSuffix != "" {
+		dnsName = fmt.Sprintf("%s.%s", nodeID[:6], def.DnsSuffix)
+	}
 
 	var envVars []string
 	for varName, varValue := range def.EnvVars {
@@ -311,6 +330,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		Labels: map[string]string{
 			"com.couchbase.dyncluster.cluster_id":             def.ClusterID,
 			"com.couchbase.dyncluster.type":                   nodeType,
+			"com.couchbase.dyncluster.dns_name":               dnsName,
 			"com.couchbase.dyncluster.purpose":                def.Purpose,
 			"com.couchbase.dyncluster.node_id":                nodeID,
 			"com.couchbase.dyncluster.initial_server_version": def.ImageServerVersion,

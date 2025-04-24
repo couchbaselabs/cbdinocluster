@@ -40,6 +40,7 @@ type Deployer struct {
 	dockerCli     *client.Client
 	imageProvider ImageProvider
 	controller    *Controller
+	dnsProvider   DnsProvider
 }
 
 var _ deployment.Deployer = (*Deployer)(nil)
@@ -50,6 +51,7 @@ type DeployerOptions struct {
 	NetworkName  string
 	GhcrUsername string
 	GhcrPassword string
+	DnsProvider  DnsProvider
 }
 
 func NewDeployer(opts *DeployerOptions) (*Deployer, error) {
@@ -67,6 +69,7 @@ func NewDeployer(opts *DeployerOptions) (*Deployer, error) {
 			DockerCli:   opts.DockerCli,
 			NetworkName: opts.NetworkName,
 		},
+		dnsProvider: opts.DnsProvider,
 	}, nil
 }
 
@@ -101,6 +104,7 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 		cluster.Creator = node.Creator
 		cluster.Owner = node.Owner
 		cluster.Purpose = node.Purpose
+		cluster.DnsName = node.DnsSuffix
 		if !node.Expiry.IsZero() && node.Expiry.After(cluster.Expiry) {
 			cluster.Expiry = node.Expiry
 		}
@@ -116,6 +120,7 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 			NodeID:     node.NodeID,
 			Name:       node.Name,
 			IPAddress:  node.IPAddress,
+			DnsName:    node.DnsName,
 		})
 
 		// if any nodes are columnar nodes, the cluster is a columnar cluster
@@ -206,6 +211,20 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 	clusterID := uuid.NewString()
 
+	useDns := def.Docker.EnableDNS
+	if useDns && d.dnsProvider == nil {
+		return nil, errors.New("cannot use dns, dns not configured")
+	}
+
+	var dnsName string
+	if useDns {
+		dnsHostname := d.dnsProvider.GetHostname()
+		dnsName = fmt.Sprintf("%s-%s.%s",
+			clusterID[:8],
+			time.Now().Format("20060102"),
+			dnsHostname)
+	}
+
 	if def.Columnar {
 		d.logger.Info("deploying mock s3 for blob storage")
 
@@ -288,6 +307,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 				Image:              image,
 				ImageServerVersion: nodeGrp.Version,
 				IsColumnar:         def.Columnar,
+				DnsSuffix:          dnsName,
 				Expiry:             def.Expiry,
 				EnvVars:            nodeGrp.Docker.EnvVars,
 			}
@@ -343,6 +363,14 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	}
 
 	leaveNodesAfterReturn = true
+
+	if useDns {
+		// since this is a net-new domain name, no need to wait for dns propagation
+		err = d.updateDnsRecords(ctx, dnsName, nodes, def.Columnar, true, false)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to update dns records")
+		}
+	}
 
 	// we need to sort the nodes by server version so that the oldest server version
 	// is the first one initialized, otherwise in mixed-version clusters, we might
@@ -490,7 +518,66 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	return thisCluster, nil
 }
 
+func (d *Deployer) updateDnsRecords(
+	ctx context.Context,
+	dnsName string,
+	nodes []*NodeInfo,
+	isColumnar bool,
+	noWait bool,
+	noWaitPropagate bool,
+) error {
+	var allNodeAs []string
+	var allNodeSrvs []string
+	var allNodeSecSrvs []string
+
+	var records []DnsRecord
+	for _, node := range nodes {
+		/* don't spam the dns names for now...
+		records = append(records, DnsRecord{
+			RecordType: "A",
+			Name:       node.DnsName,
+			Addrs:      []string{node.IPAddress},
+		})
+		*/
+
+		allNodeAs = append(allNodeAs, node.IPAddress)
+		allNodeSrvs = append(allNodeSrvs, "0 0 11210 "+node.IPAddress)
+		allNodeSecSrvs = append(allNodeSecSrvs, "0 0 11207 "+node.IPAddress)
+	}
+
+	records = append(records, DnsRecord{
+		RecordType: "A",
+		Name:       dnsName,
+		Addrs:      allNodeAs,
+	})
+
+	if !isColumnar {
+		records = append(records, DnsRecord{
+			RecordType: "SRV",
+			Name:       "_couchbase._tcp.srv." + dnsName,
+			Addrs:      allNodeSrvs,
+		})
+
+		records = append(records, DnsRecord{
+			RecordType: "SRV",
+			Name:       "_couchbases._tcp.srv." + dnsName,
+			Addrs:      allNodeSecSrvs,
+		})
+	}
+
+	d.logger.Info("updating dns records", zap.Any("records", records))
+
+	err := d.dnsProvider.UpdateRecords(ctx, records, noWait, noWaitPropagate)
+	if err != nil {
+		return err
+	}
+
+	d.logger.Info("records created")
+	return nil
+}
+
 type deployedNodeInfo struct {
+	nodeInfo    *NodeInfo
 	ContainerID string
 	IPAddress   string
 	OTPNode     string
@@ -504,6 +591,7 @@ type deployedClusterInfo struct {
 	Expiry     time.Time
 	Nodes      []*deployedNodeInfo
 	IsColumnar bool
+	DnsSuffix  string
 }
 
 func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deployedClusterInfo, error) {
@@ -515,12 +603,17 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	var purpose string
 	var expiry time.Time
 	var isColumnar bool
+	var dnsSuffix string
 	var nodeInfo []*deployedNodeInfo
 
 	for _, node := range nodes {
 		if node.ClusterID == clusterID {
 			if node.Type == "columnar-node" {
 				isColumnar = true
+			}
+
+			if node.DnsSuffix != "" {
+				dnsSuffix = node.DnsSuffix
 			}
 
 			if node.Purpose != "" {
@@ -551,6 +644,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 			}
 
 			nodeInfo = append(nodeInfo, &deployedNodeInfo{
+				nodeInfo:    node,
 				ContainerID: node.ContainerID,
 				IPAddress:   node.IPAddress,
 				OTPNode:     otpNode,
@@ -566,6 +660,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 		Expiry:     expiry,
 		Nodes:      nodeInfo,
 		IsColumnar: isColumnar,
+		DnsSuffix:  dnsSuffix,
 	}, nil
 }
 
@@ -686,6 +781,27 @@ func (d *Deployer) addRemoveNodes(
 		}
 	}
 
+	if len(nodesToRemove) > 0 {
+		if clusterInfo.DnsSuffix != "" {
+			var nodeIpsBeingRemoved []string
+			for _, node := range nodesToRemove {
+				nodeIpsBeingRemoved = append(nodeIpsBeingRemoved, node.IPAddress)
+			}
+
+			var postRemovalNodes []*NodeInfo
+			for _, clusterNode := range clusterInfo.Nodes {
+				if !slices.Contains(nodeIpsBeingRemoved, clusterNode.IPAddress) {
+					postRemovalNodes = append(postRemovalNodes, clusterNode.nodeInfo)
+				}
+			}
+
+			err := d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, postRemovalNodes, clusterInfo.IsColumnar, false, false)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to update dns records")
+			}
+		}
+	}
+
 	otpsToRemove := make([]string, len(nodesToRemove))
 	for nodeIdx, nodeToRemove := range nodesToRemove {
 		otpsToRemove[nodeIdx] = nodeToRemove.OTPNode
@@ -726,6 +842,25 @@ func (d *Deployer) addRemoveNodes(
 			zap.String("container", node.ContainerID))
 
 		d.controller.RemoveNode(ctx, node.ContainerID)
+	}
+
+	if len(nodesToAdd) > 0 {
+		if clusterInfo.DnsSuffix != "" {
+			thisCluster, err := d.getClusterInfo(ctx, clusterInfo.ID)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to get cluster info for post-rebalance dns update")
+			}
+
+			var allNodes []*NodeInfo
+			for _, node := range thisCluster.Nodes {
+				allNodes = append(allNodes, node.nodeInfo)
+			}
+
+			err := d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, allNodes, clusterInfo.IsColumnar, false, false)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to update dns records")
+			}
+		}
 	}
 
 	return deployedNodeIds, nil
@@ -869,22 +1004,63 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 	return nil
 }
 
+func (d *Deployer) appendNodeDnsNames(dnsNames []string, node *NodeInfo) []string {
+	if node.DnsName != "" {
+		if !slices.Contains(dnsNames, node.DnsName) {
+			dnsNames = append(dnsNames, node.DnsName)
+		}
+	}
+	if node.DnsSuffix != "" {
+		couchbaseRec := "_couchbase._tcp.srv." + node.DnsSuffix
+		couchbasesRec := "_couchbases._tcp.srv." + node.DnsSuffix
+
+		if !slices.Contains(dnsNames, node.DnsSuffix) {
+			dnsNames = append(dnsNames, node.DnsSuffix)
+		}
+		if !slices.Contains(dnsNames, couchbaseRec) {
+			dnsNames = append(dnsNames, couchbaseRec)
+		}
+		if !slices.Contains(dnsNames, couchbasesRec) {
+			dnsNames = append(dnsNames, couchbasesRec)
+		}
+	}
+
+	return dnsNames
+}
+
+func (d *Deployer) removeDnsNames(ctx context.Context, dnsNames []string) {
+	if len(dnsNames) > 0 {
+		if d.dnsProvider == nil {
+			d.logger.Warn("could not remove associated dns names due to no dns configuration")
+		} else {
+			d.logger.Info("removing dns names", zap.Any("names", dnsNames))
+			err := d.dnsProvider.RemoveRecords(ctx, dnsNames, true, true)
+			if err != nil {
+				d.logger.Warn("failed to remove dns names", zap.Error(err))
+			}
+		}
+	}
+}
+
 func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	nodes, err := d.controller.ListNodes(ctx)
 	if err != nil {
 		return err
 	}
 
+	var dnsToRemove []string
 	for _, node := range nodes {
 		if node.ClusterID == clusterID {
 			d.logger.Info("removing node",
 				zap.String("id", node.NodeID),
 				zap.String("container", node.ContainerID))
 
+			dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
 			d.controller.RemoveNode(ctx, node.ContainerID)
 		}
 	}
 
+	d.removeDnsNames(ctx, dnsToRemove)
 	return nil
 }
 
@@ -894,14 +1070,17 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 		return err
 	}
 
+	var dnsToRemove []string
 	for _, node := range nodes {
 		d.logger.Info("removing node",
 			zap.String("id", node.NodeID),
 			zap.String("container", node.ContainerID))
 
+		dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
 		d.controller.RemoveNode(ctx, node.ContainerID)
 	}
 
+	d.removeDnsNames(ctx, dnsToRemove)
 	return nil
 }
 
@@ -928,6 +1107,18 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	thisCluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get cluster info")
+	}
+
+	if thisCluster.DnsName != "" {
+		return &deployment.ConnectInfo{
+			ConnStr:        fmt.Sprintf("couchbase://%s", "srv."+thisCluster.DnsName),
+			ConnStrTls:     fmt.Sprintf("couchbases://%s", "srv."+thisCluster.DnsName),
+			Analytics:      fmt.Sprintf("http://%s:8095", thisCluster.DnsName),
+			AnalyticsTls:   fmt.Sprintf("https://%s:18095", thisCluster.DnsName),
+			Mgmt:           fmt.Sprintf("http://%s", thisCluster.DnsName),
+			MgmtTls:        fmt.Sprintf("https://%s", thisCluster.DnsName),
+			DataApiConnstr: "",
+		}, nil
 	}
 
 	var connstrAddrs []string
@@ -962,12 +1153,16 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 
 	connStr := fmt.Sprintf("couchbase://%s", strings.Join(connstrAddrs, ","))
 	connStrTls := fmt.Sprintf("couchbases://%s", strings.Join(connstrTlsAddrs, ","))
+	analytics := fmt.Sprintf("http://%s:8095", mgmtAddr)
+	analyticsTls := fmt.Sprintf("https://%s:18095", mgmtTlsAddr)
 	mgmt := fmt.Sprintf("http://%s", mgmtAddr)
 	mgmtTls := fmt.Sprintf("https://%s", mgmtTlsAddr)
 
 	return &deployment.ConnectInfo{
 		ConnStr:        connStr,
 		ConnStrTls:     connStrTls,
+		Analytics:      analytics,
+		AnalyticsTls:   analyticsTls,
 		Mgmt:           mgmt,
 		MgmtTls:        mgmtTls,
 		DataApiConnstr: "",
@@ -981,16 +1176,19 @@ func (d *Deployer) Cleanup(ctx context.Context) error {
 	}
 
 	curTime := time.Now()
+	var dnsToRemove []string
 	for _, node := range nodes {
 		if !node.Expiry.IsZero() && !node.Expiry.After(curTime) {
 			d.logger.Info("removing node",
 				zap.String("id", node.NodeID),
 				zap.String("container", node.ContainerID))
 
+			dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
 			d.controller.RemoveNode(ctx, node.ContainerID)
 		}
 	}
 
+	d.removeDnsNames(ctx, dnsToRemove)
 	return nil
 }
 
@@ -1000,17 +1198,20 @@ func (d *Deployer) DestroyAllResources(ctx context.Context) error {
 		return errors.Wrap(err, "failed to list all nodes")
 	}
 
+	var dnsToRemove []string
 	for _, node := range nodes {
 		d.logger.Info("removing node",
 			zap.String("id", node.NodeID),
 			zap.String("container", node.ContainerID))
 
+		dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
 		err := d.controller.RemoveNode(ctx, node.ContainerID)
 		if err != nil {
 			return errors.Wrap(err, "failed to remove")
 		}
 	}
 
+	d.removeDnsNames(ctx, dnsToRemove)
 	return nil
 }
 

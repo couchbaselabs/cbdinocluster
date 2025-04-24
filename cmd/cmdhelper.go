@@ -109,6 +109,22 @@ func (h *CmdHelper) getDockerDeployer(ctx context.Context) (*dockerdeploy.Deploy
 	dockerHost := config.Docker.Host
 	dockerNetwork := config.Docker.Network
 
+	var dnsProvider dockerdeploy.DnsProvider
+	if config.DNS.Enabled.Value() {
+		if config.AWS.Enabled.ValueOr(false) {
+			awsCreds := h.GetAWSCredentials(ctx)
+
+			dnsProvider = &dockerdeploy.AwsDnsProvider{
+				Logger:      logger,
+				Region:      config.AWS.Region,
+				Credentials: awsCreds,
+				Hostname:    config.DNS.Hostname,
+			}
+		} else {
+			logger.Warn("could not enable DNS provider, AWS is not enabled")
+		}
+	}
+
 	dockerCli, err := client.NewClientWithOpts(
 		client.WithHost(dockerHost),
 		client.WithAPIVersionNegotiation(),
@@ -123,6 +139,7 @@ func (h *CmdHelper) getDockerDeployer(ctx context.Context) (*dockerdeploy.Deploy
 		NetworkName:  dockerNetwork,
 		GhcrUsername: githubUser,
 		GhcrPassword: githubToken,
+		DnsProvider:  dnsProvider,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to initializer deployer")
