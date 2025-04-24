@@ -19,6 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
@@ -1282,6 +1283,98 @@ var initCmd = &cobra.Command{
 			saveConfig()
 		}
 
+		printDnsConfig := func() {
+			fmt.Printf("  Enabled: %t\n", curConfig.DNS.Enabled.Value())
+			fmt.Printf("  Hostname: %s\n", curConfig.DNS.Hostname)
+		}
+		{
+			flagDisableDns, _ := cmd.Flags().GetBool("disable-dns")
+			flagDnsHostname, _ := cmd.Flags().GetString("dns-hostname")
+
+			dnsEnabled := curConfig.DNS.Enabled.ValueOr(true)
+			dnsHostname := curConfig.DNS.Hostname
+
+			for {
+				if flagDisableDns {
+					fmt.Printf("DNS disabled via flags.\n")
+					dnsEnabled = false
+					break
+				}
+
+				dnsEnabled = readBool(
+					"Would you like to enable DNS?",
+					dnsEnabled)
+				if !dnsEnabled {
+					break
+				}
+
+				if !curConfig.AWS.Enabled.ValueOr(false) {
+					fmt.Printf("AWS must be configured to use DNS.\n")
+					dnsEnabled = false
+				}
+
+				awsCfg, err := config.LoadDefaultConfig(ctx)
+				if err != nil {
+					fmt.Printf("Failed to loads AWS environment: %s\n", err)
+					dnsEnabled = false
+					continue
+				}
+
+				route53Client := route53.New(route53.Options{
+					Region:      curConfig.AWS.Region,
+					Credentials: awsCfg.Credentials,
+				})
+
+				zones, err := route53Client.ListHostedZones(ctx, nil)
+				if err != nil {
+					fmt.Printf("Failed to execute command (list hosted zones) with AWS credentials: %s\n", err)
+					dnsEnabled = false
+					continue
+				}
+
+				fmt.Printf("Found %d hosted zones\n", len(zones.HostedZones))
+				for _, zone := range zones.HostedZones {
+					zoneName := strings.TrimSuffix(*zone.Name, ".")
+					fmt.Printf("  %s (%s)\n", zoneName, *zone.Id)
+				}
+
+				if flagDnsHostname != "" {
+					fmt.Printf("DNS hostname specified via flags:\n  %s\n", flagDnsHostname)
+					dnsHostname = flagDnsHostname
+				} else {
+					dnsHostname = readString(
+						"What DNS hostname should we use?",
+						dnsHostname, false)
+				}
+				if dnsHostname == "" {
+					fmt.Printf("The DNS hostname is required.\n")
+					dnsEnabled = false
+					continue
+				}
+
+				foundHostname := false
+				for _, zone := range zones.HostedZones {
+					zoneName := strings.TrimSuffix(*zone.Name, ".")
+					if zoneName == dnsHostname {
+						foundHostname = true
+						break
+					}
+				}
+
+				if !foundHostname {
+					fmt.Printf("The specified DNS hostname does not match any of the hosted zones.\n")
+					dnsEnabled = false
+					continue
+				}
+
+				break
+			}
+
+			curConfig.DNS.Enabled.Set(dnsEnabled)
+			curConfig.DNS.Hostname = dnsHostname
+			saveConfig()
+		}
+
 		printBaseConfig := func() {
 			fmt.Printf("  Default Deployer: %s\n", curConfig.DefaultDeployer)
 			fmt.Printf("  Default Expiry: %s\n", curConfig.DefaultExpiry.String())
@@ -1344,6 +1437,9 @@ var initCmd = &cobra.Command{
 		fmt.Printf("Using Capella configuration:\n")
 		printCapellaConfig()
 
+		fmt.Printf("Using DNS configuration:\n")
+		printDnsConfig()
+
 		fmt.Printf("Using Base configuration:\n")
 		printBaseConfig()
 	},
@@ -1378,5 +1474,7 @@ func init() {
 	initCmd.Flags().Bool("disable-aws", false, "Disable AWS")
 	initCmd.Flags().String("aws-region", "", "AWS default region to use")
 	initCmd.Flags().Bool("disable-azure", false, "Disable Azure")
+	initCmd.Flags().Bool("disable-dns", false, "Disable DNS")
+	initCmd.Flags().String("dns-hostname", "", "DNS hostname prefix to use")
 	initCmd.Flags().String("upload-server-logs-host-name", "", "Upload server logs host name")
 }

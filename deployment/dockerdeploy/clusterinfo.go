@@ -12,6 +12,7 @@ type ClusterNodeInfo struct {
 	Name       string
 	ResourceID string
 	IPAddress  string
+	DnsName    string
 }
 
 var _ (deployment.ClusterNodeInfo) = (*ClusterNodeInfo)(nil)
@@ -30,6 +31,7 @@ type ClusterInfo struct {
 	Purpose   string
 	Expiry    time.Time
 	Nodes     []*ClusterNodeInfo
+	DnsName   string
 }
 
 var _ (deployment.ClusterInfo) = (*ClusterInfo)(nil)

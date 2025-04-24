@@ -33,11 +33,13 @@ type ClusterInfo interface {
 }
 
 type ConnectInfo struct {
-	ConnStr    string
-	ConnStrTls string
-	ConnStrCb2 string
-	Mgmt       string
-	MgmtTls    string
+	ConnStr        string
+	ConnStrTls     string
+	ConnStrCb2     string
+	Analytics      string
+	AnalyticsTls   string
+	Mgmt           string
+	MgmtTls        string
 	DataApiConnstr string
 }
 

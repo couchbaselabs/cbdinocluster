@@ -27,6 +27,7 @@ type DockerCluster struct {
 	EventingMemoryMB int `yaml:"eventing-memory,omitempty"`
 
 	Analytics AnalyticsSettings `yaml:"analytics,omitempty"`
+	EnableDNS bool              `yaml:"dns,omitempty"`
 }
 
 type AnalyticsSettings struct {
