@@ -100,18 +100,20 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 	}
 
 	for _, node := range nodes {
-		cluster := getCluster(node.ClusterID)
-		cluster.Creator = node.Creator
-		cluster.Owner = node.Owner
-		cluster.Purpose = node.Purpose
-		cluster.DnsName = node.DnsSuffix
-		if !node.Expiry.IsZero() && node.Expiry.After(cluster.Expiry) {
-			cluster.Expiry = node.Expiry
-		}
-
 		isClusterNode := false
 		if node.Type == "server-node" || node.Type == "columnar-node" {
 			isClusterNode = true
+		}
+
+		cluster := getCluster(node.ClusterID)
+		if isClusterNode {
+			cluster.Creator = node.Creator
+			cluster.Owner = node.Owner
+			cluster.Purpose = node.Purpose
+			cluster.DnsName = node.DnsSuffix
+			if !node.Expiry.IsZero() && node.Expiry.After(cluster.Expiry) {
+				cluster.Expiry = node.Expiry
+			}
 		}
 
 		cluster.Nodes = append(cluster.Nodes, &ClusterNodeInfo{
@@ -123,6 +125,7 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
 			DnsName:    node.DnsName,
 		})
 
+		// if we hit the nginx node, set the clusters LoadBalancerIPAddress
 		if node.Type == "nginx" {
 			cluster.LoadBalancerIPAddress = node.IPAddress
 		}
