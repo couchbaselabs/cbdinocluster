@@ -42,6 +42,7 @@ type NodeInfo struct {
 	Expiry               time.Time
 	IPAddress            string
 	InitialServerVersion string
+	UsingDinoCerts       bool
 }
 
 func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
@@ -53,6 +54,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
 	creator := container.Labels["com.couchbase.dyncluster.creator"]
 	purpose := container.Labels["com.couchbase.dyncluster.purpose"]
 	initialServerVersion := container.Labels["com.couchbase.dyncluster.initial_server_version"]
+	usingDinoCerts := container.Labels["com.couchbase.dyncluster.using_dino_certs"]
 
 	// If there is no cluster ID specified, this is not a cbdyncluster container
 	if clusterID == "" {
@@ -67,6 +69,11 @@ func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
 	// if the node type is unspecified, we default to server-node
 	if nodeType == "" {
 		nodeType = "server-node"
+	}
+
+	var usingDinoCertsBool bool
+	if usingDinoCerts != "" {
+		usingDinoCertsBool = true
 	}
 
 	var dnsSuffix string
@@ -91,6 +98,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
 		Expiry:               time.Time{},
 		IPAddress:            pickedNetwork.IPAddress,
 		InitialServerVersion: initialServerVersion,
+		UsingDinoCerts:       usingDinoCertsBool,
 	}
 }
 
@@ -379,11 +387,44 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 	return node, nil
 }
 
-func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string) error {
+func (c *Controller) UpdateNginxCertificates(ctx context.Context, containerID string, certPem []byte, keyPem []byte) error {
+	c.Logger.Debug("uploading nginx certificates",
+		zap.String("container", containerID),
+		zap.Int("certLen", len(certPem)),
+		zap.Int("keyLen", len(keyPem)))
+
+	err := c.execCmd(ctx, containerID, []string{"mkdir", "-p", "/etc/nginx/ssl/"})
+	if err != nil {
+		return errors.Wrap(err, "failed to mkdir nginx ssl folder")
+	}
+
+	tarBuf := bytes.NewBuffer(nil)
+	tarFile := tar.NewWriter(tarBuf)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "cert.pem",
+		Size: int64(len(certPem)),
+	})
+	tarFile.Write(certPem)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "key.pem",
+		Size: int64(len(keyPem)),
+	})
+	tarFile.Write(keyPem)
+	tarFile.Flush()
+
+	err = c.DockerCli.CopyToContainer(ctx, containerID, "/etc/nginx/ssl/", tarBuf, container.CopyToContainerOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to write certificates")
+	}
+
+	return nil
+}
+
+func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string, enableSsl bool) error {
 	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("addrs", addrs))
 
 	var nginxConf string
-	writeForwardedPort := func(portInt int, stickySession bool) {
+	writeForwardedPort := func(portInt int, stickySession bool, withSsl bool) {
 		if len(addrs) > 0 {
 			port := strconv.Itoa(portInt)
 
@@ -396,9 +437,22 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 			}
 			nginxConf += "}\n"
 			nginxConf += "server {\n"
-			nginxConf += "    listen " + port + ";\n"
+
+			if !withSsl {
+				nginxConf += "    listen " + port + ";\n"
+			} else {
+				nginxConf += "    listen " + port + " ssl;\n"
+
+				nginxConf += "    ssl_certificate /etc/nginx/ssl/cert.pem;\n"
+				nginxConf += "    ssl_certificate_key /etc/nginx/ssl/key.pem;"
+			}
+
 			nginxConf += "    location / {\n"
-			nginxConf += "        proxy_pass http://backend" + port + ";\n"
+			if !withSsl {
+				nginxConf += "        proxy_pass http://backend" + port + ";\n"
+			} else {
+				nginxConf += "        proxy_pass https://backend" + port + ";\n"
+			}
 			nginxConf += "        proxy_set_header Host $http_host;\n"
 			nginxConf += "        proxy_set_header X-Real-IP $remote_addr;\n"
 			nginxConf += "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
@@ -406,13 +460,22 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 			nginxConf += "}\n"
 		}
 	}
-	writeForwardedPort(8091, true)
-	writeForwardedPort(8092, false)
-	writeForwardedPort(8093, false)
-	writeForwardedPort(8094, false)
-	writeForwardedPort(8095, false)
-	writeForwardedPort(8096, false)
-	writeForwardedPort(8097, false)
+	writeForwardedPort(8091, true, false)
+	writeForwardedPort(8092, false, false)
+	writeForwardedPort(8093, false, false)
+	writeForwardedPort(8094, false, false)
+	writeForwardedPort(8095, false, false)
+	writeForwardedPort(8096, false, false)
+	writeForwardedPort(8097, false, false)
+	if enableSsl {
+		writeForwardedPort(18091, true, true)
+		writeForwardedPort(18092, false, true)
+		writeForwardedPort(18093, false, true)
+		writeForwardedPort(18094, false, true)
+		writeForwardedPort(18095, false, true)
+		writeForwardedPort(18096, false, true)
+		writeForwardedPort(18097, false, true)
+	}
 
 	confBytes := []byte(nginxConf)
 
@@ -438,6 +501,67 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 	return nil
 }
 
+func (c *Controller) UploadCertificates(
+	ctx context.Context,
+	containerID string,
+	nodeCertPem []byte,
+	nodeKeyPem []byte,
+	caPems [][]byte,
+) error {
+	c.Logger.Debug("uploading couchbase certificates",
+		zap.String("container", containerID),
+		zap.Int("nodeCertLen", len(nodeCertPem)),
+		zap.Int("nodeKeyLen", len(nodeKeyPem)),
+		zap.Int("numCaPems", len(caPems)))
+
+	err := c.execCmd(ctx, containerID, []string{"mkdir", "-p", "/opt/couchbase/var/lib/couchbase/inbox/"})
+	if err != nil {
+		return errors.Wrap(err, "failed to mkdir couchbase inbox")
+	}
+
+	tarBuf := bytes.NewBuffer(nil)
+	tarFile := tar.NewWriter(tarBuf)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "chain.pem",
+		Size: int64(len(nodeCertPem)),
+	})
+	tarFile.Write(nodeCertPem)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "pkey.key",
+		Size: int64(len(nodeKeyPem)),
+	})
+	tarFile.Write(nodeKeyPem)
+	caPemLen := 0
+	for _, caPem := range caPems {
+		caPemLen += len(caPem)
+	}
+	tarFile.WriteHeader(&tar.Header{
+		Name: "CA/ca.pem",
+		Size: int64(caPemLen),
+	})
+	for _, caPem := range caPems {
+		tarFile.Write(caPem)
+	}
+	tarFile.Flush()
+
+	err = c.DockerCli.CopyToContainer(ctx, containerID, "/opt/couchbase/var/lib/couchbase/inbox/", tarBuf, container.CopyToContainerOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to write certificates")
+	}
+
+	err = c.execCmd(ctx, containerID, []string{"chown", "-R", "couchbase", "/opt/couchbase/var/lib/couchbase/inbox"})
+	if err != nil {
+		return errors.Wrap(err, "failed to chown couchbase inbox")
+	}
+
+	err = c.execCmd(ctx, containerID, []string{"chmod", "-R", "0700", "/opt/couchbase/var/lib/couchbase/inbox"})
+	if err != nil {
+		return errors.Wrap(err, "failed to chmod couchbase inbox")
+	}
+
+	return nil
+}
+
 type DeployNodeOptions struct {
 	Purpose            string
 	Expiry             time.Duration
@@ -447,6 +571,7 @@ type DeployNodeOptions struct {
 	IsColumnar         bool
 	DnsSuffix          string
 	EnvVars            map[string]string
+	UseDinoCerts       bool
 }
 
 func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*NodeInfo, error) {
@@ -472,6 +597,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		nodeType = "columnar-node"
 	}
 
+	usingDinoCerts := ""
+	if def.UseDinoCerts {
+		usingDinoCerts = "true"
+	}
+
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
 		Image: def.Image.ImagePath,
 		Labels: map[string]string{
@@ -481,6 +611,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 			"com.couchbase.dyncluster.purpose":                def.Purpose,
 			"com.couchbase.dyncluster.node_id":                nodeID,
 			"com.couchbase.dyncluster.initial_server_version": def.ImageServerVersion,
+			"com.couchbase.dyncluster.using_dino_certs":       usingDinoCerts,
 		},
 		// same effect as ntp
 		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},

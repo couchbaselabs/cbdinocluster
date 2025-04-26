@@ -739,3 +739,25 @@ func (c *Controller) GetTrustedCAs(ctx context.Context) (*GetTrustedCAsResponse,
 
 	return resp, nil
 }
+
+type LoadTrustedCAsOptions struct {
+}
+
+func (c *Controller) LoadTrustedCAs(ctx context.Context, opts *LoadTrustedCAsOptions) error {
+	return c.doFormPost(ctx, "/node/controller/loadTrustedCAs", nil, true, nil)
+}
+
+type ReloadCertificateOptions struct {
+}
+
+func (c *Controller) ReloadCertificate(ctx context.Context, opts *ReloadCertificateOptions) error {
+	return c.doFormPost(ctx, "/node/controller/reloadCertificate", nil, true, nil)
+}
+
+type DeleteTrustedCAOptions struct {
+	ID int `json:""`
+}
+
+func (c *Controller) DeleteTrustedCA(ctx context.Context, opts *DeleteTrustedCAOptions) error {
+	return c.doDelete(ctx, fmt.Sprintf("/pools/default/trustedCAs/%d", opts.ID), nil)
+}

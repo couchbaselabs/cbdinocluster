@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -18,6 +19,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/dinocerts"
 	"github.com/couchbaselabs/cbdinocluster/utils/versionident"
 	"github.com/docker/docker/client"
 	"github.com/google/uuid"
@@ -202,6 +204,90 @@ func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*cluster
 	return nodeGrpImages, nil
 }
 
+func (d *Deployer) getClusterDinoCert(clusterID string) (*dinocerts.CertAuthority, []byte, error) {
+	rootCa, err := dinocerts.GetRootCertAuthority()
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to get root dino ca")
+	}
+
+	fetchedClusterCa, err := rootCa.MakeIntermediaryCA("cluster-" + clusterID[:8])
+	if err != nil {
+		return nil, nil, errors.Wrap(err, "failed to get cluster dino ca")
+	}
+
+	return fetchedClusterCa, rootCa.CertPem, nil
+}
+
+func (d *Deployer) setupNodeCertificates(
+	ctx context.Context,
+	node *NodeInfo,
+	clusterCa *dinocerts.CertAuthority,
+	rootCaPem []byte,
+) error {
+	nodeIP := net.ParseIP(node.IPAddress)
+
+	var dnsNames []string
+	if node.DnsName != "" {
+		dnsNames = append(dnsNames, node.DnsName)
+	}
+	if node.DnsSuffix != "" {
+		dnsNames = append(dnsNames, node.DnsSuffix)
+	}
+
+	d.logger.Debug("generating node dinocert certificate",
+		zap.String("node", node.NodeID),
+		zap.Any("IP", nodeIP),
+		zap.Any("dnsNames", dnsNames))
+
+	certPem, keyPem, err := clusterCa.MakeServerCertificate("node-"+node.NodeID[:8], []net.IP{nodeIP}, dnsNames)
+	if err != nil {
+		return errors.Wrap(err, "failed to create server certificate")
+	}
+
+	d.logger.Debug("uploading dinocert certificates",
+		zap.String("node", node.NodeID))
+
+	var chainPem []byte
+	chainPem = append(chainPem, certPem...)
+	chainPem = append(chainPem, clusterCa.CertPem...)
+	err = d.controller.UploadCertificates(ctx, node.ContainerID, chainPem, keyPem, [][]byte{rootCaPem})
+	if err != nil {
+		return errors.Wrap(err, "failed to upload certificates")
+	}
+
+	nodeCtrl := clustercontrol.NodeManager{
+		Endpoint: fmt.Sprintf("http://%s:8091", node.IPAddress),
+	}
+
+	d.logger.Debug("refreshing trusted CAs for node",
+		zap.String("node", node.NodeID))
+
+	err = nodeCtrl.Controller().LoadTrustedCAs(ctx, &clustercontrol.LoadTrustedCAsOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to load trusted CAs")
+	}
+
+	d.logger.Debug("refreshing certificate for node",
+		zap.String("node", node.NodeID))
+
+	err = nodeCtrl.Controller().ReloadCertificate(ctx, &clustercontrol.ReloadCertificateOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to refresh certificates")
+	}
+
+	d.logger.Debug("removing default self-signed certificate for node",
+		zap.String("node", node.NodeID))
+
+	err = nodeCtrl.Controller().DeleteTrustedCA(ctx, &clustercontrol.DeleteTrustedCAOptions{
+		ID: 0,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to delete default certificate")
+	}
+
+	return nil
+}
+
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
 	if def.Columnar {
 		for _, nodeGrp := range def.NodeGroups {
@@ -230,6 +316,16 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 			clusterID[:8],
 			time.Now().Format("20060102"),
 			dnsHostname)
+	}
+
+	var rootCaPem []byte
+	var clusterCa *dinocerts.CertAuthority
+	if def.Docker.UseDinoCerts {
+		var err error
+		clusterCa, rootCaPem, err = d.getClusterDinoCert(clusterID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get cluster dino ca")
+		}
 	}
 
 	if def.Columnar {
@@ -283,6 +379,31 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 		d.logger.Debug("nginx started", zap.String("ip", node.IPAddress))
 
+		if clusterCa != nil {
+			d.logger.Debug("uploading dinocert certificates to nginx",
+				zap.String("nginx", node.NodeID))
+
+			ip := net.ParseIP(node.IPAddress)
+
+			var dnsNames []string
+			if dnsName != "" {
+				dnsNames = append(dnsNames, dnsName)
+			}
+
+			certPem, keyPem, err := clusterCa.MakeServerCertificate("nginx-"+clusterID[:8], []net.IP{ip}, dnsNames)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to create nginx certificate")
+			}
+
+			var chainPem []byte
+			chainPem = append(chainPem, certPem...)
+			chainPem = append(chainPem, clusterCa.CertPem...)
+			err = d.controller.UpdateNginxCertificates(ctx, node.ContainerID, chainPem, keyPem)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to upload nginx certificates")
+			}
+		}
+
 		nginxContainerId = node.ContainerID
 	}
 
@@ -331,6 +452,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 				DnsSuffix:          dnsName,
 				Expiry:             def.Expiry,
 				EnvVars:            nodeGrp.Docker.EnvVars,
+				UseDinoCerts:       def.Docker.UseDinoCerts,
 			}
 
 			nodeOpts = append(nodeOpts, deployOpts)
@@ -385,6 +507,17 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 	leaveNodesAfterReturn = true
 
+	if clusterCa != nil {
+		d.logger.Info("setting up dinocert certificates", zap.String("cluster", clusterID))
+
+		for _, node := range nodes {
+			err := d.setupNodeCertificates(ctx, node, clusterCa, rootCaPem)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to setup node certificates")
+			}
+		}
+	}
+
 	if useDns {
 		// since this is a net-new domain name, no need to wait for dns propagation
 		err = d.updateDnsRecords(ctx, dnsName, nodes, def.Columnar, true, false)
@@ -394,7 +527,12 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	}
 
 	if nginxContainerId != "" {
-		err = d.updateLoadBalancer(ctx, nginxContainerId, nodes)
+		useDinoCerts := false
+		if clusterCa != nil {
+			useDinoCerts = true
+		}
+
+		err = d.updateLoadBalancer(ctx, nginxContainerId, nodes, useDinoCerts)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to update load balancer")
 		}
@@ -548,6 +686,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to setup cluster")
 	}
 
+	leaveNodesAfterReturn = true
 	return thisCluster, nil
 }
 
@@ -555,6 +694,7 @@ func (d *Deployer) updateLoadBalancer(
 	ctx context.Context,
 	loadBalancerContainerId string,
 	nodes []*NodeInfo,
+	enableSsl bool,
 ) error {
 	var addrs []string
 	for _, node := range nodes {
@@ -565,7 +705,7 @@ func (d *Deployer) updateLoadBalancer(
 		addrs = append(addrs, node.IPAddress)
 	}
 
-	return d.controller.UpdateNginxConfig(ctx, loadBalancerContainerId, addrs)
+	return d.controller.UpdateNginxConfig(ctx, loadBalancerContainerId, addrs, enableSsl)
 }
 
 func (d *Deployer) updateDnsRecords(
@@ -647,6 +787,7 @@ type deployedClusterInfo struct {
 	IsColumnar              bool
 	DnsSuffix               string
 	LoadBalancerContainerID string
+	UseDinoCerts            bool
 }
 
 func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deployedClusterInfo, error) {
@@ -658,6 +799,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	var purpose string
 	var expiry time.Time
 	var isColumnar bool
+	var useDinoCerts bool
 	var dnsSuffix string
 	var loadBalancerContainerID string
 	var nodeInfo []*deployedNodeInfo
@@ -670,6 +812,10 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 
 			if node.DnsSuffix != "" {
 				dnsSuffix = node.DnsSuffix
+			}
+
+			if node.UsingDinoCerts {
+				useDinoCerts = true
 			}
 
 			if node.Purpose != "" {
@@ -722,6 +868,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 		IsColumnar:              isColumnar,
 		DnsSuffix:               dnsSuffix,
 		LoadBalancerContainerID: loadBalancerContainerID,
+		UseDinoCerts:            useDinoCerts,
 	}, nil
 }
 
@@ -795,7 +942,7 @@ func (d *Deployer) addRemoveNodes(
 
 	d.logger.Info("deploying new node containers")
 
-	var deployedNodeIds []string
+	var deployedNodes []*NodeInfo
 	var setupNodeOpts []*clustercontrol.AddNodeOptions
 	for nodeGrpIdx, nodeGrp := range nodesToAdd {
 		image := nodesToAddImages[nodeGrpIdx]
@@ -830,7 +977,23 @@ func (d *Deployer) addRemoveNodes(
 			Password:    "",
 		})
 
-		deployedNodeIds = append(deployedNodeIds, node.NodeID)
+		deployedNodes = append(deployedNodes, node)
+	}
+
+	if clusterInfo.UseDinoCerts {
+		d.logger.Info("setting up dinocert certificates", zap.String("cluster", clusterInfo.ID))
+
+		clusterCa, rootCaPem, err := d.getClusterDinoCert(clusterInfo.ID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get cluster dino ca")
+		}
+
+		for _, node := range deployedNodes {
+			err := d.setupNodeCertificates(ctx, node, clusterCa, rootCaPem)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to setup node certificates")
+			}
+		}
 	}
 
 	d.logger.Info("registering new nodes")
@@ -863,7 +1026,7 @@ func (d *Deployer) addRemoveNodes(
 		}
 
 		if clusterInfo.LoadBalancerContainerID != "" {
-			err = d.updateLoadBalancer(ctx, clusterInfo.LoadBalancerContainerID, postRemovalNodes)
+			err = d.updateLoadBalancer(ctx, clusterInfo.LoadBalancerContainerID, postRemovalNodes, clusterInfo.UseDinoCerts)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to update load balancer")
 			}
@@ -936,11 +1099,16 @@ func (d *Deployer) addRemoveNodes(
 		}
 
 		if thisCluster.LoadBalancerContainerID != "" {
-			err := d.updateLoadBalancer(ctx, thisCluster.LoadBalancerContainerID, allNodes)
+			err := d.updateLoadBalancer(ctx, thisCluster.LoadBalancerContainerID, allNodes, clusterInfo.UseDinoCerts)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to update load balancer")
 			}
 		}
+	}
+
+	var deployedNodeIds []string
+	for _, node := range deployedNodes {
+		deployedNodeIds = append(deployedNodeIds, node.NodeID)
 	}
 
 	return deployedNodeIds, nil
@@ -1546,6 +1714,20 @@ func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 }
 
 func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
+	cluster, err := d.getClusterInfo(ctx, clusterID)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster info")
+	}
+
+	if cluster.UseDinoCerts {
+		clusterCa, _, err := d.getClusterDinoCert(clusterID)
+		if err != nil {
+			return "", errors.Wrap(err, "failed to get cluster CA")
+		}
+
+		return string(clusterCa.CertPem), nil
+	}
+
 	controller, err := d.getController(ctx, clusterID)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get cluster controller")
