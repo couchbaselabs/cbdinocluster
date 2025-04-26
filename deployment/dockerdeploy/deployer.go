@@ -404,8 +404,13 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	// is the first one initialized, otherwise in mixed-version clusters, we might
 	// end up initializing the higher version nodes first, disallowing older nodes
 	// from being initialized into the cluster (couchbase does not permit downgrades).
+	// We also sort by IP address next
 	slices.SortFunc(nodes, func(a, b *NodeInfo) int {
-		return semver.Compare("v"+a.InitialServerVersion, "v"+b.InitialServerVersion)
+		res := semver.Compare("v"+a.InitialServerVersion, "v"+b.InitialServerVersion)
+		if res != 0 {
+			return res
+		}
+		return strings.Compare(a.IPAddress, b.IPAddress)
 	})
 	d.logger.Debug("reordered setup order", zap.Any("nodes", nodes))
 
