@@ -1140,26 +1140,51 @@ func (d *Deployer) removeDnsNames(ctx context.Context, dnsNames []string) {
 	}
 }
 
+func (d *Deployer) removeNodes(ctx context.Context, nodes []*NodeInfo) error {
+	var dnsToRemove []string
+	for _, node := range nodes {
+		dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
+	}
+
+	waitCh := make(chan error)
+	for _, node := range nodes {
+		go func(node *NodeInfo) {
+			d.logger.Info("removing node",
+				zap.String("id", node.NodeID),
+				zap.String("container", node.ContainerID))
+
+			d.controller.RemoveNode(ctx, node.ContainerID)
+
+			waitCh <- nil
+		}(node)
+	}
+
+	for range nodes {
+		err := <-waitCh
+		if err != nil {
+			return err
+		}
+	}
+
+	d.removeDnsNames(ctx, dnsToRemove)
+
+	return nil
+}
+
 func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	nodes, err := d.controller.ListNodes(ctx)
 	if err != nil {
 		return err
 	}
 
-	var dnsToRemove []string
+	var nodesToRemove []*NodeInfo
 	for _, node := range nodes {
 		if node.ClusterID == clusterID {
-			d.logger.Info("removing node",
-				zap.String("id", node.NodeID),
-				zap.String("container", node.ContainerID))
-
-			dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
-			d.controller.RemoveNode(ctx, node.ContainerID)
+			nodesToRemove = append(nodesToRemove, node)
 		}
 	}
 
-	d.removeDnsNames(ctx, dnsToRemove)
-	return nil
+	return d.removeNodes(ctx, nodesToRemove)
 }
 
 func (d *Deployer) RemoveAll(ctx context.Context) error {
@@ -1168,18 +1193,7 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 		return err
 	}
 
-	var dnsToRemove []string
-	for _, node := range nodes {
-		d.logger.Info("removing node",
-			zap.String("id", node.NodeID),
-			zap.String("container", node.ContainerID))
-
-		dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
-		d.controller.RemoveNode(ctx, node.ContainerID)
-	}
-
-	d.removeDnsNames(ctx, dnsToRemove)
-	return nil
+	return d.removeNodes(ctx, nodes)
 }
 
 func (d *Deployer) getCluster(ctx context.Context, clusterID string) (*ClusterInfo, error) {
@@ -1288,20 +1302,15 @@ func (d *Deployer) Cleanup(ctx context.Context) error {
 	}
 
 	curTime := time.Now()
-	var dnsToRemove []string
+
+	var nodesToRemove []*NodeInfo
 	for _, node := range nodes {
 		if !node.Expiry.IsZero() && !node.Expiry.After(curTime) {
-			d.logger.Info("removing node",
-				zap.String("id", node.NodeID),
-				zap.String("container", node.ContainerID))
-
-			dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
-			d.controller.RemoveNode(ctx, node.ContainerID)
+			nodesToRemove = append(nodesToRemove, node)
 		}
 	}
 
-	d.removeDnsNames(ctx, dnsToRemove)
-	return nil
+	return d.removeNodes(ctx, nodesToRemove)
 }
 
 func (d *Deployer) DestroyAllResources(ctx context.Context) error {
@@ -1310,21 +1319,7 @@ func (d *Deployer) DestroyAllResources(ctx context.Context) error {
 		return errors.Wrap(err, "failed to list all nodes")
 	}
 
-	var dnsToRemove []string
-	for _, node := range nodes {
-		d.logger.Info("removing node",
-			zap.String("id", node.NodeID),
-			zap.String("container", node.ContainerID))
-
-		dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
-		err := d.controller.RemoveNode(ctx, node.ContainerID)
-		if err != nil {
-			return errors.Wrap(err, "failed to remove")
-		}
-	}
-
-	d.removeDnsNames(ctx, dnsToRemove)
-	return nil
+	return d.removeNodes(ctx, nodes)
 }
 
 func (d *Deployer) getController(ctx context.Context, clusterID string) (*clustercontrol.NodeManager, error) {
