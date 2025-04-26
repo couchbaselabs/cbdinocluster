@@ -29,6 +29,7 @@ type DockerCluster struct {
 	Analytics          AnalyticsSettings `yaml:"analytics,omitempty"`
 	EnableDNS          bool              `yaml:"dns,omitempty"`
 	EnableLoadBalancer bool              `yaml:"load-balancer,omitempty"`
+	UseDinoCerts       bool              `yaml:"use-dino-certs,omitempty"`
 }
 
 type AnalyticsSettings struct {
