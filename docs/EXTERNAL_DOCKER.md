@@ -1,5 +1,3 @@
-# cbdinocluster experimental features
-
 ## External Docker Host
 
 While the use of an external docker host removes some of the benefits of the
