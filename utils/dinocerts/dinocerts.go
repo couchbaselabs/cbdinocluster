@@ -3,6 +3,7 @@ package dinocerts
 import (
 	"bytes"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -19,11 +20,19 @@ import (
 // Note that these deterministic certificates may change over time if the Go standard library
 // changes the way it generates certificates, so use with caution.
 type CertAuthority struct {
-	Cert       *x509.Certificate
-	PrivKey    *rsa.PrivateKey
-	CertBytes  []byte
-	CertPem    []byte
-	PrivKeyPem []byte
+	Cert         *x509.Certificate
+	PrivKey      *rsa.PrivateKey
+	CertBytes    []byte
+	CertPem      []byte
+	PrivKeyPem   []byte
+	SubjectKeyId []byte
+}
+
+func makeSubjectKeyId(privKey *rsa.PrivateKey) []byte {
+	pubKey := privKey.Public().(*rsa.PublicKey)
+	keyBytes := x509.MarshalPKCS1PublicKey(pubKey)
+	keyHash := sha1.Sum(keyBytes)
+	return keyHash[:]
 }
 
 func makeDinoCertAuthority(seed string, parent *CertAuthority) (*CertAuthority, error) {
@@ -33,6 +42,13 @@ func makeDinoCertAuthority(seed string, parent *CertAuthority) (*CertAuthority, 
 	privKey, err := rsa.GenerateKey(certRnd, 4096)
 	if err != nil {
 		return nil, err
+	}
+
+	subjectKeyId := makeSubjectKeyId(privKey)
+
+	var authorityKeyId []byte
+	if parent != nil {
+		authorityKeyId = parent.SubjectKeyId
 	}
 
 	cert := &x509.Certificate{
@@ -46,6 +62,8 @@ func makeDinoCertAuthority(seed string, parent *CertAuthority) (*CertAuthority, 
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,
+		SubjectKeyId:          subjectKeyId,
+		AuthorityKeyId:        authorityKeyId,
 	}
 
 	parentCert := cert
@@ -73,11 +91,12 @@ func makeDinoCertAuthority(seed string, parent *CertAuthority) (*CertAuthority, 
 	})
 
 	return &CertAuthority{
-		Cert:       cert,
-		PrivKey:    privKey,
-		CertBytes:  certBytes,
-		CertPem:    certPem.Bytes(),
-		PrivKeyPem: privKeyPem.Bytes(),
+		Cert:         cert,
+		PrivKey:      privKey,
+		CertBytes:    certBytes,
+		CertPem:      certPem.Bytes(),
+		PrivKeyPem:   privKeyPem.Bytes(),
+		SubjectKeyId: subjectKeyId,
 	}, nil
 }
 
@@ -126,18 +145,22 @@ func (d *CertAuthority) MakeServerCertificate(
 		return nil, nil, err
 	}
 
+	subjectKeyId := makeSubjectKeyId(privKey)
+	authorityKeyId := d.SubjectKeyId
+
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject: pkix.Name{
 			CommonName: "dinocert-" + seed,
 		},
-		IPAddresses:  ipAddresses,
-		DNSNames:     dnsNames,
-		NotBefore:    time.Date(2025, 01, 01, 00, 00, 00, 00, time.UTC),
-		NotAfter:     time.Date(2035, 01, 01, 00, 00, 00, 00, time.UTC),
-		SubjectKeyId: []byte{1, 2, 3, 4, 6},
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		IPAddresses:    ipAddresses,
+		DNSNames:       dnsNames,
+		NotBefore:      time.Date(2025, 01, 01, 00, 00, 00, 00, time.UTC),
+		NotAfter:       time.Date(2035, 01, 01, 00, 00, 00, 00, time.UTC),
+		ExtKeyUsage:    []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		KeyUsage:       x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		SubjectKeyId:   subjectKeyId,
+		AuthorityKeyId: authorityKeyId,
 	}
 
 	certBytes, err := x509.CreateCertificate(nil, cert, d.Cert, &privKey.PublicKey, d.PrivKey)
