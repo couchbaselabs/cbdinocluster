@@ -369,6 +369,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	}
 
 	nginxContainerId := ""
+	nginxIpAddress := ""
 	if def.Docker.EnableLoadBalancer {
 		d.logger.Info("deploying nginx for load balancing")
 
@@ -405,6 +406,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 
 		nginxContainerId = node.ContainerID
+		nginxIpAddress = node.IPAddress
 	}
 
 	d.logger.Info("gathering node images")
@@ -520,7 +522,7 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 
 	if useDns {
 		// since this is a net-new domain name, no need to wait for dns propagation
-		err = d.updateDnsRecords(ctx, dnsName, nodes, def.Columnar, true, false)
+		err = d.updateDnsRecords(ctx, dnsName, nodes, def.Columnar, nginxIpAddress, true)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to update dns records")
 		}
@@ -713,14 +715,15 @@ func (d *Deployer) updateDnsRecords(
 	dnsName string,
 	nodes []*NodeInfo,
 	isColumnar bool,
-	noWait bool,
-	noWaitPropagate bool,
+	loadBalancerIp string,
+	isNewCluster bool,
 ) error {
+	var records []DnsRecord
+
 	var allNodeAs []string
 	var allNodeSrvs []string
 	var allNodeSecSrvs []string
 
-	var records []DnsRecord
 	for _, node := range nodes {
 		if node.Type != "server-node" && node.Type != "columnar-node" {
 			continue
@@ -739,11 +742,22 @@ func (d *Deployer) updateDnsRecords(
 		allNodeSecSrvs = append(allNodeSecSrvs, "0 0 11207 "+node.IPAddress)
 	}
 
-	records = append(records, DnsRecord{
-		RecordType: "A",
-		Name:       dnsName,
-		Addrs:      allNodeAs,
-	})
+	if !isColumnar || loadBalancerIp == "" {
+		records = append(records, DnsRecord{
+			RecordType: "A",
+			Name:       dnsName,
+			Addrs:      allNodeAs,
+		})
+	} else {
+		// no need to update the A record for the load balancer on every modify
+		if isNewCluster {
+			records = append(records, DnsRecord{
+				RecordType: "A",
+				Name:       dnsName,
+				Addrs:      []string{loadBalancerIp},
+			})
+		}
+	}
 
 	if !isColumnar {
 		records = append(records, DnsRecord{
@@ -761,7 +775,8 @@ func (d *Deployer) updateDnsRecords(
 
 	d.logger.Info("updating dns records", zap.Any("records", records))
 
-	err := d.dnsProvider.UpdateRecords(ctx, records, noWait, noWaitPropagate)
+	noWait := isNewCluster
+	err := d.dnsProvider.UpdateRecords(ctx, records, noWait, false)
 	if err != nil {
 		return err
 	}
@@ -787,6 +802,7 @@ type deployedClusterInfo struct {
 	IsColumnar              bool
 	DnsSuffix               string
 	LoadBalancerContainerID string
+	LoadBalancerIPAddress   string
 	UseDinoCerts            bool
 }
 
@@ -802,6 +818,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 	var useDinoCerts bool
 	var dnsSuffix string
 	var loadBalancerContainerID string
+	var loadBalancerIPAddress string
 	var nodeInfo []*deployedNodeInfo
 
 	for _, node := range nodes {
@@ -847,6 +864,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 
 			if node.Type == "nginx" {
 				loadBalancerContainerID = node.ContainerID
+				loadBalancerIPAddress = node.IPAddress
 			}
 
 			nodeInfo = append(nodeInfo, &deployedNodeInfo{
@@ -868,6 +886,7 @@ func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deplo
 		IsColumnar:              isColumnar,
 		DnsSuffix:               dnsSuffix,
 		LoadBalancerContainerID: loadBalancerContainerID,
+		LoadBalancerIPAddress:   loadBalancerIPAddress,
 		UseDinoCerts:            useDinoCerts,
 	}, nil
 }
@@ -1017,9 +1036,11 @@ func (d *Deployer) addRemoveNodes(
 		}
 	}
 
+	// only need to update if nodes were removed
 	if len(nodesToRemove) > 0 {
+		// only need to update if dns is enabled
 		if clusterInfo.DnsSuffix != "" {
-			err = d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, postRemovalNodes, clusterInfo.IsColumnar, false, false)
+			err = d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, postRemovalNodes, clusterInfo.IsColumnar, clusterInfo.LoadBalancerIPAddress, false)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to update dns records")
 			}
@@ -1091,8 +1112,9 @@ func (d *Deployer) addRemoveNodes(
 			allNodes = append(allNodes, node.nodeInfo)
 		}
 
+		// no need to update if DNS is disabled
 		if thisCluster.DnsSuffix != "" {
-			err := d.updateDnsRecords(ctx, thisCluster.DnsSuffix, allNodes, thisCluster.IsColumnar, false, false)
+			err := d.updateDnsRecords(ctx, thisCluster.DnsSuffix, allNodes, thisCluster.IsColumnar, clusterInfo.LoadBalancerIPAddress, false)
 			if err != nil {
 				return nil, errors.Wrap(err, "failed to update dns records")
 			}
