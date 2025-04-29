@@ -220,6 +220,15 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 
 	logger.Debug("deploying s3mock node")
 
+	_, err := MultiArchImagePuller{
+		Logger:    c.Logger,
+		DockerCli: c.DockerCli,
+		ImagePath: "adobe/s3mock:latest",
+	}.Pull(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to pull s3mock image")
+	}
+
 	containerName := "cbdynnode-s3-" + clusterID
 
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
@@ -306,6 +315,15 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 	logger := c.Logger.With(zap.String("nodeId", nodeID))
 
 	logger.Debug("deploying nginx node")
+
+	_, err := MultiArchImagePuller{
+		Logger:    c.Logger,
+		DockerCli: c.DockerCli,
+		ImagePath: "nginx:latest",
+	}.Pull(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to pull nginx image")
+	}
 
 	containerName := "cbdynnode-nginx-" + clusterID
 
