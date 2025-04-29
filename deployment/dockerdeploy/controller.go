@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	"k8s.io/utils/ptr"
 )
 
 type Controller struct {
@@ -689,7 +690,9 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 
 	logger.Debug("stopping container")
 
-	err := c.DockerCli.ContainerStop(ctx, containerID, container.StopOptions{})
+	err := c.DockerCli.ContainerStop(ctx, containerID, container.StopOptions{
+		Timeout: ptr.To(0),
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to stop container")
 	}
