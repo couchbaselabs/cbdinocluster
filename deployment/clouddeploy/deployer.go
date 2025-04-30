@@ -752,7 +752,11 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		clusterProvider = "aws"
 	} else if cloudProvider == "gcp" {
 		deploymentProvider = "gcp"
-		clusterProvider = "gcp"
+		if def.Columnar {
+			clusterProvider = "gcp"
+		} else {
+			clusterProvider = "hostedGCP"
+		}
 	} else if cloudProvider == "azure" {
 		deploymentProvider = "azure"
 		clusterProvider = "hostedAzure"
