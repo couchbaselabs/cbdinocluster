@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"math/big"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/denisbrodbeck/machineid"
@@ -35,11 +36,64 @@ func makeSubjectKeyId(privKey *rsa.PrivateKey) []byte {
 	return keyHash[:]
 }
 
-func makeDinoCertAuthority(seed string, parent *CertAuthority) (*CertAuthority, error) {
+var machineIdCache string
+var keyCache map[string]*rsa.PrivateKey
+var cacheLock sync.Mutex
+
+func getMachineIdCached() (string, error) {
+	cacheLock.Lock()
+	defer cacheLock.Unlock()
+
+	machineId := machineIdCache
+	if machineIdCache == "" {
+		fetchedMachineId, err := machineid.ID()
+		if err != nil {
+			return "", err
+		}
+
+		machineId = fetchedMachineId
+		machineIdCache = machineId
+	}
+
+	return machineId, nil
+}
+
+func GenerateKey(seed string) (*rsa.PrivateKey, error) {
+	cacheLock.Lock()
+	defer cacheLock.Unlock()
+
+	if keyCache == nil {
+		keyCache = make(map[string]*rsa.PrivateKey)
+	}
+
+	privKey := keyCache[seed]
+	if privKey == nil {
+		newPrivKey, err := GenerateKeyUncached(seed)
+		if err != nil {
+			return nil, err
+		}
+
+		keyCache[seed] = newPrivKey
+		privKey = newPrivKey
+	}
+
+	return privKey, nil
+}
+
+func GenerateKeyUncached(seed string) (*rsa.PrivateKey, error) {
 	rnd := newSeededRand(seed)
 	certRnd := &certRandReader{rnd}
 
 	privKey, err := rsa.GenerateKey(certRnd, 4096)
+	if err != nil {
+		return nil, err
+	}
+
+	return privKey, nil
+}
+
+func makeDinoCertAuthority(seed string, parent *CertAuthority) (*CertAuthority, error) {
+	privKey, err := GenerateKey(seed)
 	if err != nil {
 		return nil, err
 	}
@@ -100,53 +154,19 @@ func makeDinoCertAuthority(seed string, parent *CertAuthority) (*CertAuthority, 
 	}, nil
 }
 
-func NewDinoCertAuthority(seed string) (*CertAuthority, error) {
-	return makeDinoCertAuthority(seed, nil)
-}
-
-var rootCertAuthority *CertAuthority = nil
-
-func GetRootCertAuthority() (*CertAuthority, error) {
-	// we cache the cert authority here to avoid needing to regenerate the
-	// key (which takes a while) as well as look up the users machine ID.
-	if rootCertAuthority != nil {
-		return rootCertAuthority, nil
-	}
-
-	machineId, err := machineid.ID()
-	if err != nil {
-		return nil, err
-	}
-
-	certAuthority, err := NewDinoCertAuthority(machineId)
-	if err != nil {
-		return nil, err
-	}
-
-	rootCertAuthority = certAuthority
-	return rootCertAuthority, nil
-}
-
-func (d *CertAuthority) MakeIntermediaryCA(
+func makeDinoCert(
 	seed string,
-) (*CertAuthority, error) {
-	return makeDinoCertAuthority(seed, d)
-}
-
-func (d *CertAuthority) MakeServerCertificate(
-	seed string,
+	parent *CertAuthority,
 	ipAddresses []net.IP,
 	dnsNames []string,
 ) ([]byte, []byte, error) {
-	rnd := newSeededRand(seed)
-
-	privKey, err := rsa.GenerateKey(&certRandReader{rnd}, 4096)
+	privKey, err := GenerateKey(seed)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	subjectKeyId := makeSubjectKeyId(privKey)
-	authorityKeyId := d.SubjectKeyId
+	authorityKeyId := parent.SubjectKeyId
 
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
@@ -163,7 +183,7 @@ func (d *CertAuthority) MakeServerCertificate(
 		AuthorityKeyId: authorityKeyId,
 	}
 
-	certBytes, err := x509.CreateCertificate(nil, cert, d.Cert, &privKey.PublicKey, d.PrivKey)
+	certBytes, err := x509.CreateCertificate(nil, cert, parent.Cert, &privKey.PublicKey, parent.PrivKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -181,4 +201,31 @@ func (d *CertAuthority) MakeServerCertificate(
 	})
 
 	return certPem.Bytes(), privKeyPem.Bytes(), nil
+}
+
+func NewDinoCertAuthority(seed string) (*CertAuthority, error) {
+	return makeDinoCertAuthority(seed, nil)
+}
+
+func GetRootCertAuthority() (*CertAuthority, error) {
+	machineId, err := getMachineIdCached()
+	if err != nil {
+		return nil, err
+	}
+
+	return makeDinoCertAuthority("machine-"+machineId, nil)
+}
+
+func (d *CertAuthority) MakeIntermediaryCA(
+	seed string,
+) (*CertAuthority, error) {
+	return makeDinoCertAuthority(seed, d)
+}
+
+func (d *CertAuthority) MakeServerCertificate(
+	seed string,
+	ipAddresses []net.IP,
+	dnsNames []string,
+) ([]byte, []byte, error) {
+	return makeDinoCert(seed, d, ipAddresses, dnsNames)
 }
