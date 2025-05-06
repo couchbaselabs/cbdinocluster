@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"go.uber.org/multierr"
 	"path/filepath"
 	"strings"
 	"time"
@@ -1525,6 +1526,7 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 }
 
 func (p *Deployer) RemoveAll(ctx context.Context) error {
+	var errs error
 	clusters, err := p.client.ListAllClusters(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
 		Page:          1,
 		PerPage:       100,
@@ -1532,39 +1534,39 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		SortDirection: "asc",
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to list all clusters")
-	}
+		errs = multierr.Append(errs, errors.Wrap(err, "failed to list all clusters"))
+	} else {
+		var clustersToRemove []*capellacontrol.ClusterInfo
+		for _, cluster := range clusters.Data {
+			if !strings.HasPrefix(cluster.Data.Name, "cbdc2_") {
+				continue
+			}
 
-	var clustersToRemove []*capellacontrol.ClusterInfo
-	for _, cluster := range clusters.Data {
-		if !strings.HasPrefix(cluster.Data.Name, "cbdc2_") {
-			continue
+			clustersToRemove = append(clustersToRemove, cluster.Data)
 		}
 
-		clustersToRemove = append(clustersToRemove, cluster.Data)
-	}
-
-	var clusterNamesToRemove []string
-	for _, cluster := range clustersToRemove {
-		clusterNamesToRemove = append(clusterNamesToRemove, cluster.Name)
-	}
-	p.logger.Info("found clusters to remove", zap.Strings("clusters", clusterNamesToRemove))
-
-	for _, cluster := range clustersToRemove {
-		p.logger.Info("removing a cluster", zap.String("cluster-id", cluster.Id))
-
-		err := p.client.DeleteCluster(ctx, p.tenantID, cluster.Project.Id, cluster.Id)
-		if err != nil {
-			return errors.Wrap(err, "failed to remove cluster")
+		var clusterNamesToRemove []string
+		for _, cluster := range clustersToRemove {
+			clusterNamesToRemove = append(clusterNamesToRemove, cluster.Name)
 		}
-	}
+		p.logger.Info("found clusters to remove", zap.Strings("clusters", clusterNamesToRemove))
 
-	for _, cluster := range clustersToRemove {
-		p.logger.Info("waiting for cluster removal to complete", zap.String("cluster-id", cluster.Id))
+		for _, cluster := range clustersToRemove {
+			p.logger.Info("removing a cluster", zap.String("cluster-id", cluster.Id))
 
-		err := p.mgr.WaitForClusterState(ctx, p.tenantID, cluster.Id, "", false)
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for cluster removal to finish")
+			err := p.client.DeleteCluster(ctx, p.tenantID, cluster.Project.Id, cluster.Id)
+			if err != nil {
+				errs = multierr.Append(errs, errors.Wrap(err, "failed to remove cluster"))
+			}
+		}
+
+		for _, cluster := range clustersToRemove {
+			p.logger.Info("waiting for cluster removal to complete", zap.String("cluster-id", cluster.Id))
+
+			err := p.mgr.WaitForClusterState(ctx, p.tenantID, cluster.Id, "", false)
+			if err != nil {
+				errs = multierr.Append(errs, errors.Wrap(err, "failed to wait for cluster to complete"))
+			}
 		}
 	}
 
@@ -1575,39 +1577,39 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		SortDirection: "asc",
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to list all columnars")
-	}
+		errs = multierr.Append(errs, errors.Wrap(err, "failed to list all columnars"))
+	} else {
+		var columnarsToRemove []*capellacontrol.ColumnarData
+		for _, columnar := range columnars.Data {
+			if !strings.HasPrefix(columnar.Data.Name, "cbdc2_") {
+				continue
+			}
 
-	var columnarsToRemove []*capellacontrol.ColumnarData
-	for _, columnar := range columnars.Data {
-		if !strings.HasPrefix(columnar.Data.Name, "cbdc2_") {
-			continue
+			columnarsToRemove = append(columnarsToRemove, columnar.Data)
 		}
 
-		columnarsToRemove = append(columnarsToRemove, columnar.Data)
-	}
-
-	var columnarNamesToRemove []string
-	for _, cluster := range columnarsToRemove {
-		columnarNamesToRemove = append(columnarNamesToRemove, cluster.Name)
-	}
-	p.logger.Info("found columnar to remove", zap.Strings("columnar", columnarNamesToRemove))
-
-	for _, columnar := range columnarsToRemove {
-		p.logger.Info("removing a columnar", zap.String("cluster-id", columnar.ID))
-
-		err := p.client.DeleteColumnar(ctx, p.tenantID, columnar.ProjectID, columnar.ID)
-		if err != nil {
-			return errors.Wrap(err, "failed to remove cluster")
+		var columnarNamesToRemove []string
+		for _, cluster := range columnarsToRemove {
+			columnarNamesToRemove = append(columnarNamesToRemove, cluster.Name)
 		}
-	}
+		p.logger.Info("found columnar to remove", zap.Strings("columnar", columnarNamesToRemove))
 
-	for _, columnar := range columnarsToRemove {
-		p.logger.Info("waiting for cluster columnar to complete", zap.String("cluster-id", columnar.ID))
+		for _, columnar := range columnarsToRemove {
+			p.logger.Info("removing a columnar", zap.String("cluster-id", columnar.ID))
 
-		err := p.mgr.WaitForClusterState(ctx, p.tenantID, columnar.ID, "", true)
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for cluster removal to finish")
+			err := p.client.DeleteColumnar(ctx, p.tenantID, columnar.ProjectID, columnar.ID)
+			if err != nil {
+				errs = multierr.Append(errs, errors.Wrap(err, "failed to remove columnar"))
+			}
+		}
+
+		for _, columnar := range columnarsToRemove {
+			p.logger.Info("waiting for cluster columnar to complete", zap.String("cluster-id", columnar.ID))
+
+			err := p.mgr.WaitForClusterState(ctx, p.tenantID, columnar.ID, "", true)
+			if err != nil {
+				errs = multierr.Append(errs, errors.Wrap(err, "failed to wait for cluster to complete"))
+			}
 		}
 	}
 
@@ -1618,31 +1620,35 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		SortDirection: "asc",
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to list all projects")
-	}
+		errs = multierr.Append(errs, errors.Wrap(err, "failed to list all projects"))
+	} else {
+		var projectsToRemove []*capellacontrol.ProjectInfo
+		for _, project := range projects.Data {
+			if !strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
+				continue
+			}
 
-	var projectsToRemove []*capellacontrol.ProjectInfo
-	for _, project := range projects.Data {
-		if !strings.HasPrefix(project.Data.Name, "cbdc2_") {
-			continue
+			projectsToRemove = append(projectsToRemove, project.Data)
 		}
 
-		projectsToRemove = append(projectsToRemove, project.Data)
-	}
-
-	var projectNamesToRemove []string
-	for _, project := range projectsToRemove {
-		projectNamesToRemove = append(projectNamesToRemove, project.Name)
-	}
-	p.logger.Info("found projects to remove", zap.Strings("projects", projectNamesToRemove))
-
-	for _, project := range projectsToRemove {
-		p.logger.Info("removing a project", zap.String("project-id", project.ID))
-
-		err := p.client.DeleteProject(ctx, p.tenantID, project.ID)
-		if err != nil {
-			return errors.Wrap(err, "failed to remove project")
+		var projectNamesToRemove []string
+		for _, project := range projectsToRemove {
+			projectNamesToRemove = append(projectNamesToRemove, project.Name)
 		}
+		p.logger.Info("found projects to remove", zap.Strings("projects", projectNamesToRemove))
+
+		for _, project := range projectsToRemove {
+			p.logger.Info("removing a project", zap.String("project-id", project.ID))
+
+			err := p.client.DeleteProject(ctx, p.tenantID, project.ID)
+			if err != nil {
+				errs = multierr.Append(errs, errors.Wrap(err, "failed to remove project"))
+			}
+		}
+	}
+
+	if errs != nil {
+		return multierr.Combine(errs)
 	}
 
 	return nil
@@ -1680,6 +1686,7 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 	}
 
 	curTime := time.Now()
+	var allErr error
 	for _, cluster := range clusters {
 		if !cluster.Meta.Expiry.IsZero() && !cluster.Meta.Expiry.After(curTime) {
 			p.logger.Info("removing cluster",
@@ -1694,8 +1701,38 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 				continue
 			}
 
-			p.removeCluster(ctx, cluster)
+			err := p.removeCluster(ctx, cluster)
+			if err != nil {
+				allErr = multierr.Append(allErr, errors.Wrapf(err, "cluster_id: %s", cluster.Cluster.Id))
+			}
 		}
+	}
+
+	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
+		Page:          1,
+		PerPage:       100,
+		SortBy:        "name",
+		SortDirection: "asc",
+	})
+
+	if err != nil {
+		allErr = multierr.Append(allErr, errors.Wrap(err, "failed to list all projects"))
+	}
+
+	for _, project := range projects.Data {
+		if !strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
+			p.logger.Info("removing project",
+				zap.String("project-id", project.Data.ID))
+
+			err := p.client.DeleteProject(ctx, p.tenantID, project.Data.ID)
+			if err != nil {
+				allErr = multierr.Append(allErr, errors.Wrapf(err, "project_id: %s", project.Data.ID))
+			}
+		}
+	}
+
+	if allErr != nil {
+		return multierr.Combine(allErr)
 	}
 
 	return nil
