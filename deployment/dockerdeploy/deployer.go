@@ -1755,14 +1755,24 @@ func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 		return "", errors.Wrap(err, "failed to get cluster controller")
 	}
 
+	var certPem string
+
 	resp, err := controller.Controller().GetTrustedCAs(ctx)
 	if err != nil {
-		return "", errors.Wrap(err, "failed to get trusted CAs")
+		d.logger.Warn("failed to get trusted CAs, trying to fall back to get-certificate", zap.Error(err))
+
+		cresp, cerr := controller.Controller().GetCertificate(ctx)
+		if cerr != nil {
+			return "", errors.Wrap(cerr, "failed to get certificate")
+		}
+
+		certPem = strings.TrimSpace(string(*cresp))
+	} else {
+		lastCert := (*resp)[len(*resp)-1]
+		certPem = strings.TrimSpace(lastCert.Pem)
 	}
 
-	lastCert := (*resp)[len(*resp)-1]
-
-	return strings.TrimSpace(lastCert.Pem), nil
+	return certPem, nil
 }
 
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {

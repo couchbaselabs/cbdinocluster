@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +15,15 @@ import (
 	"github.com/google/go-querystring/query"
 	"github.com/pkg/errors"
 )
+
+type non200StatusCodeError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *non200StatusCodeError) Error() string {
+	return fmt.Sprintf("non-200 status code encountered: %d %s", e.StatusCode, e.Message)
+}
 
 type Controller struct {
 	Endpoint string
@@ -34,14 +44,27 @@ func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bytes, _ := io.ReadAll(resp.Body)
 
-		return fmt.Errorf("non-200 status code encountered: %d %s", resp.StatusCode, bytes)
+		return &non200StatusCodeError{
+			StatusCode: resp.StatusCode,
+			Message:    string(bytes),
+		}
 	}
 
 	if out != nil {
-		dec := json.NewDecoder(resp.Body)
-		err = dec.Decode(out)
-		if err != nil {
-			return errors.Wrap(err, "failed to decode response")
+		switch out := out.(type) {
+		case *[]byte:
+			bytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return errors.Wrap(err, "failed to read response body")
+			}
+
+			*out = bytes
+		default:
+			dec := json.NewDecoder(resp.Body)
+			err = dec.Decode(out)
+			if err != nil {
+				return errors.Wrap(err, "failed to decode response")
+			}
 		}
 	}
 
@@ -58,6 +81,16 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 
 		err = c.doReq(ctx, req, out)
 		if err != nil {
+			var non200Err *non200StatusCodeError
+			if errors.As(err, &non200Err) {
+				log.Printf("non-200 status code encountered: %d %s", non200Err.StatusCode, non200Err.Message)
+
+				if non200Err.StatusCode >= 400 {
+					// if we get a 4xx,5xx error, we don't retry
+					return errors.Wrap(err, "failed to execute request")
+				}
+			}
+
 			if maxRetries == 0 {
 				return err
 			}
@@ -716,6 +749,21 @@ func (c *Controller) LoadSampleBucket(ctx context.Context, bucketName string) er
 	}
 
 	return nil
+}
+
+type GetCertificateResponse []byte
+
+func (c *Controller) GetCertificate(ctx context.Context) (*GetCertificateResponse, error) {
+	resp := []byte{}
+
+	path := "/pools/default/certificate"
+	err := c.doGet(ctx, path, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	respr := GetCertificateResponse(resp)
+	return &respr, nil
 }
 
 type GetTrustedCAsResponse []GetTrustedCAsResponse_Certificate
