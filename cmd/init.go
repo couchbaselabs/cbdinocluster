@@ -211,7 +211,7 @@ var initCmd = &cobra.Command{
 
 		getColimaAddress := func() string {
 			fmt.Printf("Attempting to fetch colima instance data.\n")
-			out, err := exec.Command("colima", "ls", "-j").Output()
+			out, err := exec.Command("colima", "ls", "-j", "-p", "default").Output()
 			if err != nil {
 				fmt.Printf("failed to execute colima: %s", err)
 				return ""
