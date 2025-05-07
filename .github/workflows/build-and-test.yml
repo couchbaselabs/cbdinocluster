@@ -61,4 +61,4 @@ jobs:
       - name: Cleanup Cluster
         if: always()
         run: |
-          ./cbdinocluster-linux rm $CBDC_ID
+          ./cbdinocluster-linux -v rm $CBDC_ID
