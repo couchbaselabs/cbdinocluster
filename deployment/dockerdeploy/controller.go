@@ -718,9 +718,12 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 	logger.Debug("removing container")
 
 	// we try to call remove to force it to be removed
-	c.DockerCli.ContainerRemove(ctx, containerID, container.RemoveOptions{
+	err = c.DockerCli.ContainerRemove(ctx, containerID, container.RemoveOptions{
 		Force: true,
 	})
+	if err != nil {
+		return errors.Wrap(err, "failed to remove container")
+	}
 
 	logger.Debug("waiting for container to disappear")
 
