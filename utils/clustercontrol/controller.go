@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -83,10 +82,8 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 		if err != nil {
 			var non200Err *non200StatusCodeError
 			if errors.As(err, &non200Err) {
-				log.Printf("non-200 status code encountered: %d %s", non200Err.StatusCode, non200Err.Message)
-
-				if non200Err.StatusCode >= 400 {
-					// if we get a 4xx,5xx error, we don't retry
+				if non200Err.StatusCode == 404 {
+					// if we get a 404 error, we don't retry
 					return errors.Wrap(err, "failed to execute request")
 				}
 			}
