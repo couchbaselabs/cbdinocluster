@@ -1720,7 +1720,7 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 	}
 
 	for _, project := range projects.Data {
-		if !strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
+		if strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
 			p.logger.Info("removing project",
 				zap.String("project-id", project.Data.ID))
 
