@@ -617,10 +617,10 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	}
 
 	if clusterVersion == "" {
-		clusterVersion = deploymentOpts.ServerVersions.DefaultVersion
+		clusterVersion = deploymentOpts.ServerVersions.DefaultOptionKey
 	}
 	if clusterCidr == "" {
-		clusterCidr = deploymentOpts.SuggestedCidr
+		clusterCidr = deploymentOpts.CIDR.SuggestedBlock
 	}
 
 	p.logger.Debug("creating a new cloud cluster")
@@ -775,10 +775,10 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 	}
 
 	if clusterVersion == "" {
-		clusterVersion = deploymentOpts.ServerVersions.DefaultVersion
+		clusterVersion = deploymentOpts.ServerVersions.DefaultOptionKey
 	}
 	if clusterCidr == "" {
-		clusterCidr = deploymentOpts.SuggestedCidr
+		clusterCidr = deploymentOpts.CIDR.SuggestedBlock
 	}
 
 	p.logger.Debug("creating a new cloud cluster")
