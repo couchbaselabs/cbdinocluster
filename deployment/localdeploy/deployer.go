@@ -44,17 +44,22 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 		return nil, errors.Wrap(err, "failed to check if couchbase is installed")
 	}
 
+	if !isInstalled {
+		return nil, nil
+	}
+
 	isRunning, err := d.controller().IsRunning(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to check if couchbase is running")
 	}
 
-	var out []deployment.ClusterInfo
-	if isInstalled && isRunning {
-		out = append(out, &ClusterInfo{})
+	if !isRunning {
+		return nil, nil
 	}
 
-	return out, nil
+	return []deployment.ClusterInfo{
+		&ClusterInfo{},
+	}, nil
 }
 
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
