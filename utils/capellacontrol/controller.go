@@ -955,43 +955,67 @@ type GetProviderDeploymentOptionsRequest struct {
 	Provider string `url:"provider"`
 }
 
-type GetProviderDeploymentOptionsResponse struct {
-	CidrBlacklist []string `json:"cidrBlacklist"`
-	// deliveryMethods
-	// plans
-	// projects
-	Provider       GetProviderDeploymentOptionsResponse_Provider       `json:"provider"`
-	ServerVersions GetProviderDeploymentOptionsResponse_ServerVersions `json:"serverVersions"`
-	SuggestedCidr  string                                              `json:"suggestedCidr"`
+type GetProviderDeploymentOptionsV2Response struct {
+	CIDR                                GetProviderDeploymentOptionsV2Response_CIDRConfig      `json:"cidr"`
+	DeploymentTypes                     GetProviderDeploymentOptionsV2Response_DeploymentTypes `json:"deploymentTypes"`
+	Projects                            []GetProviderDeploymentOptionsV2Response_Project       `json:"projects"`
+	Providers                           GetProviderDeploymentOptionsV2Response_Providers       `json:"providers"`
+	ServerVersions                      GetProviderDeploymentOptionsV2Response_ServerVersions  `json:"serverVersions"`
+	PrivateDNSSupported                 bool                                                   `json:"privateDNSSupported"`
+	AllowCapacityConstrainedDeployments bool                                                   `json:"allowCapacityConstrainedDeployments"`
 }
 
-type GetProviderDeploymentOptionsResponse_Provider struct {
-	AutoExpansion GetProviderDeploymentOptionsResponse_Provider_AutoExpansion `json:"autoExpansion"`
-	DisplayName   string                                                      `json:"displayName"`
-	// eligibility
-	Key string `json:"key"`
-	// regions
-	// services
+type GetProviderDeploymentOptionsV2Response_CIDRConfig struct {
+	BlacklistedBlocks []string `json:"blacklistedBlocks"`
+	SuggestedBlock    string   `json:"suggestedBlock"`
 }
 
-type GetProviderDeploymentOptionsResponse_Provider_AutoExpansion struct {
-	Enabled bool `json:"enabled"`
+type GetProviderDeploymentOptionsV2Response_DeploymentTypes struct {
+	DefaultOptionKey string                                                    `json:"defaultOptionKey"`
+	Options          []GetProviderDeploymentOptionsV2Response_DeploymentOption `json:"options"`
 }
 
-type GetProviderDeploymentOptionsResponse_ServerVersions struct {
-	DefaultVersion string   `json:"defaultVersion"`
-	Versions       []string `json:"versions"`
+type GetProviderDeploymentOptionsV2Response_DeploymentOption struct {
+	Key         string `json:"key"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+}
+
+type GetProviderDeploymentOptionsV2Response_Project struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type GetProviderDeploymentOptionsV2Response_Providers struct {
+	DefaultOptionKey string                                                  `json:"defaultOptionKey"`
+	Options          []GetProviderDeploymentOptionsV2Response_ProviderOption `json:"options"`
+}
+
+type GetProviderDeploymentOptionsV2Response_ProviderOption struct {
+	Key         string `json:"key"`
+	DisplayName string `json:"displayName"`
+}
+
+type GetProviderDeploymentOptionsV2Response_ServerVersions struct {
+	DefaultOptionKey string                                                       `json:"defaultOptionKey"`
+	Options          []GetProviderDeploymentOptionsV2Response_ServerVersionOption `json:"options"`
+}
+
+type GetProviderDeploymentOptionsV2Response_ServerVersionOption struct {
+	Key         string `json:"key"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
 }
 
 func (c *Controller) GetProviderDeploymentOptions(
 	ctx context.Context,
 	tenantID string,
 	req *GetProviderDeploymentOptionsRequest,
-) (*GetProviderDeploymentOptionsResponse, error) {
-	resp := &GetProviderDeploymentOptionsResponse{}
+) (*GetProviderDeploymentOptionsV2Response, error) {
+	resp := &GetProviderDeploymentOptionsV2Response{}
 
 	form, _ := query.Values(req)
-	path := fmt.Sprintf("/v2/organizations/%s/clusters/deployment-options?%s", tenantID, form.Encode())
+	path := fmt.Sprintf("/v2/organizations/%s/clusters/deployment-options/v2?%s", tenantID, form.Encode())
 	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
