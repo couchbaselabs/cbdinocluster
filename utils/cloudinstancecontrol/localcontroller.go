@@ -7,6 +7,7 @@ import (
 
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 	"go.uber.org/zap"
 )
 
@@ -37,6 +38,26 @@ func (c *SelfIdentifyController) Identify(ctx context.Context) (interface{}, err
 		awsWaitCh <- struct{}{}
 	}()
 
+	gcpWaitCh := make(chan struct{})
+	var gcpRes *gcpcontrol.LocalInstanceInfo
+	var gcpErr error
+	go func() {
+		liCtrl := gcpcontrol.LocalInstanceController{
+			Logger: c.Logger,
+		}
+
+		localInstanceGcp, err := liCtrl.Identify(timeoutCtx)
+		if err != nil {
+			gcpErr = err
+			gcpWaitCh <- struct{}{}
+			return
+		}
+
+		gcpRes = localInstanceGcp
+		cancel()
+		gcpWaitCh <- struct{}{}
+	}()
+
 	azureWaitCh := make(chan struct{})
 	var azureRes *azurecontrol.LocalVmInfo
 	var azureErr error
@@ -59,12 +80,15 @@ func (c *SelfIdentifyController) Identify(ctx context.Context) (interface{}, err
 
 	<-awsWaitCh
 	<-azureWaitCh
+	<-gcpWaitCh
 
 	if awsRes != nil {
 		return awsRes, nil
 	} else if azureRes != nil {
 		return azureRes, nil
+	} else if gcpRes != nil {
+		return gcpRes, nil
 	}
 
-	return nil, fmt.Errorf("failed to identify local instance (aws: %s, azure: %s)", awsErr, azureErr)
+	return nil, fmt.Errorf("failed to identify local instance (aws: %s, azure: %s, gcp: %s)", awsErr, azureErr, gcpErr)
 }

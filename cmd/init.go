@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/oauth2/google"
 	"net"
 	"os"
 	"os/exec"
@@ -25,12 +26,15 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/google/go-github/v53/github"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
@@ -276,6 +280,7 @@ var initCmd = &cobra.Command{
 
 		awsCloudIdent, _ := cloudIdent.(*awscontrol.LocalInstanceInfo)
 		azureCloudIdent, _ := cloudIdent.(*azurecontrol.LocalVmInfo)
+		gcpCloudIdent, _ := cloudIdent.(*gcpcontrol.LocalInstanceInfo)
 
 		printGitHubConfig := func() {
 			fmt.Printf("  Enabled: %t\n", curConfig.GitHub.Enabled.Value())
@@ -794,11 +799,11 @@ var initCmd = &cobra.Command{
 					awsRegion = flagAwsRegion
 				} else {
 					if awsRegion == "" && awsCloudIdent != nil {
-						fmt.Printf("Defaulting to aws region from environment.\n")
+						fmt.Printf("Defaulting to aws region from self-ident.\n")
 						awsRegion = awsCloudIdent.Region
 					}
 					if awsRegion == "" && envAwsRegion != "" {
-						fmt.Printf("Defaulting to aws region from self-ident.\n")
+						fmt.Printf("Defaulting to aws region from environment.\n")
 						awsRegion = envAwsRegion
 					}
 					if awsRegion == "" {
@@ -981,10 +986,119 @@ var initCmd = &cobra.Command{
 		}
 
 		printGcpConfig := func() {
-			fmt.Printf("  Not Yet Supported\n")
+			fmt.Printf("  Enabled: %t\n", curConfig.GCP.Enabled.Value())
+			fmt.Printf("  Region: %s\n", curConfig.GCP.Region)
+
 		}
 		{
-			curConfig.GCP.Enabled.Set(false)
+			flagDisableGcp, _ := cmd.Flags().GetBool("disable-gcp")
+			flagGcpRegion, _ := cmd.Flags().GetString("gcp-region")
+			flagGcpProjectId, _ := cmd.Flags().GetString("gcp-project-id")
+			envGcpRegion := os.Getenv("GCP_REGION")
+			envGcpProjectId := os.Getenv("GCP_PROJECT_ID")
+
+			gcpEnabled := curConfig.GCP.Enabled.ValueOr(true)
+			gcpRegion := curConfig.GCP.Region
+			gcpProjectId := curConfig.GCP.ProjectID
+
+			for {
+				if flagDisableGcp {
+					fmt.Printf("GCP disabled via flags.\n")
+					gcpEnabled = false
+					break
+				}
+
+				gcpEnabled = readBool(
+					"Would you like to enable GCP?",
+					gcpEnabled)
+				if !gcpEnabled {
+					break
+				}
+
+				if flagGcpRegion != "" {
+					fmt.Printf("GCP region specified via flags:\n  %s\n", flagGcpRegion)
+					gcpRegion = flagGcpRegion
+				} else {
+					if gcpRegion == "" && gcpCloudIdent != nil {
+						fmt.Printf("Defaulting to GCP region from self-ident.\n")
+						gcpRegion = gcpCloudIdent.Region
+					}
+					if gcpRegion == "" && envGcpRegion != "" {
+						fmt.Printf("Defaulting to GCP region from environment.\n")
+						gcpRegion = envGcpRegion
+					}
+					if gcpRegion == "" {
+						gcpRegion = cbdcconfig.DEFAULT_GCP_REGION
+					}
+
+					gcpRegion = readString(
+						"What GCP region should we use?",
+						gcpRegion, false)
+				}
+				if gcpRegion == "" {
+					fmt.Printf("The GCP region is required.\n")
+					gcpEnabled = false
+					continue
+				}
+
+				if flagGcpProjectId != "" {
+					fmt.Printf("GCP project id specified via flags:\n  %s\n", flagGcpProjectId)
+					gcpProjectId = flagGcpProjectId
+				} else {
+					if gcpProjectId == "" && envGcpProjectId != "" {
+						fmt.Printf("Defaulting to GCP project id from environment.\n")
+						gcpProjectId = envGcpProjectId
+					}
+					if gcpProjectId == "" && gcpCloudIdent != nil {
+						fmt.Printf("Defaulting to GCP project id from self-ident.\n")
+						gcpProjectId = gcpCloudIdent.ProjectID
+					}
+
+					gcpProjectId = readString(
+						"What GCP project id should we use?",
+						gcpProjectId, false)
+				}
+				if gcpProjectId == "" {
+					fmt.Printf("The GCP project id is required.\n")
+					gcpEnabled = false
+					continue
+				}
+
+				// Validate GCP project ID by attempting to connect to the project
+				creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+				if err != nil {
+					fmt.Printf("Failed to load GCP credentials: %s\n", err)
+					gcpEnabled = false
+					continue
+				}
+
+				tokenSource := creds.TokenSource
+				client := oauth2.NewClient(ctx, tokenSource)
+
+				computeService, err := compute.NewService(ctx, option.WithHTTPClient(client))
+				if err != nil {
+					fmt.Printf("Failed to create GCP compute client: %s\n", err)
+					gcpEnabled = false
+					continue
+				}
+
+				_, err = computeService.Projects.Get(gcpProjectId).Do()
+				if err != nil {
+					fmt.Printf("Failed to connect to shared GCP project. Please verify that:\n")
+					fmt.Printf("  1. The project ID is correct\n")
+					fmt.Printf("  2. Your credentials have access to this project\n")
+					fmt.Printf("  3. The project exists and is not deleted\n")
+					gcpEnabled = false
+					continue
+				}
+
+				fmt.Printf("Successfully connected to GCP project: %s\n", gcpProjectId)
+				break
+			}
+
+			curConfig.GCP.Enabled.Set(gcpEnabled)
+			curConfig.GCP.Region = gcpRegion
+			curConfig.GCP.ProjectID = gcpProjectId
 			saveConfig()
 		}
 
@@ -1474,6 +1588,12 @@ func init() {
 	initCmd.Flags().Bool("disable-aws", false, "Disable AWS")
 	initCmd.Flags().String("aws-region", "", "AWS default region to use")
 	initCmd.Flags().Bool("disable-azure", false, "Disable Azure")
+	initCmd.Flags().String("azure-region", "", "Azure default region to use")
+	initCmd.Flags().String("azure-sub-id", "", "Azure subscription id to use")
+	initCmd.Flags().String("azure-rg-name", "", "Azure resource group to use")
+	initCmd.Flags().Bool("disable-gcp", false, "Disable GCP")
+	initCmd.Flags().String("gcp-region", "", "GCP default region to use")
+	initCmd.Flags().String("gcp-project-id", "", "The GCP project id to use")
 	initCmd.Flags().Bool("disable-dns", false, "Disable DNS")
 	initCmd.Flags().String("dns-hostname", "", "DNS hostname prefix to use")
 	initCmd.Flags().String("upload-server-logs-host-name", "", "Upload server logs host name")
