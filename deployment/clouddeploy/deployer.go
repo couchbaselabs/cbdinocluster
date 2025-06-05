@@ -1454,6 +1454,26 @@ func (p *Deployer) GetPrivateEndpointDetails(ctx context.Context, clusterID stri
 
 }
 
+func (p *Deployer) GenPrivateEndpointLinkCommand(ctx context.Context, clusterID string, req *capellacontrol.PrivateEndpointLinkRequest) (string, error) {
+	clusterInfo, err := p.getCluster(ctx, clusterID)
+	if err != nil {
+		return "", err
+	}
+
+	if clusterInfo.Columnar == nil {
+		cmd, err := p.client.GenPrivateEndpointLinkCommand(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PrivateEndpointLinkRequest{
+			VpcID:     req.VpcID,
+			SubnetIds: req.SubnetIds,
+		})
+		if err != nil {
+			return "", errors.Wrap(err, "failed to generate private endpoint link command")
+		}
+		return cmd.Data.Command, nil
+	} else {
+		return "", errors.New("private endpoint link command generation is not supported for columnar yet")
+	}
+}
+
 func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID string, endpointID string) error {
 	clusterInfo, err := p.getCluster(ctx, clusterID)
 	if err != nil {
