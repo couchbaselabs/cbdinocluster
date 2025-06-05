@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/oauth2/google"
 	"net"
 	"os"
 	"os/exec"
@@ -25,12 +26,15 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/google/go-github/v53/github"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
+	"google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/clientcmd/api"
 )
@@ -276,6 +280,7 @@ var initCmd = &cobra.Command{
 
 		awsCloudIdent, _ := cloudIdent.(*awscontrol.LocalInstanceInfo)
 		azureCloudIdent, _ := cloudIdent.(*azurecontrol.LocalVmInfo)
+		gcpCloudIdent, _ := cloudIdent.(*gcpcontrol.LocalInstanceInfo)
 
 		printGitHubConfig := func() {
 			fmt.Printf("  Enabled: %t\n", curConfig.GitHub.Enabled.Value())
@@ -794,11 +799,11 @@ var initCmd = &cobra.Command{
 					awsRegion = flagAwsRegion
 				} else {
 					if awsRegion == "" && awsCloudIdent != nil {
-						fmt.Printf("Defaulting to aws region from environment.\n")
+						fmt.Printf("Defaulting to aws region from self-ident.\n")
 						awsRegion = awsCloudIdent.Region
 					}
 					if awsRegion == "" && envAwsRegion != "" {
-						fmt.Printf("Defaulting to aws region from self-ident.\n")
+						fmt.Printf("Defaulting to aws region from environment.\n")
 						awsRegion = envAwsRegion
 					}
 					if awsRegion == "" {
@@ -981,10 +986,82 @@ var initCmd = &cobra.Command{
 		}
 
 		printGcpConfig := func() {
-			fmt.Printf("  Not Yet Supported\n")
+			fmt.Printf("  Enabled: %t\n", curConfig.GCP.Enabled.Value())
+			fmt.Printf("  Zone: %s\n", curConfig.GCP.Zone)
+
 		}
 		{
-			curConfig.GCP.Enabled.Set(false)
+			flagDisableGcp, _ := cmd.Flags().GetBool("disable-gcp")
+			flagGcpZone, _ := cmd.Flags().GetString("gcp-zone")
+			envGcpZone := os.Getenv("GCP_ZONE")
+
+			gcpEnabled := curConfig.GCP.Enabled.ValueOr(true)
+			gcpZone := curConfig.GCP.Zone
+
+			for {
+				if flagDisableGcp {
+					fmt.Printf("GCP disabled via flags.\n")
+					gcpEnabled = false
+					break
+				}
+
+				gcpEnabled = readBool(
+					"Would you like to enable GCP?",
+					gcpEnabled)
+				if !gcpEnabled {
+					break
+				}
+
+				if flagGcpZone != "" {
+					fmt.Printf("GCP zone specified via flags:\n  %s\n", flagGcpZone)
+					gcpZone = flagGcpZone
+				} else {
+					if gcpZone == "" && gcpCloudIdent != nil {
+						fmt.Printf("Defaulting to GCP zone from self-ident.\n")
+						gcpZone = gcpCloudIdent.Zone
+					}
+					if gcpZone == "" && envGcpZone != "" {
+						fmt.Printf("Defaulting to GCP zone from environment.\n")
+						gcpZone = envGcpZone
+					}
+					if gcpZone == "" {
+						gcpZone = cbdcconfig.DEFAULT_GCP_ZONE
+					}
+
+					gcpZone = readString(
+						"What GCP zone should we use?",
+						gcpZone, false)
+				}
+				if gcpZone == "" {
+					fmt.Printf("The GCP region is required.\n")
+					gcpEnabled = false
+					continue
+				}
+
+				// Validate GCP credentials
+				creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+				if err != nil {
+					fmt.Printf("Failed to load GCP credentials: %s\n", err)
+					gcpEnabled = false
+					continue
+				}
+
+				tokenSource := creds.TokenSource
+				client := oauth2.NewClient(ctx, tokenSource)
+
+				_, err = compute.NewService(ctx, option.WithHTTPClient(client))
+				if err != nil {
+					fmt.Printf("Failed to create GCP compute client: %s\n", err)
+					gcpEnabled = false
+					continue
+				}
+
+				fmt.Printf("GCP compute client configured.\n")
+				break
+			}
+
+			curConfig.GCP.Enabled.Set(gcpEnabled)
+			curConfig.GCP.Zone = gcpZone
 			saveConfig()
 		}
 
@@ -1236,11 +1313,13 @@ var initCmd = &cobra.Command{
 					fmt.Printf("Capella default GCP region specified via flags:\n  %s\n", flagCapellaGcpRegion)
 					capellaGcpRegion = flagCapellaGcpRegion
 				} else {
-					if capellaGcpRegion == "" && curConfig.GCP.Region != "" {
-						capellaGcpRegion = curConfig.GCP.Region
+					if capellaGcpRegion == "" && curConfig.GCP.Zone != "" {
+						parts := strings.Split(curConfig.GCP.Zone, "-")
+						capellaGcpRegion = strings.Join(parts[:len(parts)-1], "-")
 					}
 					if capellaGcpRegion == "" {
-						capellaGcpRegion = cbdcconfig.DEFAULT_GCP_REGION
+						parts := strings.Split(cbdcconfig.DEFAULT_GCP_ZONE, "-")
+						capellaGcpRegion = strings.Join(parts[:len(parts)-1], "-")
 					}
 
 					capellaGcpRegion = readString(
@@ -1474,6 +1553,11 @@ func init() {
 	initCmd.Flags().Bool("disable-aws", false, "Disable AWS")
 	initCmd.Flags().String("aws-region", "", "AWS default region to use")
 	initCmd.Flags().Bool("disable-azure", false, "Disable Azure")
+	initCmd.Flags().String("azure-region", "", "Azure default region to use")
+	initCmd.Flags().String("azure-sub-id", "", "Azure subscription id to use")
+	initCmd.Flags().String("azure-rg-name", "", "Azure resource group to use")
+	initCmd.Flags().Bool("disable-gcp", false, "Disable GCP")
+	initCmd.Flags().String("gcp-region", "", "GCP default region to use")
 	initCmd.Flags().Bool("disable-dns", false, "Disable DNS")
 	initCmd.Flags().String("dns-hostname", "", "DNS hostname prefix to use")
 	initCmd.Flags().String("upload-server-logs-host-name", "", "Upload server logs host name")

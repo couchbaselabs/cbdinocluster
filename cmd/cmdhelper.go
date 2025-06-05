@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/user"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+	"golang.org/x/oauth2/google"
 )
 
 type CmdHelper struct {
@@ -414,6 +416,22 @@ func (h *CmdHelper) GetAzureCredentials(ctx context.Context) azcore.TokenCredent
 	return creds
 }
 
+func (h *CmdHelper) GetGCPCredentials(ctx context.Context) *google.Credentials {
+	logger := h.GetLogger()
+	cbdcConfig := h.GetConfig(ctx)
+
+	if !cbdcConfig.GCP.Enabled.Value() {
+		logger.Fatal("cannot use GCP when configuration is disabled")
+	}
+
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		logger.Fatal("failed to fetch GCP credentials", zap.Error(err))
+	}
+
+	return creds
+}
+
 func (h *CmdHelper) IdentifyCurrentUser() string {
 	osUser, err := user.Current()
 	if err != nil {
@@ -592,4 +610,16 @@ func (h *CmdHelper) FetchClusterDef(
 	}
 
 	return nil, errors.New("must specify at least one form of cluster definition")
+}
+
+func (h *CmdHelper) ExecuteBashCommand(command string) error {
+	cmd := exec.Command("bash", "-c", command)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	cmd.Env = os.Environ()
+
+	fmt.Println("Running bash script...")
+	return cmd.Run()
 }
