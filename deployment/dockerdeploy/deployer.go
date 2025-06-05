@@ -699,15 +699,20 @@ func (d *Deployer) updateLoadBalancer(
 	enableSsl bool,
 ) error {
 	var addrs []string
+	isAnalytics := false
 	for _, node := range nodes {
 		if node.Type != "server-node" && node.Type != "columnar-node" {
 			continue
 		}
 
+		if node.Type == "columnar-node" {
+			isAnalytics = true
+		}
+
 		addrs = append(addrs, node.IPAddress)
 	}
 
-	return d.controller.UpdateNginxConfig(ctx, loadBalancerContainerId, addrs, enableSsl)
+	return d.controller.UpdateNginxConfig(ctx, loadBalancerContainerId, addrs, enableSsl, isAnalytics)
 }
 
 func (d *Deployer) updateDnsRecords(

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -439,46 +438,56 @@ func (c *Controller) UpdateNginxCertificates(ctx context.Context, containerID st
 	return nil
 }
 
-func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string, enableSsl bool) error {
+func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string, enableSsl, isAnalytics bool) error {
 	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("addrs", addrs))
 
 	var nginxConf string
-	writeForwardedPort := func(portInt int, stickySession bool, withSsl bool) {
-		if len(addrs) > 0 {
-			port := strconv.Itoa(portInt)
-
-			nginxConf += "upstream backend" + port + " {\n"
-			if stickySession {
-				nginxConf += "    ip_hash;\n"
-			}
-			for _, addr := range addrs {
-				nginxConf += "    server " + addr + ":" + port + ";\n"
-			}
-			nginxConf += "}\n"
-			nginxConf += "server {\n"
-
-			if !withSsl {
-				nginxConf += "    listen " + port + ";\n"
-			} else {
-				nginxConf += "    listen " + port + " ssl;\n"
-
-				nginxConf += "    ssl_certificate /etc/nginx/ssl/cert.pem;\n"
-				nginxConf += "    ssl_certificate_key /etc/nginx/ssl/key.pem;"
-			}
-
-			nginxConf += "    location / {\n"
-			if !withSsl {
-				nginxConf += "        proxy_pass http://backend" + port + ";\n"
-			} else {
-				nginxConf += "        proxy_pass https://backend" + port + ";\n"
-			}
-			nginxConf += "        proxy_set_header Host $http_host;\n"
-			nginxConf += "        proxy_set_header X-Real-IP $remote_addr;\n"
-			nginxConf += "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
-			nginxConf += "    }\n"
-			nginxConf += "}\n"
+	writePortMapping := func(listenPort, targetPort int, stickySession, withSsl bool, path string) {
+		if len(addrs) == 0 {
+			return
 		}
+		if path == "" {
+			path = "/"
+		} else if path[len(path)-1] != '/' {
+			path += "/"
+		}
+
+		upstreamName := fmt.Sprintf("backend%d%s", listenPort, strings.ReplaceAll(path, "/", "_"))
+		nginxConf += fmt.Sprintf("upstream %s {\n", upstreamName)
+		if stickySession {
+			nginxConf += "    ip_hash;\n"
+		}
+		for _, addr := range addrs {
+			nginxConf += fmt.Sprintf("    server %s:%d;\n", addr, targetPort)
+		}
+		nginxConf += "}\n"
+
+		nginxConf += "server {\n"
+		if withSsl {
+			nginxConf += fmt.Sprintf("    listen %d ssl;\n", listenPort)
+			nginxConf += "    ssl_certificate /etc/nginx/ssl/cert.pem;\n"
+			nginxConf += "    ssl_certificate_key /etc/nginx/ssl/key.pem;\n"
+		} else {
+			nginxConf += fmt.Sprintf("    listen %d;\n", listenPort)
+		}
+
+		nginxConf += fmt.Sprintf("    location %s {\n", path)
+		protocol := "http"
+		if withSsl {
+			protocol = "https"
+		}
+		nginxConf += fmt.Sprintf("        proxy_pass %s://%s/;\n", protocol, upstreamName)
+		nginxConf += "        proxy_set_header Host $http_host;\n"
+		nginxConf += "        proxy_set_header X-Real-IP $remote_addr;\n"
+		nginxConf += "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+		nginxConf += "    }\n"
+		nginxConf += "}\n"
 	}
+
+	writeForwardedPort := func(portInt int, stickySession bool, withSsl bool) {
+		writePortMapping(portInt, portInt, stickySession, withSsl, "")
+	}
+
 	writeForwardedPort(8091, true, false)
 	writeForwardedPort(8092, false, false)
 	writeForwardedPort(8093, false, false)
@@ -486,6 +495,11 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 	writeForwardedPort(8095, false, false)
 	writeForwardedPort(8096, false, false)
 	writeForwardedPort(8097, false, false)
+
+	if isAnalytics {
+		writePortMapping(80, 8095, false, false, "/analytics")
+	}
+
 	if enableSsl {
 		writeForwardedPort(18091, true, true)
 		writeForwardedPort(18092, false, true)
@@ -494,6 +508,9 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 		writeForwardedPort(18095, false, true)
 		writeForwardedPort(18096, false, true)
 		writeForwardedPort(18097, false, true)
+		if isAnalytics {
+			writePortMapping(443, 18095, false, true, "/analytics")
+		}
 	}
 
 	confBytes := []byte(nginxConf)
