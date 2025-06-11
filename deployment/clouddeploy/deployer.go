@@ -3,12 +3,16 @@ package clouddeploy
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
-	"go.uber.org/multierr"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"go.uber.org/multierr"
+
+	"github.com/couchbase/gocbcorex/cbmgmtx"
+	"github.com/couchbase/gocbcorex/cbqueryx"
 	"github.com/couchbaselabs/cbdinocluster/utils/webhelper"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
@@ -1346,6 +1350,9 @@ func (p *Deployer) RemoveAllowListEntry(ctx context.Context, clusterID string, c
 			SortDirection: "asc",
 		})
 	}
+	if err != nil {
+		return errors.Wrap(err, "failed to list allow list entries")
+	}
 
 	foundEntryId := ""
 	for _, entry := range entries.Data {
@@ -2224,28 +2231,169 @@ func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) 
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }
 
-func (p *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
-	return "", errors.New("clouddeploy does not support executing queries")
+func (d *Deployer) getMgmtX(ctx context.Context, clusterID string) (*cbmgmtx.Management, error) {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	cloudProjectID := clusterInfo.Cluster.Project.Id
+	cloudClusterID := clusterInfo.Cluster.Id
+
+	mcli, err := d.client.GetMgmtX(ctx, d.tenantID, cloudProjectID, cloudClusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	return mcli, nil
+}
+
+func (d *Deployer) getQueryX(ctx context.Context, clusterID string) (*cbqueryx.Query, error) {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	cloudProjectID := clusterInfo.Cluster.Project.Id
+	cloudClusterID := clusterInfo.Cluster.Id
+
+	qcli, err := d.client.GetQueryX(ctx, d.tenantID, cloudProjectID, cloudClusterID)
+	if err != nil {
+		return nil, err
+	}
+
+	return qcli, nil
+}
+
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
+	qcli, err := d.getQueryX(ctx, clusterID)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get query client")
+	}
+
+	results, err := qcli.Query(ctx, &cbqueryx.QueryOptions{
+		Statement: query,
+	})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to execute query")
+	}
+
+	rows := make([]json.RawMessage, 0)
+	for results.HasMoreRows() {
+		row, err := results.ReadRow()
+		if err != nil {
+			return "", errors.Wrap(err, "failed to read row")
+		}
+
+		rows = append(rows, row)
+	}
+
+	rowsBytes, err := json.Marshal(rows)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to serialize rows")
+	}
+
+	return string(rowsBytes), nil
 }
 
 func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {
-	return nil, errors.New("clouddeploy does not support getting collections")
+	mcli, err := d.getMgmtX(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get mgmt client")
+	}
+
+	manifest, err := mcli.GetCollectionManifest(ctx, &cbmgmtx.GetCollectionManifestOptions{
+		BucketName: bucketName,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to fetch collection manifest")
+	}
+
+	var scopes []deployment.ScopeInfo
+	for _, scope := range manifest.Scopes {
+		var collections []deployment.CollectionInfo
+		for _, collection := range scope.Collections {
+			collections = append(collections, deployment.CollectionInfo{
+				Name: collection.Name,
+			})
+		}
+		scopes = append(scopes, deployment.ScopeInfo{
+			Name:        scope.Name,
+			Collections: collections,
+		})
+	}
+
+	return scopes, nil
 }
 
 func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	return errors.New("clouddeploy does not support creating scopes")
+	mcli, err := d.getMgmtX(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get mgmt client")
+	}
+
+	_, err = mcli.CreateScope(ctx, &cbmgmtx.CreateScopeOptions{
+		BucketName: bucketName,
+		ScopeName:  scopeName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create scope")
+	}
+
+	return nil
 }
 
 func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	return errors.New("clouddeploy does not support creating collections")
+	mcli, err := d.getMgmtX(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get mgmt client")
+	}
+
+	_, err = mcli.CreateCollection(ctx, &cbmgmtx.CreateCollectionOptions{
+		BucketName:     bucketName,
+		ScopeName:      scopeName,
+		CollectionName: collectionName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create collection")
+	}
+
+	return nil
 }
 
 func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	return errors.New("clouddeploy does not support deleting scopes")
+	mcli, err := d.getMgmtX(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get mgmt client")
+	}
+
+	_, err = mcli.DeleteScope(ctx, &cbmgmtx.DeleteScopeOptions{
+		BucketName: bucketName,
+		ScopeName:  scopeName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to delete scope")
+	}
+
+	return nil
 }
 
 func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	return errors.New("clouddeploy does not support deleting collections")
+	mcli, err := d.getMgmtX(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get mgmt client")
+	}
+
+	_, err = mcli.DeleteCollection(ctx, &cbmgmtx.DeleteCollectionOptions{
+		BucketName:     bucketName,
+		ScopeName:      scopeName,
+		CollectionName: collectionName,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to delete collection")
+	}
+
+	return nil
 }
 
 func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
