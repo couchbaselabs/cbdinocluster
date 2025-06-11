@@ -80,6 +80,7 @@ func (c *SelfIdentifyController) Identify(ctx context.Context) (interface{}, err
 
 	<-awsWaitCh
 	<-azureWaitCh
+	<-gcpWaitCh
 
 	if awsRes != nil {
 		return awsRes, nil
