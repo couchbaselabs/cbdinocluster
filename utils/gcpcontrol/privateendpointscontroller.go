@@ -17,22 +17,12 @@ type PrivateEndpointsController struct {
 	ProjectID string
 }
 
-type CreateVPCEndpointOptions struct {
-	ClusterID  string
-	InstanceID string
+type NetworkDetails struct {
+	NetworkID    string
+	SubnetworkID string
 }
 
-type CreateVPCEndpointResult struct {
-	EndpointID string
-	Status     string
-}
-
-type GetNetworkAndSubnetResult struct {
-	Network    string
-	Subnetwork string
-}
-
-func (c *PrivateEndpointsController) GetNetworkAndSubnet(ctx context.Context, instanceID string) (*GetNetworkAndSubnetResult, error) {
+func (c *PrivateEndpointsController) GetNetworkAndSubnet(ctx context.Context, instanceID string) (*NetworkDetails, error) {
 	instancesClient, err := compute.NewInstancesRESTClient(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create instances client")
@@ -55,15 +45,8 @@ func (c *PrivateEndpointsController) GetNetworkAndSubnet(ctx context.Context, in
 	network := path.Base(*networkInterface.Network)
 	subnetwork := path.Base(*networkInterface.Subnetwork)
 
-	return &GetNetworkAndSubnetResult{
-		Network:    network,
-		Subnetwork: subnetwork,
-	}, nil
-}
-
-func (c *PrivateEndpointsController) CreateVPCEndpoint(ctx context.Context, opts *CreateVPCEndpointOptions) (*CreateVPCEndpointResult, error) {
-	return &CreateVPCEndpointResult{
-		EndpointID: "epID",
-		Status:     "READY",
+	return &NetworkDetails{
+		NetworkID:    network,
+		SubnetworkID: subnetwork,
 	}, nil
 }

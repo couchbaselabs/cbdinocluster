@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/user"
 	"strings"
 	"sync"
@@ -423,7 +424,7 @@ func (h *CmdHelper) GetGCPCredentials(ctx context.Context) *google.Credentials {
 		logger.Fatal("cannot use GCP when configuration is disabled")
 	}
 
-	creds, err := google.FindDefaultCredentials(ctx)
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		logger.Fatal("failed to fetch GCP credentials", zap.Error(err))
 	}
@@ -609,4 +610,16 @@ func (h *CmdHelper) FetchClusterDef(
 	}
 
 	return nil, errors.New("must specify at least one form of cluster definition")
+}
+
+func (h *CmdHelper) ExecuteBashCommand(command string) error {
+	cmd := exec.Command("bash", "-c", command)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	cmd.Env = os.Environ()
+
+	fmt.Println("Running bash script...")
+	return cmd.Run()
 }

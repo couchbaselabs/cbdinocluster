@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
@@ -173,26 +172,18 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 			}
 
 			command, err := cloudDeployer.GenPrivateEndpointLinkCommand(ctx, cloudCluster.ClusterID, &capellacontrol.PrivateEndpointLinkRequest{
-				VpcID:     vpcInfo.Network,
-				SubnetIds: vpcInfo.Subnetwork,
+				VpcID:     vpcInfo.NetworkID,
+				SubnetIds: vpcInfo.SubnetworkID,
 			})
 
-			fmt.Print("\n\nCommand: " + command + "\n\n")
-			_, err = peCtrl.CreateVPCEndpoint(ctx, &gcpcontrol.CreateVPCEndpointOptions{
-				ClusterID:  cloudCluster.CloudClusterID,
-				InstanceID: instanceIdGcp,
-			})
+			err = helper.ExecuteBashCommand(command)
 			if err != nil {
-				logger.Fatal("failed to create private service connect endpoint", zap.Error(err))
+				logger.Fatal("failed to execute private endpoint link command", zap.Error(err))
 			}
 
 			err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cloudCluster.ClusterID, projectIdGcp)
 			if err != nil {
 				logger.Fatal("failed to accept private endpoint link", zap.Error(err))
-			}
-
-			if err != nil {
-				logger.Fatal("failed to enable private dns on link", zap.Error(err))
 			}
 		} else {
 			logger.Fatal("unexpectedly missing instance identifier")
