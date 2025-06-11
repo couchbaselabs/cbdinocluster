@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 	"io"
 	"net/http"
+	"path"
 )
 
 type LocalInstanceController struct {
