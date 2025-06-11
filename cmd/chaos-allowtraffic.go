@@ -6,7 +6,7 @@ import (
 )
 
 var chaosAllowTrafficCmd = &cobra.Command{
-	Use:   "allow-traffic",
+	Use:   "allow-traffic <cluster-id> <node-id-or-ip>",
 	Short: "Allows all traffic to a specific node",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

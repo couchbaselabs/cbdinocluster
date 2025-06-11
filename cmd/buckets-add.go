@@ -7,7 +7,7 @@ import (
 )
 
 var bucketsAddCmd = &cobra.Command{
-	Use:   "add",
+	Use:   "add <cluster-id> <bucket-name>",
 	Short: "Adds a new bucket",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

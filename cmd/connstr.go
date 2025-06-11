@@ -8,7 +8,7 @@ import (
 )
 
 var connstrCmd = &cobra.Command{
-	Use:     "connstr [flags] cluster",
+	Use:     "connstr [flags] <cluster-id>",
 	Aliases: []string{"conn-str"},
 	Short:   "Gets a connection string to connect to the cluster",
 	Args:    cobra.MinimumNArgs(1),

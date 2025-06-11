@@ -6,7 +6,7 @@ import (
 )
 
 var usersRemoveCmd = &cobra.Command{
-	Use:     "remove",
+	Use:     "remove <cluster-id> <username>",
 	Aliases: []string{"rm"},
 	Short:   "Removes a user",
 	Args:    cobra.MinimumNArgs(2),

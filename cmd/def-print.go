@@ -9,7 +9,7 @@ import (
 )
 
 var defPrintCmd = &cobra.Command{
-	Use:   "print [flags] [definition-tag | --def | --def-file]",
+	Use:   "print [flags] <definition-tag | --def | --def-file>",
 	Short: "Gets the cluster definition for a cluster",
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}

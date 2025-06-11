@@ -6,10 +6,9 @@ import (
 )
 
 var cloudUpgradeCmd = &cobra.Command{
-	Use:     "upgrade",
-	Short:   "Upgrades an operational or columnar cluster",
-	Args:    cobra.MinimumNArgs(3),
-	Example: "upgrade <cluster_id> <current_image> <new_image>",
+	Use:   "upgrade <cluster-id> <current-image> <new-image>",
+	Short: "Upgrades an operational or columnar cluster",
+	Args:  cobra.MinimumNArgs(3),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()

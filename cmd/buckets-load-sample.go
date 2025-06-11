@@ -6,7 +6,7 @@ import (
 )
 
 var bucketsLoadSampleCmd = &cobra.Command{
-	Use:   "load-sample",
+	Use:   "load-sample <cluster-id> <sample-bucket-name>",
 	Short: "Loads a sample bucket",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

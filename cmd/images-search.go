@@ -19,7 +19,7 @@ type ImagesSearchOutput_Item struct {
 }
 
 var imagesSearchCmd = &cobra.Command{
-	Use:     "search",
+	Use:     "search <query>",
 	Aliases: []string{"find"},
 	Short:   "Searches all the images available to use",
 	Args:    cobra.MinimumNArgs(1),

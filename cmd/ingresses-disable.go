@@ -7,7 +7,7 @@ import (
 )
 
 var ingressesDisableCmd = &cobra.Command{
-	Use:   "disable",
+	Use:   "disable <cluster-id>",
 	Short: "Disables ingresses",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

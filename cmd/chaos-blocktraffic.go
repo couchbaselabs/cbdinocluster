@@ -7,7 +7,7 @@ import (
 )
 
 var chaosBlockTrafficCmd = &cobra.Command{
-	Use:   "block-traffic [nodes/clients/all]",
+	Use:   "block-traffic <cluster-id> <node-id-or-ip> [nodes/clients/all]",
 	Short: "Blocks a type of traffic to a specific node",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

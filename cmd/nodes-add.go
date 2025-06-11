@@ -8,7 +8,7 @@ import (
 )
 
 var nodesAddCmd = &cobra.Command{
-	Use:     "add",
+	Use:     "add <cluster-id>",
 	Aliases: []string{"alloc", "allocate"},
 	Short:   "Adds a new node to the cluster",
 	Args:    cobra.MinimumNArgs(1),

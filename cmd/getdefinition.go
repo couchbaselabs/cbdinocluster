@@ -9,7 +9,7 @@ import (
 )
 
 var getdefinitionCmd = &cobra.Command{
-	Use:     "get-definition [flags] cluster [node]",
+	Use:     "get-definition [flags] <cluster-id>",
 	Aliases: []string{"get-def"},
 	Short:   "Gets the cluster definition for a cluster",
 	Args:    cobra.MinimumNArgs(1),

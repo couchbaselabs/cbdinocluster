@@ -8,7 +8,7 @@ import (
 )
 
 var certificatesGetGatewayCaCmd = &cobra.Command{
-	Use:   "get-gateway-ca",
+	Use:   "get-gateway-ca <cluster-id>",
 	Short: "Fetches the Gateway CA certificate",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

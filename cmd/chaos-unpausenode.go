@@ -6,7 +6,7 @@ import (
 )
 
 var chaosUnpauseNodeCmd = &cobra.Command{
-	Use:   "unpause-node",
+	Use:   "unpause-node <cluster-id> <node-id-or-ip>",
 	Short: "Unpauses a particular node in the cluster.",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

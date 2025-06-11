@@ -7,7 +7,7 @@ import (
 )
 
 var linksDropCmd = &cobra.Command{
-	Use:   "drop",
+	Use:   "drop <cluster-id> <link-name>",
 	Short: "Drop a link on a columnar instance",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
