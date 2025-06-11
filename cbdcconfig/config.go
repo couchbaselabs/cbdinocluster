@@ -88,9 +88,10 @@ type Config_AWS struct {
 
 type Config_GCP struct {
 	Enabled StringBool `yaml:"enabled"`
-	Region  string     `yaml:"region"`
 
-	_DefaultRegion string `yaml:"default-region"`
+	Zone string `yaml:"zone"`
+
+	_DefaultZone string `yaml:"default-zone"`
 }
 
 type Config_Azure struct {
@@ -141,13 +142,13 @@ func Upgrade(config *Config) *Config {
 		config.DefaultDeployer = "docker"
 		config.AWS._DefaultRegion = DEFAULT_AWS_REGION
 		config.Azure._DefaultRegion = DEFAULT_AZURE_REGION
-		config.GCP._DefaultRegion = DEFAULT_GCP_REGION
+		config.GCP._DefaultZone = DEFAULT_GCP_ZONE
 		config.Version = 2
 	}
 
 	if config.Version < 3 {
 		config.AWS.Region = config.AWS._DefaultRegion
-		config.GCP.Region = config.GCP._DefaultRegion
+		config.GCP.Zone = config.GCP._DefaultZone
 		config.Azure.Region = config.Azure._DefaultRegion
 		config.Version = 3
 	}
