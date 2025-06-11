@@ -43,6 +43,7 @@ func (c *LocalInstanceController) Identify(ctx context.Context) (*LocalInstanceI
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get zone")
 	}
+	zone = path.Base(zone)
 
 	instanceID, err := FetchGCPMetadata(ctx, "instance/id")
 	if err != nil {
