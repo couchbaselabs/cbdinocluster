@@ -1501,6 +1501,13 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 	}
 
 	fullEndpointId := ""
+
+	if clusterInfo.Cluster.Provider.Name == "gcp" {
+		// GCP don't add endpointIDs unless we accept the link, so we need to
+		// use the endpointID as is.
+		fullEndpointId = endpointID
+	}
+
 	for _, peLink := range peLinks.Data {
 		if strings.Contains(peLink.EndpointID, endpointID) {
 			fullEndpointId = peLink.EndpointID
