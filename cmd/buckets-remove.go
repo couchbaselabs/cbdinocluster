@@ -6,7 +6,7 @@ import (
 )
 
 var bucketsRemoveCmd = &cobra.Command{
-	Use:     "remove",
+	Use:     "remove <cluster-id> <bucket-name>",
 	Aliases: []string{"rm"},
 	Short:   "Removes a bucket",
 	Args:    cobra.MinimumNArgs(2),

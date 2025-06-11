@@ -16,7 +16,7 @@ type UsersListOutput_Item struct {
 }
 
 var usersListCmd = &cobra.Command{
-	Use:     "list",
+	Use:     "list <cluster-id>",
 	Aliases: []string{"ls"},
 	Short:   "Lists all the users",
 	Args:    cobra.MinimumNArgs(1),

@@ -7,7 +7,7 @@ import (
 )
 
 var linksS3Cmd = &cobra.Command{
-	Use:   "s3",
+	Use:   "s3 <cluster-id>",
 	Short: "Link a S3 bucket to a columnar instance.",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

@@ -7,7 +7,7 @@ import (
 )
 
 var modifyCmd = &cobra.Command{
-	Use:     "modify [flags] [--def | --def-file]",
+	Use:     "modify [flags] <cluster-id> <--def | --def-file>",
 	Aliases: []string{"mod", "update"},
 	Short:   "Modifies an existing cluster",
 	Args:    cobra.MinimumNArgs(1),

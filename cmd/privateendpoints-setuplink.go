@@ -10,7 +10,7 @@ import (
 )
 
 var privateEndpointsSetupLinkCmd = &cobra.Command{
-	Use:   "setup-link",
+	Use:   "setup-link <cluster-id>",
 	Short: "Automatically configures a private link to this agent",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

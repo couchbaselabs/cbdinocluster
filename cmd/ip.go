@@ -8,7 +8,7 @@ import (
 )
 
 var ipCmd = &cobra.Command{
-	Use:   "ip [flags] cluster [node]",
+	Use:   "ip [flags] <cluster-id> [node-id-or-ip]",
 	Short: "Gets the IP of a node in the cluster",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

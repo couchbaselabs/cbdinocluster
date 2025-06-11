@@ -7,7 +7,7 @@ import (
 )
 
 var allowListAddCmd = &cobra.Command{
-	Use:     "add",
+	Use:     "add <cluster-id> <cidr>",
 	Aliases: []string{"create"},
 	Short:   "Adds an allowed CIDRs",
 	Args:    cobra.MinimumNArgs(2),

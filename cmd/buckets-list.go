@@ -14,7 +14,7 @@ type BucketsListOutput_Item struct {
 }
 
 var bucketsListCmd = &cobra.Command{
-	Use:     "list",
+	Use:     "list <cluster-id>",
 	Aliases: []string{"ls"},
 	Short:   "Lists all the buckets",
 	Args:    cobra.MinimumNArgs(1),

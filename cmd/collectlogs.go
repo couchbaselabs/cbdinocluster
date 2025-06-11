@@ -10,7 +10,7 @@ import (
 type CollectLogsOutput []string
 
 var collectLogsCmd = &cobra.Command{
-	Use:   "collect-logs [flags] cluster dest-path",
+	Use:   "collect-logs [flags] <cluster-id> <dest-path>",
 	Short: "Fetches the logs from a cluster into a local path",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

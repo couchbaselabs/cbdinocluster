@@ -8,7 +8,7 @@ import (
 )
 
 var mgmtCmd = &cobra.Command{
-	Use:     "mgmt [flags] cluster [node]",
+	Use:     "mgmt [flags] <cluster-id> [node-id-or-ip]",
 	Aliases: []string{"conn-str"},
 	Short:   "Gets an address to management the cluster",
 	Args:    cobra.MinimumNArgs(1),

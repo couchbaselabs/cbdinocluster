@@ -6,7 +6,7 @@ import (
 )
 
 var collectionsAddCmd = &cobra.Command{
-	Use:   "add",
+	Use:   "add <cluster-id> <bucket-name> <scope-name> <collection-name>",
 	Short: "Adds a new collection",
 	Args:  cobra.MinimumNArgs(4),
 	Run: func(cmd *cobra.Command, args []string) {

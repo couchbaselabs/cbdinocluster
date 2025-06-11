@@ -9,7 +9,7 @@ import (
 )
 
 var allowListListCmd = &cobra.Command{
-	Use:     "list",
+	Use:     "list <cluster-id>",
 	Aliases: []string{"ls"},
 	Short:   "Lists all allowed CIDRs",
 	Args:    cobra.MinimumNArgs(1),

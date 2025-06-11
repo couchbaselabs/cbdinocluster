@@ -6,7 +6,7 @@ import (
 )
 
 var collectionsRemoveScopeCmd = &cobra.Command{
-	Use:     "remove-scope",
+	Use:     "remove-scope <cluster-id> <bucket-name> <scope-name>",
 	Aliases: []string{"rms"},
 	Short:   "Removes a scope",
 	Args:    cobra.MinimumNArgs(3),

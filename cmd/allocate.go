@@ -10,7 +10,7 @@ import (
 )
 
 var allocateCmd = &cobra.Command{
-	Use:     "allocate [flags] [definition-tag | --def | --def-file]",
+	Use:     "allocate [flags] <definition-tag | --def | --def-file>",
 	Aliases: []string{"alloc", "create"},
 	Short:   "Allocates a cluster",
 	Example: "allocate simple:7.0.0\nallocate single:7.2.0",

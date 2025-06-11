@@ -7,7 +7,7 @@ import (
 )
 
 var privateEndpointsEnableCmd = &cobra.Command{
-	Use:   "enable",
+	Use:   "enable <cluster-id>",
 	Short: "Enables the Private Endpoints feature on a cloud cluster",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

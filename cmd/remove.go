@@ -6,7 +6,7 @@ import (
 )
 
 var removeCmd = &cobra.Command{
-	Use:     "remove [flags] [cluster]",
+	Use:     "remove [flags] <cluster-id>",
 	Aliases: []string{"rm"},
 	Short:   "Removes a cluster",
 	Args:    cobra.MinimumNArgs(1),

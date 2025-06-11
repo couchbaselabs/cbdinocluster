@@ -10,7 +10,7 @@ import (
 type CollectionsListOutput map[string][]string
 
 var collectionsListCmd = &cobra.Command{
-	Use:     "list",
+	Use:     "list <cluster-id> <bucket-name>",
 	Aliases: []string{"ls"},
 	Short:   "Lists all the collections",
 	Args:    cobra.MinimumNArgs(2),

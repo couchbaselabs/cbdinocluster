@@ -7,7 +7,7 @@ import (
 )
 
 var privateEndpointsAcceptLinkCmd = &cobra.Command{
-	Use:   "accept-link",
+	Use:   "accept-link <cluster-id> <link-id>",
 	Short: "Accepts a clusters pending private endpoint link",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

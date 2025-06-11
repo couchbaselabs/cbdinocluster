@@ -8,7 +8,7 @@ import (
 )
 
 var queryCmd = &cobra.Command{
-	Use:     "query [flags] cluster query",
+	Use:     "query [flags] <cluster-id> <query>",
 	Aliases: []string{"conn-str"},
 	Short:   "Executes a query against the cluster",
 	Args:    cobra.MinimumNArgs(2),

@@ -7,7 +7,7 @@ import (
 )
 
 var linksCapellaCmd = &cobra.Command{
-	Use:   "capella",
+	Use:   "capella <cluster-id>",
 	Short: "Link a capella cluster to a columnar instance. Provide either a capella Cbdino id, or a capella cluster id (i.e. not created by cbdino) ",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

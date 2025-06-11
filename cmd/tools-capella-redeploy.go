@@ -6,7 +6,7 @@ import (
 )
 
 var capellaRedeployCmd = &cobra.Command{
-	Use:   "capella-redeploy [flags] <cluster>",
+	Use:   "capella-redeploy [flags] <cluster-id>",
 	Short: "Redeploy the capella cluster",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

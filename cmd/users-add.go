@@ -7,7 +7,7 @@ import (
 )
 
 var usersAddCmd = &cobra.Command{
-	Use:   "add",
+	Use:   "add <cluster-id> <username>",
 	Short: "Adds a new user",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

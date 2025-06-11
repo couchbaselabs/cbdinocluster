@@ -8,7 +8,7 @@ import (
 )
 
 var refreshCmd = &cobra.Command{
-	Use:   "refresh [flags] <cluster> <expiry>",
+	Use:   "refresh [flags] <cluster-id> <expiry>",
 	Short: "Refreshes the expiry for a cluster",
 	Args:  cobra.MinimumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {

@@ -7,7 +7,7 @@ import (
 )
 
 var configSetDeployerCmd = &cobra.Command{
-	Use:   "set-deployer",
+	Use:   "set-deployer <deployer-name>",
 	Short: "Sets the deployer to use by default",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

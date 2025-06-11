@@ -7,7 +7,7 @@ import (
 )
 
 var allowListRemoveCmd = &cobra.Command{
-	Use:     "remove",
+	Use:     "remove <cluster-id> <cidr>",
 	Aliases: []string{"delete"},
 	Short:   "Removes an allowed CIDRs",
 	Args:    cobra.MinimumNArgs(2),

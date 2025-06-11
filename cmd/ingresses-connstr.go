@@ -16,7 +16,7 @@ import (
 )
 
 var ingressesConnstrCmd = &cobra.Command{
-	Use:   "connstr",
+	Use:   "connstr <cluster-id>",
 	Short: "Gets the conn for a clusters ingress",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

@@ -9,7 +9,7 @@ import (
 )
 
 var privateEndpointsServiceNameCmd = &cobra.Command{
-	Use:   "service-name",
+	Use:   "service-name <cluster-id>",
 	Short: "Gets the service-name for a clusters private endpoint",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

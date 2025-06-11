@@ -12,7 +12,7 @@ import (
 )
 
 var privateEndpointsMgmtCmd = &cobra.Command{
-	Use:   "mgmt",
+	Use:   "mgmt <cluster-id>",
 	Short: "Gets the mgmt address for a clusters private endpoint",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

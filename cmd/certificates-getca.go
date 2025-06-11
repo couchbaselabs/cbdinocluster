@@ -8,7 +8,7 @@ import (
 )
 
 var certificatesGetCaCmd = &cobra.Command{
-	Use:   "get-ca",
+	Use:   "get-ca <cluster-id>",
 	Short: "Fetches the CA certificate",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {

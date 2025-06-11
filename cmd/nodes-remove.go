@@ -6,7 +6,7 @@ import (
 )
 
 var nodesRemoveCmd = &cobra.Command{
-	Use:     "remove",
+	Use:     "remove <cluster-id> <node-id-or-ip>",
 	Aliases: []string{"rm"},
 	Short:   "Removes a specific node",
 	Args:    cobra.MinimumNArgs(2),
