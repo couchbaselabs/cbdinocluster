@@ -1503,8 +1503,10 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 	fullEndpointId := ""
 
 	if clusterInfo.Cluster.Provider.Name == "gcp" {
-		// GCP don't add endpointIDs unless we accept the link, so we need to
-		// use the endpointID as is.
+		// GCP's private endpoint implementation differs from other providers:
+		// The endpoint ID is only generated after accepting the link, unlike
+		// AWS/Azure where it's available before acceptance. Therefore, we use
+		// the provided endpoint ID directly for GCP.
 		fullEndpointId = endpointID
 	}
 
@@ -1520,9 +1522,15 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 	}
 
 	if clusterInfo.Columnar == nil {
-		_, err = p.mgr.WaitForPrivateEndpointLink(ctx, clusterInfo.Columnar != nil, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, fullEndpointId)
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for private endpoint link")
+		// GCP's private endpoint implementation differs from other providers:
+		// The endpoint ID is only generated after accepting the link, unlike
+		// AWS/Azure where it's available before acceptance. Therefore, we use
+		// the provided endpoint ID directly for GCP.
+		if clusterInfo.Cluster.Provider.Name != "gcp" {
+			_, err = p.mgr.WaitForPrivateEndpointLink(ctx, clusterInfo.Columnar != nil, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, fullEndpointId)
+			if err != nil {
+				return errors.Wrap(err, "failed to wait for private endpoint link")
+			}
 		}
 
 		err = p.client.AcceptPrivateEndpointLink(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PrivateEndpointAcceptLinkRequest{
