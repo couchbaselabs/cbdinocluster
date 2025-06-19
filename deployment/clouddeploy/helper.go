@@ -91,13 +91,19 @@ func isServiceEqual(services1 []capellacontrol.ClusterInfo_Service, services2 []
 }
 
 func getReleaseIdFromServerImage(serverImage string) (string, error) {
-	lastIndex := strings.LastIndex(serverImage, ".")
+	// GCP images don't contain "." instead they have "-" and therefore cbdino is not able to read release ID for gcp images.
+	// For example -
+	// gcp image: "couchbase-cloud-server-7-6-5-5724-v1-0-53" has release ID "1.0.53"
+	// aws image: "couchbase-cloud-server-7.6.5-5724-arm64-v1.0.53" has release ID "1.0.53"
+	// azure image: "couchbase-cloud-server-7.6.5-v5720.0.53" has release ID "1.0.53"
+	formattedServerImage := strings.ReplaceAll(serverImage, "-", ".")
+	lastIndex := strings.LastIndex(formattedServerImage, ".")
 	if lastIndex == -1 {
 		// "." not found, handle error
 		return "", errors.New(fmt.Sprintf("ServerImage is not in expected format"))
 	}
 	// The release ID is formed by combining the number after the last dot in the server image with "1.0.".
-	releaseNumberStr := serverImage[lastIndex+1:]
+	releaseNumberStr := formattedServerImage[lastIndex+1:]
 
 	// Validate if the release number is a valid integer
 	releaseNumber, err := strconv.Atoi(releaseNumberStr)
