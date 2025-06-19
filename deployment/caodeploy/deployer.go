@@ -707,6 +707,10 @@ func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeI
 	return errors.New("caodeploy does not support traffic control")
 }
 
+func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error {
+	return errors.New("caodeploy does not support traffic control")
+}
+
 func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
 	return errors.New("caodeploy does not support traffic control")
 }

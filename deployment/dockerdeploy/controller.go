@@ -830,7 +830,13 @@ const (
 	TrafficControlAllowAll     TrafficControlType = "none"
 )
 
-func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, tcType TrafficControlType) error {
+func (c *Controller) SetTrafficControl(
+	ctx context.Context,
+	containerID string,
+	tcType TrafficControlType,
+	extraBlocked []string,
+	extraAllowed []string,
+) error {
 	logger := c.Logger.With(zap.String("container", containerID))
 	logger.Debug("setting up traffic control",
 		zap.String("blockType", string(tcType)))
@@ -864,42 +870,81 @@ func (c *Controller) SetTrafficControl(ctx context.Context, containerID string, 
 		// reject from the rest of that subnet
 		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", ipRange, "-j", "DROP"})
 		if err != nil {
-			return errors.Wrap(err, "failed to create iptables rule")
+			return errors.Wrap(err, "failed to create INPUT iptables rule to block inter-node traffic")
+		}
+		err = c.execIptables(ctx, containerID, []string{"-I", "OUTPUT", "-s", ipRange, "-j", "DROP"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create OUTPUT iptables rule to block inter-node traffic")
 		}
 
 		// always accept from the gateway
 		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", gatewayIP, "-j", "ACCEPT"})
 		if err != nil {
-			return errors.Wrap(err, "failed to create iptables rule")
+			return errors.Wrap(err, "failed to create INPUT iptables rule to allow gateway traffic")
+		}
+		err = c.execIptables(ctx, containerID, []string{"-I", "OUTPUT", "-s", gatewayIP, "-j", "ACCEPT"})
+		if err != nil {
+			return errors.Wrap(err, "failed to create OUTPUT iptables rule to allow gateway traffic")
 		}
 	} else if tcType == TrafficControlBlockClients {
 		// block everyone else
 		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-j", "DROP"})
 		if err != nil {
-			return errors.Wrap(err, "failed to create iptables rule")
+			return errors.Wrap(err, "failed to create INPUT iptables rule to drop all traffic")
 		}
 
 		// always accept from inter-node subnet
 		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", ipRange, "-j", "ACCEPT"})
 		if err != nil {
-			return errors.Wrap(err, "failed to create iptables rule")
+			return errors.Wrap(err, "failed to create INPUT iptables rule to allow inter-node traffic")
 		}
 
 		// always reject from the gateway
 		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", gatewayIP, "-j", "DROP"})
 		if err != nil {
-			return errors.Wrap(err, "failed to create iptables rule")
+			return errors.Wrap(err, "failed to create INPUT iptables rule to block gateway traffic")
 		}
 	} else if tcType == TrafficControlBlockAll {
 		// block all packets
 		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-j", "DROP"})
 		if err != nil {
-			return errors.Wrap(err, "failed to create iptables rule")
+			return errors.Wrap(err, "failed to create INPUT iptables rule to drop all traffic")
 		}
 	} else if tcType == TrafficControlAllowAll {
 		// nothing to do, we are allowing all traffic
 	} else {
 		return errors.New("invalid traffic control type")
+	}
+
+	err = c.execIptables(ctx, containerID, []string{"-I", "OUTPUT", "-j", "ACCEPT"})
+	if err != nil {
+		return errors.Wrapf(err, "failed to create OUTPUT iptables rule to accept all traffic")
+	}
+
+	// add extra blocked ips
+	for _, blockedIP := range extraBlocked {
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", blockedIP, "-j", "DROP"})
+		if err != nil {
+			return errors.Wrapf(err, "failed to create INPUT iptables rule for blocked ip %s", blockedIP)
+		}
+
+		err = c.execIptables(ctx, containerID, []string{"-I", "OUTPUT", "-s", blockedIP, "-j", "DROP"})
+		if err != nil {
+			return errors.Wrapf(err, "failed to create OUTPUT iptables rule for blocked ip %s", blockedIP)
+		}
+	}
+
+	// add extra allowed ips
+	for _, allowedIP := range extraAllowed {
+		err = c.execIptables(ctx, containerID, []string{"-I", "INPUT", "-s", allowedIP, "-j", "ACCEPT"})
+		if err != nil {
+			return errors.Wrapf(err, "failed to create INPUT iptables rule for allowed ip %s", allowedIP)
+		}
+
+		err = c.execIptables(ctx, containerID, []string{"-I", "OUTPUT", "-s", allowedIP, "-j", "ACCEPT"})
+		if err != nil {
+			return errors.Wrapf(err, "failed to create OUTPUT iptables rule for allowed ip %s", allowedIP)
+		}
 	}
 
 	err = c.execIptables(ctx, containerID, []string{"-S"})
