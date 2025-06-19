@@ -120,6 +120,7 @@ type Deployer interface {
 	DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error
 	BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType BlockNodeTrafficType) error
 	AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error
+	PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error
 	CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error)
 	ListImages(ctx context.Context) ([]Image, error)
 	SearchImages(ctx context.Context, version string) ([]Image, error)

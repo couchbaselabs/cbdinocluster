@@ -2404,6 +2404,10 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 	return errors.New("clouddeploy does not support traffic control")
 }
 
+func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error {
+	return errors.New("clouddeploy does not support traffic control")
+}
+
 func (d *Deployer) ListImages(ctx context.Context) ([]deployment.Image, error) {
 	return nil, errors.New("clouddeploy does not support image listing")
 }

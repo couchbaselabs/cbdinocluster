@@ -879,7 +879,7 @@ func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeI
 	case deployment.BlockNodeTrafficAll:
 		tcType = TrafficControlBlockAll
 	}
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, tcType)
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, tcType, nil, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to block traffic")
 	}
@@ -893,9 +893,57 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 		return errors.Wrap(err, "failed to get node")
 	}
 
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlAllowAll)
+	err = d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlAllowAll, nil, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to allow traffic")
+	}
+
+	return nil
+}
+
+func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster info")
+	}
+
+	var islandNodes []*nodeInfo
+	for _, node := range clusterInfo.Nodes {
+		if slices.Contains(nodeIDs, node.NodeID) {
+			islandNodes = append(islandNodes, node)
+		}
+	}
+
+	if len(islandNodes) != len(nodeIDs) {
+		return fmt.Errorf("not all nodes found in cluster %s: %v", clusterID, nodeIDs)
+	}
+
+	var islandAllowedIps []string
+	// allow the nodes on the island to communicate with each other
+	for _, node := range islandNodes {
+		islandAllowedIps = append(islandAllowedIps, node.IPAddress)
+	}
+	// allow non-node traffic to communicate with the island nodes
+	for _, node := range clusterInfo.Nodes {
+		if !node.IsClusterNode() {
+			islandAllowedIps = append(islandAllowedIps, node.IPAddress)
+		}
+	}
+
+	d.logger.Info("partitioning traffic for nodes",
+		zap.Strings("islandAllowedIps", islandAllowedIps))
+
+	for _, node := range islandNodes {
+		d.logger.Debug("partitioning traffic for node",
+			zap.String("nodeID", node.NodeID),
+			zap.String("containerID", node.ContainerID),
+			zap.String("ipAddress", node.IPAddress))
+
+		// block all inter-node traffic for this specific node, but allow traffic from the partition
+		err := d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlBlockNodes, nil, islandAllowedIps)
+		if err != nil {
+			return errors.Wrapf(err, "failed to partition traffic for node %s", node.NodeID)
+		}
 	}
 
 	return nil
