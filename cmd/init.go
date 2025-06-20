@@ -987,16 +987,19 @@ var initCmd = &cobra.Command{
 
 		printGcpConfig := func() {
 			fmt.Printf("  Enabled: %t\n", curConfig.GCP.Enabled.Value())
-			fmt.Printf("  Zone: %s\n", curConfig.GCP.Zone)
+			fmt.Printf("  Region: %s\n", curConfig.GCP.Region)
 
 		}
 		{
 			flagDisableGcp, _ := cmd.Flags().GetBool("disable-gcp")
-			flagGcpZone, _ := cmd.Flags().GetString("gcp-zone")
-			envGcpZone := os.Getenv("GCP_ZONE")
+			flagGcpRegion, _ := cmd.Flags().GetString("gcp-region")
+			flagGcpProjectId, _ := cmd.Flags().GetString("gcp-project-id")
+			envGcpRegion := os.Getenv("GCP_REGION")
+			envGcpProjectId := os.Getenv("GCP_PROJECT_ID")
 
 			gcpEnabled := curConfig.GCP.Enabled.ValueOr(true)
-			gcpZone := curConfig.GCP.Zone
+			gcpRegion := curConfig.GCP.Region
+			gcpProjectId := curConfig.GCP.ProjectID
 
 			for {
 				if flagDisableGcp {
@@ -1012,33 +1015,56 @@ var initCmd = &cobra.Command{
 					break
 				}
 
-				if flagGcpZone != "" {
-					fmt.Printf("GCP zone specified via flags:\n  %s\n", flagGcpZone)
-					gcpZone = flagGcpZone
+				if flagGcpRegion != "" {
+					fmt.Printf("GCP region specified via flags:\n  %s\n", flagGcpRegion)
+					gcpRegion = flagGcpRegion
 				} else {
-					if gcpZone == "" && gcpCloudIdent != nil {
-						fmt.Printf("Defaulting to GCP zone from self-ident.\n")
-						gcpZone = gcpCloudIdent.Zone
+					if gcpRegion == "" && gcpCloudIdent != nil {
+						fmt.Printf("Defaulting to GCP rrgion from self-ident.\n")
+						gcpRegion = gcpCloudIdent.Region
 					}
-					if gcpZone == "" && envGcpZone != "" {
-						fmt.Printf("Defaulting to GCP zone from environment.\n")
-						gcpZone = envGcpZone
+					if gcpRegion == "" && envGcpRegion != "" {
+						fmt.Printf("Defaulting to GCP region from environment.\n")
+						gcpRegion = envGcpRegion
 					}
-					if gcpZone == "" {
-						gcpZone = cbdcconfig.DEFAULT_GCP_ZONE
+					if gcpRegion == "" {
+						gcpRegion = cbdcconfig.DEFAULT_GCP_REGION
 					}
 
-					gcpZone = readString(
-						"What GCP zone should we use?",
-						gcpZone, false)
+					gcpRegion = readString(
+						"What GCP region should we use?",
+						gcpRegion, false)
 				}
-				if gcpZone == "" {
+				if gcpRegion == "" {
 					fmt.Printf("The GCP region is required.\n")
 					gcpEnabled = false
 					continue
 				}
 
-				// Validate GCP credentials
+				if flagGcpProjectId != "" {
+					fmt.Printf("GCP project id specified via flags:\n  %s\n", flagGcpProjectId)
+					gcpProjectId = flagGcpProjectId
+				} else {
+					if gcpProjectId == "" && envGcpProjectId != "" {
+						fmt.Printf("Defaulting to GCP project id from environment.\n")
+						gcpProjectId = envGcpProjectId
+					}
+					if gcpProjectId == "" && gcpCloudIdent != nil {
+						fmt.Printf("Defaulting to GCP project id from self-ident.\n")
+						gcpProjectId = gcpCloudIdent.ProjectID
+					}
+
+					gcpProjectId = readString(
+						"What GCP project id should we use?",
+						gcpProjectId, false)
+				}
+				if gcpProjectId == "" {
+					fmt.Printf("The GCP project id is required.\n")
+					gcpEnabled = false
+					continue
+				}
+
+				// Validate GCP project ID by attempting to connect to the project
 				creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
 				if err != nil {
 					fmt.Printf("Failed to load GCP credentials: %s\n", err)
@@ -1049,19 +1075,30 @@ var initCmd = &cobra.Command{
 				tokenSource := creds.TokenSource
 				client := oauth2.NewClient(ctx, tokenSource)
 
-				_, err = compute.NewService(ctx, option.WithHTTPClient(client))
+				computeService, err := compute.NewService(ctx, option.WithHTTPClient(client))
 				if err != nil {
 					fmt.Printf("Failed to create GCP compute client: %s\n", err)
 					gcpEnabled = false
 					continue
 				}
 
-				fmt.Printf("GCP compute client configured.\n")
+				_, err = computeService.Projects.Get(gcpProjectId).Do()
+				if err != nil {
+					fmt.Printf("Failed to connect to shared GCP project. Please verify that:\n")
+					fmt.Printf("  1. The project ID is correct\n")
+					fmt.Printf("  2. Your credentials have access to this project\n")
+					fmt.Printf("  3. The project exists and is not deleted\n")
+					gcpEnabled = false
+					continue
+				}
+
+				fmt.Printf("Successfully connected to GCP project: %s\n", gcpProjectId)
 				break
 			}
 
 			curConfig.GCP.Enabled.Set(gcpEnabled)
-			curConfig.GCP.Zone = gcpZone
+			curConfig.GCP.Region = gcpRegion
+			curConfig.GCP.ProjectID = gcpProjectId
 			saveConfig()
 		}
 
@@ -1313,13 +1350,11 @@ var initCmd = &cobra.Command{
 					fmt.Printf("Capella default GCP region specified via flags:\n  %s\n", flagCapellaGcpRegion)
 					capellaGcpRegion = flagCapellaGcpRegion
 				} else {
-					if capellaGcpRegion == "" && curConfig.GCP.Zone != "" {
-						parts := strings.Split(curConfig.GCP.Zone, "-")
-						capellaGcpRegion = strings.Join(parts[:len(parts)-1], "-")
+					if capellaGcpRegion == "" && curConfig.GCP.Region != "" {
+						capellaGcpRegion = curConfig.GCP.Region
 					}
 					if capellaGcpRegion == "" {
-						parts := strings.Split(cbdcconfig.DEFAULT_GCP_ZONE, "-")
-						capellaGcpRegion = strings.Join(parts[:len(parts)-1], "-")
+						capellaGcpRegion = cbdcconfig.DEFAULT_GCP_REGION
 					}
 
 					capellaGcpRegion = readString(
@@ -1558,6 +1593,7 @@ func init() {
 	initCmd.Flags().String("azure-rg-name", "", "Azure resource group to use")
 	initCmd.Flags().Bool("disable-gcp", false, "Disable GCP")
 	initCmd.Flags().String("gcp-region", "", "GCP default region to use")
+	initCmd.Flags().String("gcp-project-id", "", "The GCP project id to use")
 	initCmd.Flags().Bool("disable-dns", false, "Disable DNS")
 	initCmd.Flags().String("dns-hostname", "", "DNS hostname prefix to use")
 	initCmd.Flags().String("upload-server-logs-host-name", "", "Upload server logs host name")
