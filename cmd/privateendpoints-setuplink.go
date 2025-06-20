@@ -25,7 +25,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 		instanceId, _ := cmd.Flags().GetString("instance-id")
 		vmId, _ := cmd.Flags().GetString("vm-id")
 		instanceIdGcp, _ := cmd.Flags().GetString("gcp-instance-id")
-		projectIdGcp, _ := cmd.Flags().GetString("gcp-project-id")
+		gcpZone, _ := cmd.Flags().GetString("gcp-zone")
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		cloudDeployer, ok := deployer.(*clouddeploy.Deployer)
@@ -56,7 +56,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				vmId = selfIdentity.VmID
 			case *gcpcontrol.LocalInstanceInfo:
 				instanceIdGcp = selfIdentity.InstanceID
-				projectIdGcp = selfIdentity.ProjectID
+				gcpZone = selfIdentity.Zone
 			default:
 				logger.Fatal("unexpected self-identity type")
 			}
@@ -153,20 +153,22 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				logger.Fatal("cannot setup GCP private endpoint without GCP configuration")
 			}
 
-			if projectIdGcp == "" {
-				logger.Fatal("must specify gcp-project-id when using gcp-instance-id")
-			}
-
 			gcpCreds := helper.GetGCPCredentials(ctx)
 
 			peCtrl := gcpcontrol.PrivateEndpointsController{
 				Logger:    logger,
-				Zone:      config.GCP.Zone,
 				Creds:     gcpCreds,
-				ProjectID: projectIdGcp,
+				ProjectID: config.GCP.ProjectID,
+				Region:    config.GCP.Region,
 			}
 
-			vpcInfo, err := peCtrl.GetNetworkAndSubnet(ctx, instanceIdGcp)
+			instance, err := peCtrl.GetInstance(ctx, instanceIdGcp, gcpZone)
+
+			if err != nil {
+				logger.Fatal("failed to get GCP instance", zap.Error(err))
+			}
+
+			vpcInfo, err := peCtrl.GetNetworkAndSubnet(instance)
 			if err != nil {
 				logger.Fatal("failed to get network and subnet for GCP instance", zap.Error(err))
 			}
@@ -181,7 +183,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				logger.Fatal("failed to execute private endpoint link command", zap.Error(err))
 			}
 
-			err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cloudCluster.ClusterID, projectIdGcp)
+			err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cloudCluster.ClusterID, config.GCP.ProjectID)
 			if err != nil {
 				logger.Fatal("failed to accept private endpoint link", zap.Error(err))
 			}
@@ -197,6 +199,6 @@ func init() {
 	privateEndpointsSetupLinkCmd.Flags().String("instance-id", "", "The AWS instance id to setup the link for")
 	privateEndpointsSetupLinkCmd.Flags().String("vm-id", "", "The Azure virtual machine id to setup the link for")
 	privateEndpointsSetupLinkCmd.Flags().String("gcp-instance-id", "", "The GCP instance id to setup the link for")
-	privateEndpointsSetupLinkCmd.Flags().String("gcp-project-id", "", "The GCP project id to use with the gcp-instance-id")
+	privateEndpointsSetupLinkCmd.Flags().String("gcp-zone", "", "The GCP zone to where gcp instance lies. If not specified, will attempt to identify using configured region")
 	privateEndpointsSetupLinkCmd.Flags().Bool("auto", false, "Attempt to identify the local instance")
 }

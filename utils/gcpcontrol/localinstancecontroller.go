@@ -15,6 +15,7 @@ type LocalInstanceController struct {
 
 type LocalInstanceInfo struct {
 	Zone       string
+	Region     string
 	InstanceID string
 	ProjectID  string
 }
@@ -46,6 +47,8 @@ func (c *LocalInstanceController) Identify(ctx context.Context) (*LocalInstanceI
 	}
 	zone = path.Base(zone)
 
+	region := zone[:len(zone)-2] // remove the last two characters (e.g., "us-central1-a" -> "us-central1")
+
 	instanceID, err := FetchGCPMetadata(ctx, "instance/id")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get instance ID")
@@ -63,6 +66,7 @@ func (c *LocalInstanceController) Identify(ctx context.Context) (*LocalInstanceI
 
 	return &LocalInstanceInfo{
 		Zone:       zone,
+		Region:     region,
 		InstanceID: instanceID,
 		ProjectID:  projectID,
 	}, nil
