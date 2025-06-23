@@ -302,12 +302,13 @@ func (c *Controller) UpdateWebSettings(ctx context.Context, opts *UpdateWebSetti
 }
 
 type SetupAnalyticsOptions struct {
-	BlobStorageRegion        string
-	BlobStoragePrefix        string
-	BlobStorageBucket        string
-	BlobStorageScheme        string
-	BlobStorageEndpoint      string
-	BlobStorageAnonymousAuth bool
+	BlobStorageRegion         string
+	BlobStoragePrefix         string
+	BlobStorageBucket         string
+	BlobStorageScheme         string
+	BlobStorageEndpoint       string
+	BlobStorageAnonymousAuth  bool
+	BlobStorageForcePathStyle bool
 }
 
 func (c *Controller) SetupAnalytics(ctx context.Context, opts *SetupAnalyticsOptions) error {
@@ -316,7 +317,8 @@ func (c *Controller) SetupAnalytics(ctx context.Context, opts *SetupAnalyticsOpt
 		opts.BlobStorageRegion == "" &&
 		opts.BlobStorageScheme == "" &&
 		opts.BlobStorageEndpoint == "" &&
-		!opts.BlobStorageAnonymousAuth {
+		!opts.BlobStorageAnonymousAuth &&
+		!opts.BlobStorageForcePathStyle {
 		return nil
 	}
 
@@ -329,6 +331,9 @@ func (c *Controller) SetupAnalytics(ctx context.Context, opts *SetupAnalyticsOpt
 	form.Add("blobStorageEndpoint", opts.BlobStorageEndpoint)
 	if opts.BlobStorageAnonymousAuth {
 		form.Add("blobStorageAnonymousAuth", "true")
+	}
+	if opts.BlobStorageForcePathStyle {
+		form.Add("blobStorageForcePathStyle", "true")
 	}
 	return c.doFormPost(ctx, "/settings/analytics", form, true, nil)
 }

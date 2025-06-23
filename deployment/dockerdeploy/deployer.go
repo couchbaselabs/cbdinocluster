@@ -360,11 +360,12 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		d.logger.Info("s3 mock is ready")
 
 		def.Docker.Analytics.BlobStorage = clusterdef.AnalyticsBlobStorageSettings{
-			Region:        "local",
-			Bucket:        "columnar",
-			Scheme:        "s3",
-			Endpoint:      fmt.Sprintf("http://%s:9090", node.IPAddress),
-			AnonymousAuth: true,
+			Region:         "local",
+			Bucket:         "columnar",
+			Scheme:         "s3",
+			Endpoint:       fmt.Sprintf("http://%s:9090", node.IPAddress),
+			AnonymousAuth:  true,
+			ForcePathStyle: true,
 		}
 	}
 
@@ -659,12 +660,13 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	}
 
 	analyticsSettings := clustercontrol.AnalyticsSettings{
-		BlobStorageRegion:        def.Docker.Analytics.BlobStorage.Region,
-		BlobStoragePrefix:        def.Docker.Analytics.BlobStorage.Prefix,
-		BlobStorageBucket:        def.Docker.Analytics.BlobStorage.Bucket,
-		BlobStorageScheme:        def.Docker.Analytics.BlobStorage.Scheme,
-		BlobStorageEndpoint:      def.Docker.Analytics.BlobStorage.Endpoint,
-		BlobStorageAnonymousAuth: def.Docker.Analytics.BlobStorage.AnonymousAuth,
+		BlobStorageRegion:         def.Docker.Analytics.BlobStorage.Region,
+		BlobStoragePrefix:         def.Docker.Analytics.BlobStorage.Prefix,
+		BlobStorageBucket:         def.Docker.Analytics.BlobStorage.Bucket,
+		BlobStorageScheme:         def.Docker.Analytics.BlobStorage.Scheme,
+		BlobStorageEndpoint:       def.Docker.Analytics.BlobStorage.Endpoint,
+		BlobStorageAnonymousAuth:  def.Docker.Analytics.BlobStorage.AnonymousAuth,
+		BlobStorageForcePathStyle: def.Docker.Analytics.BlobStorage.ForcePathStyle,
 	}
 	d.logger.Debug("analytics configuration", zap.Any("settings", analyticsSettings))
 

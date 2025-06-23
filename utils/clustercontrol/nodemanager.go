@@ -39,12 +39,13 @@ func (m *NodeManager) WaitForOnline(ctx context.Context) error {
 }
 
 type AnalyticsSettings struct {
-	BlobStorageRegion        string
-	BlobStoragePrefix        string
-	BlobStorageBucket        string
-	BlobStorageScheme        string
-	BlobStorageEndpoint      string
-	BlobStorageAnonymousAuth bool
+	BlobStorageRegion         string
+	BlobStoragePrefix         string
+	BlobStorageBucket         string
+	BlobStorageScheme         string
+	BlobStorageEndpoint       string
+	BlobStorageAnonymousAuth  bool
+	BlobStorageForcePathStyle bool
 }
 
 type SetupOneNodeClusterOptions struct {
@@ -57,8 +58,8 @@ type SetupOneNodeClusterOptions struct {
 	Username string
 	Password string
 
-	Services    []string
-	ServerGroup string
+	Services          []string
+	ServerGroup       string
 	AnalyticsSettings AnalyticsSettings
 }
 
@@ -91,12 +92,13 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 	}
 
 	err = c.SetupAnalytics(ctx, &SetupAnalyticsOptions{
-		BlobStorageRegion:        opts.AnalyticsSettings.BlobStorageRegion,
-		BlobStoragePrefix:        opts.AnalyticsSettings.BlobStoragePrefix,
-		BlobStorageBucket:        opts.AnalyticsSettings.BlobStorageBucket,
-		BlobStorageScheme:        opts.AnalyticsSettings.BlobStorageScheme,
-		BlobStorageEndpoint:      opts.AnalyticsSettings.BlobStorageEndpoint,
-		BlobStorageAnonymousAuth: opts.AnalyticsSettings.BlobStorageAnonymousAuth,
+		BlobStorageRegion:         opts.AnalyticsSettings.BlobStorageRegion,
+		BlobStoragePrefix:         opts.AnalyticsSettings.BlobStoragePrefix,
+		BlobStorageBucket:         opts.AnalyticsSettings.BlobStorageBucket,
+		BlobStorageScheme:         opts.AnalyticsSettings.BlobStorageScheme,
+		BlobStorageEndpoint:       opts.AnalyticsSettings.BlobStorageEndpoint,
+		BlobStorageAnonymousAuth:  opts.AnalyticsSettings.BlobStorageAnonymousAuth,
+		BlobStorageForcePathStyle: opts.AnalyticsSettings.BlobStorageForcePathStyle,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to configure analytics settings")
