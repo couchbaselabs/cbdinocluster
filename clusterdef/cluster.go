@@ -37,12 +37,13 @@ type AnalyticsSettings struct {
 }
 
 type AnalyticsBlobStorageSettings struct {
-	Region        string `yaml:"region,omitempty"`
-	Prefix        string `yaml:"prefix,omitempty"`
-	Bucket        string `yaml:"bucket,omitempty"`
-	Scheme        string `yaml:"scheme,omitempty"`
-	Endpoint      string `yaml:"endpoint,omitempty"`
-	AnonymousAuth bool   `yaml:"anonymous-auth,omitempty"`
+	Region         string `yaml:"region,omitempty"`
+	Prefix         string `yaml:"prefix,omitempty"`
+	Bucket         string `yaml:"bucket,omitempty"`
+	Scheme         string `yaml:"scheme,omitempty"`
+	Endpoint       string `yaml:"endpoint,omitempty"`
+	AnonymousAuth  bool   `yaml:"anonymous-auth,omitempty"`
+	ForcePathStyle bool   `yaml:"force-path-style,omitempty"`
 }
 
 type CaoCluster struct {
