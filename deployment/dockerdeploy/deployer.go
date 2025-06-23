@@ -1669,7 +1669,17 @@ func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucke
 		return errors.Wrap(err, "failed to get cluster controller")
 	}
 
-	err = controller.Controller().LoadSampleBucket(ctx, bucketName)
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	if clusterInfo.Type == deployment.ClusterTypeColumnar {
+		err = controller.Controller().LoadAnalyticsSampleBucket(ctx, bucketName)
+	} else {
+		err = controller.Controller().LoadSampleBucket(ctx, bucketName)
+	}
+
 	if err != nil {
 		return errors.Wrap(err, "failed to load sample bucket")
 	}
