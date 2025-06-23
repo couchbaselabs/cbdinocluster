@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"os/user"
 	"strings"
 	"sync"
@@ -610,16 +609,4 @@ func (h *CmdHelper) FetchClusterDef(
 	}
 
 	return nil, errors.New("must specify at least one form of cluster definition")
-}
-
-func (h *CmdHelper) ExecuteBashCommand(command string) error {
-	cmd := exec.Command("bash", "-c", command)
-
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	cmd.Env = os.Environ()
-
-	fmt.Println("Running bash script...")
-	return cmd.Run()
 }

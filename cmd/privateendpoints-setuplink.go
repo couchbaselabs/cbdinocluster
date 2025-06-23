@@ -9,6 +9,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"path"
 	"strings"
 )
 
@@ -26,6 +27,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 		instanceId, _ := cmd.Flags().GetString("instance-id")
 		vmId, _ := cmd.Flags().GetString("vm-id")
 		gcpZone, _ := cmd.Flags().GetString("gcp-zone")
+
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		cloudDeployer, ok := deployer.(*clouddeploy.Deployer)
@@ -163,25 +165,26 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				Region:    config.GCP.Region,
 			}
 
-			instance, err := peCtrl.GetInstance(ctx, instanceId, gcpZone)
-
-			if err != nil {
-				logger.Fatal("failed to get GCP instance", zap.Error(err))
-			}
-
-			vpcInfo, err := peCtrl.GetNetworkAndSubnet(instance)
+			networkInterface, err := peCtrl.GetNetworkAndSubnet(ctx, instanceId, gcpZone)
 			if err != nil {
 				logger.Fatal("failed to get network and subnet for GCP instance", zap.Error(err))
 			}
 
 			command, err := cloudDeployer.GenPrivateEndpointLinkCommand(ctx, cloudCluster.ClusterID, &capellacontrol.PrivateEndpointLinkRequest{
-				VpcID:     vpcInfo.NetworkID,
-				SubnetIds: vpcInfo.SubnetworkID,
+				VpcID:     path.Base(*networkInterface.Network),
+				SubnetIds: path.Base(*networkInterface.Subnetwork),
 			})
 
-			err = helper.ExecuteBashCommand(command)
+			serviceAttachments, err := peCtrl.GetServiceAttachments(command)
+
+			err = peCtrl.CreatePrivateDNSZone(ctx, &gcpcontrol.CreatePrivateDNSZoneOptions{
+				ClusterID:          cloudCluster.CloudClusterID,
+				BaseDnsName:        strings.SplitN(pe.PrivateDNS, ".", 2)[1] + ".", // remove the first part of the dns name, gcp needd tailing dot for DNS names
+				NetworkInterface:   networkInterface,
+				ServiceAttachments: *serviceAttachments,
+			})
 			if err != nil {
-				logger.Fatal("failed to execute private endpoint link command", zap.Error(err))
+				logger.Fatal("failed to create private dns zone", zap.Error(err))
 			}
 
 			err = cloudDeployer.AcceptPrivateEndpointLink(ctx, cloudCluster.ClusterID, config.GCP.ProjectID)
