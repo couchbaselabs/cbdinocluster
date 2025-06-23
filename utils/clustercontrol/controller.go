@@ -748,6 +748,26 @@ func (c *Controller) LoadSampleBucket(ctx context.Context, bucketName string) er
 	return nil
 }
 
+func (c *Controller) LoadAnalyticsSampleBucket(ctx context.Context, bucketName string) error {
+	// Using the Analytics endpoint on port 8095
+	analyticsEndpoint := strings.Replace(c.Endpoint, ":8091", ":8095", 1)
+
+	// Format: http://<IP>:8095/api/v1/samples?sampleName=travel-sample
+	path := fmt.Sprintf("/api/v1/samples?sampleName=%s", bucketName)
+	fullURL := analyticsEndpoint + path
+
+	maxRetries := 10
+	return c.doRetriableReq(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, fullURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Add("Content-Type", "application/json")
+		return req, nil
+	}, maxRetries, nil)
+}
+
 type GetCertificateResponse []byte
 
 func (c *Controller) GetCertificate(ctx context.Context) (*GetCertificateResponse, error) {
