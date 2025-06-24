@@ -1020,7 +1020,7 @@ var initCmd = &cobra.Command{
 					gcpRegion = flagGcpRegion
 				} else {
 					if gcpRegion == "" && gcpCloudIdent != nil {
-						fmt.Printf("Defaulting to GCP rrgion from self-ident.\n")
+						fmt.Printf("Defaulting to GCP region from self-ident.\n")
 						gcpRegion = gcpCloudIdent.Region
 					}
 					if gcpRegion == "" && envGcpRegion != "" {
