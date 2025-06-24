@@ -81,7 +81,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 			zap.String("service-name", pe.ServiceName),
 			zap.String("private-dns", pe.PrivateDNS))
 
-		if strings.Contains(strings.ToLower(cloudCluster.CloudProvider), "aws") {
+		if cloudCluster.CloudProvider == "aws" {
 			awsCreds := helper.GetAWSCredentials(ctx)
 
 			if !config.AWS.Enabled.Value() {
@@ -114,7 +114,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 			if err != nil {
 				logger.Fatal("failed to enable private dns on link", zap.Error(err))
 			}
-		} else if strings.Contains(strings.ToLower(cloudCluster.CloudProvider), "azure") {
+		} else if cloudCluster.CloudProvider == "azure" {
 			azureCreds := helper.GetAzureCredentials(ctx)
 
 			if !config.Azure.Enabled.Value() {
@@ -151,7 +151,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 			if err != nil {
 				logger.Fatal("failed to enable private dns", zap.Error(err))
 			}
-		} else if strings.Contains(strings.ToLower(cloudCluster.CloudProvider), "gcp") {
+		} else if cloudCluster.CloudProvider == "gcp" {
 			if !config.GCP.Enabled.Value() {
 				logger.Fatal("cannot setup GCP private endpoint without GCP configuration")
 			}
@@ -163,6 +163,10 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				Creds:     gcpCreds,
 				ProjectID: config.GCP.ProjectID,
 				Region:    config.GCP.Region,
+			}
+
+			if gcpZone == "" {
+				logger.Fatal("gcp-zone is required for GCP private endpoint setup")
 			}
 
 			networkInterface, err := peCtrl.GetNetworkAndSubnet(ctx, instanceId, gcpZone)
@@ -202,6 +206,6 @@ func init() {
 
 	privateEndpointsSetupLinkCmd.Flags().String("instance-id", "", "The instance ID to setup the link for")
 	privateEndpointsSetupLinkCmd.Flags().String("vm-id", "", "Alias of instance-id to setup the link for")
-	privateEndpointsSetupLinkCmd.Flags().String("gcp-zone", "", "The GCP zone to where gcp instance lies. If not specified, will attempt to identify using configured region")
+	privateEndpointsSetupLinkCmd.Flags().String("gcp-zone", "", "The GCP zone to where gcp instance lies.")
 	privateEndpointsSetupLinkCmd.Flags().Bool("auto", false, "Attempt to identify the local instance")
 }
