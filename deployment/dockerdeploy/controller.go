@@ -28,7 +28,7 @@ type Controller struct {
 	NetworkName string
 }
 
-type NodeInfo struct {
+type ContainerInfo struct {
 	ContainerID          string
 	Type                 string
 	DnsName              string
@@ -45,7 +45,7 @@ type NodeInfo struct {
 	UsingDinoCerts       bool
 }
 
-func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
+func (c *Controller) parseContainerInfo(container container.Summary) *ContainerInfo {
 	clusterID := container.Labels["com.couchbase.dyncluster.cluster_id"]
 	nodeType := container.Labels["com.couchbase.dyncluster.type"]
 	dnsName := container.Labels["com.couchbase.dyncluster.dns_name"]
@@ -84,7 +84,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
 		}
 	}
 
-	return &NodeInfo{
+	return &ContainerInfo{
 		ContainerID:          container.ID,
 		Type:                 nodeType,
 		DnsName:              dnsName,
@@ -102,7 +102,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *NodeInfo {
 	}
 }
 
-func (c *Controller) ListNodes(ctx context.Context) ([]*NodeInfo, error) {
+func (c *Controller) ListNodes(ctx context.Context) ([]*ContainerInfo, error) {
 	c.Logger.Debug("listing nodes")
 
 	containers, err := c.DockerCli.ContainerList(ctx, container.ListOptions{
@@ -114,7 +114,7 @@ func (c *Controller) ListNodes(ctx context.Context) ([]*NodeInfo, error) {
 
 	c.Logger.Debug("received initial container list, reading states")
 
-	var nodes []*NodeInfo
+	var nodes []*ContainerInfo
 
 	for _, container := range containers {
 		node := c.parseContainerInfo(container)
@@ -213,7 +213,7 @@ func (c *Controller) ReadNodeState(ctx context.Context, containerID string) (*Do
 	}, nil
 }
 
-func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, expiry time.Duration) (*NodeInfo, error) {
+func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, expiry time.Duration) (*ContainerInfo, error) {
 	nodeID := "s3mock"
 	logger := c.Logger.With(zap.String("nodeId", nodeID))
 
@@ -281,7 +281,7 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 		return nil, errors.Wrap(err, "failed to list nodes")
 	}
 
-	var node *NodeInfo
+	var node *ContainerInfo
 	for _, allNode := range allNodes {
 		if allNode.ContainerID == containerID {
 			node = allNode
@@ -309,7 +309,7 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 	return node, nil
 }
 
-func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expiry time.Duration) (*NodeInfo, error) {
+func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expiry time.Duration) (*ContainerInfo, error) {
 	nodeID := "nginx"
 	logger := c.Logger.With(zap.String("nodeId", nodeID))
 
@@ -377,7 +377,7 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 		return nil, errors.Wrap(err, "failed to list nodes")
 	}
 
-	var node *NodeInfo
+	var node *ContainerInfo
 	for _, allNode := range allNodes {
 		if allNode.ContainerID == containerID {
 			node = allNode
@@ -438,7 +438,7 @@ func (c *Controller) UpdateNginxCertificates(ctx context.Context, containerID st
 	return nil
 }
 
-func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string, enableSsl, isAnalytics bool) error {
+func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string, enableSsl, isColumnar bool) error {
 	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("addrs", addrs))
 
 	var nginxConf string
@@ -496,7 +496,7 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 	writeForwardedPort(8096, false, false)
 	writeForwardedPort(8097, false, false)
 
-	if isAnalytics {
+	if isColumnar {
 		writePortMapping(80, 8095, false, false, "/analytics")
 	}
 
@@ -508,7 +508,7 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 		writeForwardedPort(18095, false, true)
 		writeForwardedPort(18096, false, true)
 		writeForwardedPort(18097, false, true)
-		if isAnalytics {
+		if isColumnar {
 			writePortMapping(443, 18095, false, true, "/analytics")
 		}
 	}
@@ -610,7 +610,7 @@ type DeployNodeOptions struct {
 	UseDinoCerts       bool
 }
 
-func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*NodeInfo, error) {
+func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*ContainerInfo, error) {
 	nodeID := uuid.NewString()
 	logger := c.Logger.With(zap.String("nodeId", nodeID))
 
@@ -693,7 +693,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*N
 		return nil, errors.Wrap(err, "failed to list nodes")
 	}
 
-	var node *NodeInfo
+	var node *ContainerInfo
 	for _, allNode := range allNodes {
 		if allNode.ContainerID == containerID {
 			node = allNode
