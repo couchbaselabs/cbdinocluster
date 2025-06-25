@@ -12,7 +12,6 @@ type ClusterNodeInfo struct {
 	Name       string
 	ResourceID string
 	IPAddress  string
-	DnsName    string
 }
 
 var _ (deployment.ClusterNodeInfo) = (*ClusterNodeInfo)(nil)
@@ -30,24 +29,14 @@ type ClusterInfo struct {
 	Owner     string
 	Purpose   string
 	Expiry    time.Time
-	Nodes     []*ClusterNodeInfo
-	DnsName   string
-
-	// TODO(brett19): this should not be here
-	LoadBalancerIPAddress string
+	Nodes     []deployment.ClusterNodeInfo
 }
 
 var _ (deployment.ClusterInfo) = (*ClusterInfo)(nil)
 
-func (i ClusterInfo) GetID() string                   { return i.ClusterID }
-func (i ClusterInfo) GetType() deployment.ClusterType { return i.Type }
-func (i ClusterInfo) GetPurpose() string              { return i.Purpose }
-func (i ClusterInfo) GetExpiry() time.Time            { return i.Expiry }
-func (i ClusterInfo) GetState() string                { return "ready" }
-func (i ClusterInfo) GetNodes() []deployment.ClusterNodeInfo {
-	var nodes []deployment.ClusterNodeInfo
-	for _, node := range i.Nodes {
-		nodes = append(nodes, node)
-	}
-	return nodes
-}
+func (i ClusterInfo) GetID() string                          { return i.ClusterID }
+func (i ClusterInfo) GetType() deployment.ClusterType        { return i.Type }
+func (i ClusterInfo) GetPurpose() string                     { return i.Purpose }
+func (i ClusterInfo) GetExpiry() time.Time                   { return i.Expiry }
+func (i ClusterInfo) GetState() string                       { return "ready" }
+func (i ClusterInfo) GetNodes() []deployment.ClusterNodeInfo { return i.Nodes }

@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -19,15 +17,11 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
-	"github.com/couchbaselabs/cbdinocluster/utils/dinocerts"
-	"github.com/couchbaselabs/cbdinocluster/utils/versionident"
 	"github.com/docker/docker/client"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/exp/slices"
-	"golang.org/x/mod/semver"
 )
 
 var DEFAULT_SERVICES []clusterdef.Service = []clusterdef.Service{
@@ -75,72 +69,6 @@ func NewDeployer(opts *DeployerOptions) (*Deployer, error) {
 	}, nil
 }
 
-func (d *Deployer) listClusters(ctx context.Context) ([]*ClusterInfo, error) {
-	nodes, err := d.controller.ListNodes(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list nodes")
-	}
-
-	// sort the nodes by their name for nicer printing later
-	slices.SortFunc(nodes, func(a *NodeInfo, b *NodeInfo) int {
-		return strings.Compare(a.Name, b.Name)
-	})
-
-	var clusters []*ClusterInfo
-	getCluster := func(clusterID string) *ClusterInfo {
-		for _, cluster := range clusters {
-			if cluster.ClusterID == clusterID {
-				return cluster
-			}
-		}
-		cluster := &ClusterInfo{
-			ClusterID: clusterID,
-			Type:      deployment.ClusterTypeServer,
-		}
-		clusters = append(clusters, cluster)
-		return cluster
-	}
-
-	for _, node := range nodes {
-		isClusterNode := false
-		if node.Type == "server-node" || node.Type == "columnar-node" {
-			isClusterNode = true
-		}
-
-		cluster := getCluster(node.ClusterID)
-		if isClusterNode {
-			cluster.Creator = node.Creator
-			cluster.Owner = node.Owner
-			cluster.Purpose = node.Purpose
-			cluster.DnsName = node.DnsSuffix
-			if !node.Expiry.IsZero() && node.Expiry.After(cluster.Expiry) {
-				cluster.Expiry = node.Expiry
-			}
-		}
-
-		cluster.Nodes = append(cluster.Nodes, &ClusterNodeInfo{
-			ResourceID: node.ContainerID[0:8] + "...",
-			IsNode:     isClusterNode,
-			NodeID:     node.NodeID,
-			Name:       node.Name,
-			IPAddress:  node.IPAddress,
-			DnsName:    node.DnsName,
-		})
-
-		// if we hit the nginx node, set the clusters LoadBalancerIPAddress
-		if node.Type == "nginx" {
-			cluster.LoadBalancerIPAddress = node.IPAddress
-		}
-
-		// if any nodes are columnar nodes, the cluster is a columnar cluster
-		if node.Type == "columnar-node" {
-			cluster.Type = deployment.ClusterTypeColumnar
-		}
-	}
-
-	return clusters, nil
-}
-
 func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, error) {
 	clusters, err := d.listClusters(ctx)
 	if err != nil {
@@ -149,767 +77,37 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 
 	var out []deployment.ClusterInfo
 	for _, cluster := range clusters {
-		out = append(out, cluster)
+		out = append(out, d.clusterInfoFromCluster(cluster))
 	}
 	return out, nil
 }
 
-func (d *Deployer) getImagesForNodeGrps(ctx context.Context, nodeGrps []*clusterdef.NodeGroup, isColumnar bool) ([]*ImageRef, error) {
-	nodeGrpDefs := make([]*ImageDef, len(nodeGrps))
-	nodeGrpImages := make([]*ImageRef, len(nodeGrps))
-	for nodeGrpIdx, nodeGrp := range nodeGrps {
-		if nodeGrp.Docker.Image != "" {
-			foundImageRef, err := d.imageProvider.GetImageRaw(ctx, nodeGrp.Docker.Image)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to get image for a node")
-			}
-
-			nodeGrpImages[nodeGrpIdx] = foundImageRef
-			continue
-		}
-
-		versionInfo, err := versionident.Identify(ctx, nodeGrp.Version)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to identify version")
-		}
-
-		imageDef := &ImageDef{
-			Version:             versionInfo.Version,
-			BuildNo:             versionInfo.BuildNo,
-			UseCommunityEdition: versionInfo.CommunityEdition,
-			UseServerless:       versionInfo.Serverless,
-			UseColumnar:         isColumnar,
-		}
-		nodeGrpDefs[nodeGrpIdx] = imageDef
-
-		var imageRef *ImageRef
-		for oNodeGrpIdx := 0; oNodeGrpIdx < nodeGrpIdx; oNodeGrpIdx++ {
-			if CompareImageDefs(nodeGrpDefs[oNodeGrpIdx], imageDef) == 0 {
-				imageRef = nodeGrpImages[oNodeGrpIdx]
-			}
-		}
-
-		if imageRef == nil {
-			foundImageRef, err := d.imageProvider.GetImage(ctx, imageDef)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to get image for a node")
-			}
-
-			imageRef = foundImageRef
-		}
-
-		nodeGrpImages[nodeGrpIdx] = imageRef
-	}
-
-	return nodeGrpImages, nil
-}
-
-func (d *Deployer) getClusterDinoCert(clusterID string) (*dinocerts.CertAuthority, []byte, error) {
-	rootCa, err := dinocerts.GetRootCertAuthority()
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to get root dino ca")
-	}
-
-	fetchedClusterCa, err := rootCa.MakeIntermediaryCA("cluster-" + clusterID[:8])
-	if err != nil {
-		return nil, nil, errors.Wrap(err, "failed to get cluster dino ca")
-	}
-
-	return fetchedClusterCa, rootCa.CertPem, nil
-}
-
-func (d *Deployer) setupNodeCertificates(
-	ctx context.Context,
-	node *NodeInfo,
-	clusterCa *dinocerts.CertAuthority,
-	rootCaPem []byte,
-) error {
-	nodeIP := net.ParseIP(node.IPAddress)
-
-	var dnsNames []string
-	if node.DnsName != "" {
-		dnsNames = append(dnsNames, node.DnsName)
-	}
-	if node.DnsSuffix != "" {
-		dnsNames = append(dnsNames, node.DnsSuffix)
-	}
-
-	d.logger.Debug("generating node dinocert certificate",
-		zap.String("node", node.NodeID),
-		zap.Any("IP", nodeIP),
-		zap.Any("dnsNames", dnsNames))
-
-	certPem, keyPem, err := clusterCa.MakeServerCertificate("node-"+node.NodeID[:8], []net.IP{nodeIP}, dnsNames)
-	if err != nil {
-		return errors.Wrap(err, "failed to create server certificate")
-	}
-
-	d.logger.Debug("uploading dinocert certificates",
-		zap.String("node", node.NodeID))
-
-	var chainPem []byte
-	chainPem = append(chainPem, certPem...)
-	chainPem = append(chainPem, clusterCa.CertPem...)
-	err = d.controller.UploadCertificates(ctx, node.ContainerID, chainPem, keyPem, [][]byte{rootCaPem})
-	if err != nil {
-		return errors.Wrap(err, "failed to upload certificates")
-	}
-
-	nodeCtrl := clustercontrol.NodeManager{
-		Endpoint: fmt.Sprintf("http://%s:8091", node.IPAddress),
-	}
-
-	d.logger.Debug("refreshing trusted CAs for node",
-		zap.String("node", node.NodeID))
-
-	err = nodeCtrl.Controller().LoadTrustedCAs(ctx, &clustercontrol.LoadTrustedCAsOptions{})
-	if err != nil {
-		return errors.Wrap(err, "failed to load trusted CAs")
-	}
-
-	d.logger.Debug("refreshing certificate for node",
-		zap.String("node", node.NodeID))
-
-	err = nodeCtrl.Controller().ReloadCertificate(ctx, &clustercontrol.ReloadCertificateOptions{})
-	if err != nil {
-		return errors.Wrap(err, "failed to refresh certificates")
-	}
-
-	d.logger.Debug("removing default self-signed certificate for node",
-		zap.String("node", node.NodeID))
-
-	err = nodeCtrl.Controller().DeleteTrustedCA(ctx, &clustercontrol.DeleteTrustedCAOptions{
-		ID: 0,
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to delete default certificate")
-	}
-
-	return nil
-}
-
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
-	if def.Columnar {
-		for _, nodeGrp := range def.NodeGroups {
-			if len(nodeGrp.Services) != 0 {
-				return nil, errors.New("columnar clusters cannot specify services")
-			}
-
-			nodeGrp.Services = []clusterdef.Service{
-				clusterdef.KvService,
-				clusterdef.AnalyticsService,
-			}
-		}
-	}
-
-	clusterID := uuid.NewString()
-
-	useDns := def.Docker.EnableDNS
-	if useDns && d.dnsProvider == nil {
-		return nil, errors.New("cannot use dns, dns not configured")
-	}
-
-	var dnsName string
-	if useDns {
-		dnsHostname := d.dnsProvider.GetHostname()
-		dnsName = fmt.Sprintf("%s-%s.%s",
-			clusterID[:8],
-			time.Now().Format("20060102"),
-			dnsHostname)
-	}
-
-	var rootCaPem []byte
-	var clusterCa *dinocerts.CertAuthority
-	if def.Docker.UseDinoCerts {
-		var err error
-		clusterCa, rootCaPem, err = d.getClusterDinoCert(clusterID)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get cluster dino ca")
-		}
-	}
-
-	if def.Columnar {
-		d.logger.Info("deploying mock s3 for blob storage")
-
-		d.logger.Debug("deploying s3mock container")
-
-		node, err := d.controller.DeployS3MockNode(ctx, clusterID, def.Expiry)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to deploy s3mock node")
-		}
-
-		d.logger.Debug("creating columnar bucket")
-
-		bucketName := "columnar"
-		req, err := http.NewRequest(
-			"PUT",
-			fmt.Sprintf("http://%s:9090/%s/", node.IPAddress, bucketName),
-			nil)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create columnar s3 bucket request")
-		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to create columnar s3 bucket")
-		}
-		if resp.StatusCode != 200 {
-			return nil, fmt.Errorf("non-200 status code when creating columnar s3 bucket (code: %d)", resp.StatusCode)
-		}
-
-		d.logger.Info("s3 mock is ready")
-
-		def.Docker.Analytics.BlobStorage = clusterdef.AnalyticsBlobStorageSettings{
-			Region:         "local",
-			Bucket:         "columnar",
-			Scheme:         "s3",
-			Endpoint:       fmt.Sprintf("http://%s:9090", node.IPAddress),
-			AnonymousAuth:  true,
-			ForcePathStyle: true,
-		}
-	}
-
-	nginxContainerId := ""
-	nginxIpAddress := ""
-	if def.Docker.EnableLoadBalancer {
-		d.logger.Info("deploying nginx for load balancing")
-
-		node, err := d.controller.DeployNginxNode(ctx, clusterID, def.Expiry)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to deploy nginx node")
-		}
-
-		d.logger.Debug("nginx started", zap.String("ip", node.IPAddress))
-
-		if clusterCa != nil {
-			d.logger.Debug("uploading dinocert certificates to nginx",
-				zap.String("nginx", node.NodeID))
-
-			ip := net.ParseIP(node.IPAddress)
-
-			var dnsNames []string
-			if dnsName != "" {
-				dnsNames = append(dnsNames, dnsName)
-			}
-
-			certPem, keyPem, err := clusterCa.MakeServerCertificate("nginx-"+clusterID[:8], []net.IP{ip}, dnsNames)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to create nginx certificate")
-			}
-
-			var chainPem []byte
-			chainPem = append(chainPem, certPem...)
-			chainPem = append(chainPem, clusterCa.CertPem...)
-			err = d.controller.UpdateNginxCertificates(ctx, node.ContainerID, chainPem, keyPem)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to upload nginx certificates")
-			}
-		}
-
-		nginxContainerId = node.ContainerID
-		nginxIpAddress = node.IPAddress
-	}
-
-	d.logger.Info("gathering node images")
-
-	nodeGrpImages, err := d.getImagesForNodeGrps(ctx, def.NodeGroups, def.Columnar)
+	clusterInfo, err := d.newCluster(ctx, def)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to fetch images")
+		return nil, err
 	}
 
-	d.logger.Info("deploying nodes")
-
-	nodes := make([]*NodeInfo, 0)
-	leaveNodesAfterReturn := false
-	cleanupNodes := func() {
-		if !leaveNodesAfterReturn {
-			for _, node := range nodes {
-				if node != nil {
-					d.controller.RemoveNode(ctx, node.ContainerID)
-				}
-			}
-		}
-	}
-	defer cleanupNodes()
-
-	var nodeOpts []*DeployNodeOptions
-	var nodeNodeGrps []*clusterdef.NodeGroup
-	for nodeGrpIdx, nodeGrp := range def.NodeGroups {
-		// We grab the number of nodes to allocate and copy the group out
-		// for each individual node with a count of 1
-		numNodes := nodeGrp.Count
-		nodeGrp := to.Ptr(*nodeGrp)
-		nodeGrp.Count = 1
-
-		for grpNodeIdx := 0; grpNodeIdx < numNodes; grpNodeIdx++ {
-			d.logger.Info("deploying", zap.Any("nodeGrp", nodeGrp))
-
-			image := nodeGrpImages[nodeGrpIdx]
-
-			deployOpts := &DeployNodeOptions{
-				Purpose:            def.Purpose,
-				ClusterID:          clusterID,
-				Image:              image,
-				ImageServerVersion: nodeGrp.Version,
-				IsColumnar:         def.Columnar,
-				DnsSuffix:          dnsName,
-				Expiry:             def.Expiry,
-				EnvVars:            nodeGrp.Docker.EnvVars,
-				UseDinoCerts:       def.Docker.UseDinoCerts,
-			}
-
-			nodeOpts = append(nodeOpts, deployOpts)
-			nodeNodeGrps = append(nodeNodeGrps, nodeGrp)
-		}
-	}
-
-	waitCh := make(chan error)
-	for _, deployOpts := range nodeOpts {
-		go func(deployOpts *DeployNodeOptions) {
-			d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
-
-			node, err := d.controller.DeployNode(ctx, deployOpts)
-			if err != nil {
-				waitCh <- errors.Wrap(err, "failed to deploy a node")
-				return
-			}
-
-			d.logger.Info("deployed node",
-				zap.String("address", node.IPAddress),
-				zap.String("id", node.NodeID),
-				zap.String("container", node.ContainerID))
-
-			nodes = append(nodes, node)
-			waitCh <- nil
-		}(deployOpts)
-	}
-	for range nodeOpts {
-		err := <-waitCh
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	d.logger.Info("nodes deployed", zap.String("cluster", clusterID))
-
-	// we cheat for now...
-	clusters, err := d.listClusters(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list clusters")
-	}
-
-	var thisCluster *ClusterInfo
-	for _, cluster := range clusters {
-		if cluster.ClusterID == clusterID {
-			thisCluster = cluster
-		}
-	}
-	if thisCluster == nil {
-		return nil, errors.New("failed to find new cluster after deployment")
-	}
-
-	leaveNodesAfterReturn = true
-
-	if clusterCa != nil {
-		d.logger.Info("setting up dinocert certificates", zap.String("cluster", clusterID))
-
-		for _, node := range nodes {
-			err := d.setupNodeCertificates(ctx, node, clusterCa, rootCaPem)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to setup node certificates")
-			}
-		}
-	}
-
-	if useDns {
-		// since this is a net-new domain name, no need to wait for dns propagation
-		err = d.updateDnsRecords(ctx, dnsName, nodes, def.Columnar, nginxIpAddress, true)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to update dns records")
-		}
-	}
-
-	if nginxContainerId != "" {
-		useDinoCerts := false
-		if clusterCa != nil {
-			useDinoCerts = true
-		}
-
-		err = d.updateLoadBalancer(ctx, nginxContainerId, nodes, useDinoCerts)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to update load balancer")
-		}
-	}
-
-	// we need to sort the nodes by server version so that the oldest server version
-	// is the first one initialized, otherwise in mixed-version clusters, we might
-	// end up initializing the higher version nodes first, disallowing older nodes
-	// from being initialized into the cluster (couchbase does not permit downgrades).
-	// We also sort by IP address next
-	slices.SortFunc(nodes, func(a, b *NodeInfo) int {
-		res := semver.Compare("v"+a.InitialServerVersion, "v"+b.InitialServerVersion)
-		if res != 0 {
-			return res
-		}
-		return strings.Compare(a.IPAddress, b.IPAddress)
-	})
-	d.logger.Debug("reordered setup order", zap.Any("nodes", nodes))
-
-	var setupNodeOpts []*clustercontrol.SetupNewClusterNodeOptions
-	for nodeIdx, node := range nodes {
-		nodeGrp := nodeNodeGrps[nodeIdx]
-
-		services := nodeGrp.Services
-		if len(services) == 0 {
-			services = DEFAULT_SERVICES
-		}
-
-		nsServices, err := clusterdef.ServicesToNsServices(services)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to generate ns server services list")
-		}
-
-		setupNodeOpts = append(setupNodeOpts, &clustercontrol.SetupNewClusterNodeOptions{
-			Address:     node.IPAddress,
-			ServerGroup: nodeGrp.ServerGroup,
-			Services:    nsServices,
-		})
-	}
-
-	var clusterServices []clusterdef.Service
-	for _, node := range setupNodeOpts {
-		for _, serviceName := range node.Services {
-			service := clusterdef.Service(serviceName)
-			if !slices.Contains(clusterServices, service) {
-				clusterServices = append(clusterServices, service)
-			}
-		}
-	}
-
-	kvMemoryQuotaMB := 256
-	indexMemoryQuotaMB := 256
-	ftsMemoryQuotaMB := 256
-	cbasMemoryQuotaMB := 1024
-	eventingMemoryQuotaMB := 256
-	username := "Administrator"
-	password := "password"
-
-	hasKvService := slices.Contains(clusterServices, clusterdef.KvService)
-	hasIndexService := slices.Contains(clusterServices, clusterdef.IndexService)
-	hasFtsService := slices.Contains(clusterServices, clusterdef.SearchService)
-	hasAnalyticsService := slices.Contains(clusterServices, clusterdef.AnalyticsService)
-	hasEventingService := slices.Contains(clusterServices, clusterdef.EventingService)
-
-	if !hasKvService {
-		kvMemoryQuotaMB = 0
-	}
-	if !hasIndexService {
-		indexMemoryQuotaMB = 0
-	}
-	if !hasFtsService {
-		ftsMemoryQuotaMB = 0
-	}
-	if !hasAnalyticsService {
-		cbasMemoryQuotaMB = 0
-	}
-	if !hasEventingService {
-		eventingMemoryQuotaMB = 0
-	}
-
-	if def.Docker.KvMemoryMB > 0 {
-		kvMemoryQuotaMB = def.Docker.KvMemoryMB
-	}
-	if def.Docker.IndexMemoryMB > 0 {
-		indexMemoryQuotaMB = def.Docker.IndexMemoryMB
-	}
-	if def.Docker.FtsMemoryMB > 0 {
-		ftsMemoryQuotaMB = def.Docker.FtsMemoryMB
-	}
-	if def.Docker.CbasMemoryMB > 0 {
-		cbasMemoryQuotaMB = def.Docker.CbasMemoryMB
-	}
-	if def.Docker.EventingMemoryMB > 0 {
-		eventingMemoryQuotaMB = def.Docker.EventingMemoryMB
-	}
-	if def.Docker.Username != "" {
-		username = def.Docker.Username
-	}
-	if def.Docker.Password != "" {
-		password = def.Docker.Password
-	}
-
-	if kvMemoryQuotaMB < 256 && hasKvService {
-		d.logger.Warn("kv memory must be at least 256, adjusting it...")
-		kvMemoryQuotaMB = 256
-	}
-	if indexMemoryQuotaMB < 256 && hasIndexService {
-		d.logger.Warn("index memory must be at least 256, adjusting it...")
-		indexMemoryQuotaMB = 256
-	}
-	if ftsMemoryQuotaMB < 256 && hasFtsService {
-		d.logger.Warn("fts memory must be at least 256, adjusting it...")
-		ftsMemoryQuotaMB = 256
-	}
-	if cbasMemoryQuotaMB < 1024 && hasAnalyticsService {
-		d.logger.Warn("cbas memory must be at least 1024, adjusting it...")
-		cbasMemoryQuotaMB = 1024
-	}
-	if eventingMemoryQuotaMB < 256 && hasEventingService {
-		d.logger.Warn("eventing memory must be at least 256, adjusting it...")
-		eventingMemoryQuotaMB = 256
-	}
-
-	analyticsSettings := clustercontrol.AnalyticsSettings{
-		BlobStorageRegion:         def.Docker.Analytics.BlobStorage.Region,
-		BlobStoragePrefix:         def.Docker.Analytics.BlobStorage.Prefix,
-		BlobStorageBucket:         def.Docker.Analytics.BlobStorage.Bucket,
-		BlobStorageScheme:         def.Docker.Analytics.BlobStorage.Scheme,
-		BlobStorageEndpoint:       def.Docker.Analytics.BlobStorage.Endpoint,
-		BlobStorageAnonymousAuth:  def.Docker.Analytics.BlobStorage.AnonymousAuth,
-		BlobStorageForcePathStyle: def.Docker.Analytics.BlobStorage.ForcePathStyle,
-	}
-	d.logger.Debug("analytics configuration", zap.Any("settings", analyticsSettings))
-
-	setupOpts := &clustercontrol.SetupNewClusterOptions{
-		KvMemoryQuotaMB:       kvMemoryQuotaMB,
-		IndexMemoryQuotaMB:    indexMemoryQuotaMB,
-		FtsMemoryQuotaMB:      ftsMemoryQuotaMB,
-		CbasMemoryQuotaMB:     cbasMemoryQuotaMB,
-		EventingMemoryQuotaMB: eventingMemoryQuotaMB,
-		Username:              username,
-		Password:              password,
-		Nodes:                 setupNodeOpts,
-		AnalyticsSettings:     analyticsSettings,
-	}
-
-	clusterMgr := clustercontrol.ClusterManager{
-		Logger: d.logger,
-	}
-	err = clusterMgr.SetupNewCluster(ctx, setupOpts)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to setup cluster")
-	}
-
-	leaveNodesAfterReturn = true
-	return thisCluster, nil
-}
-
-func (d *Deployer) updateLoadBalancer(
-	ctx context.Context,
-	loadBalancerContainerId string,
-	nodes []*NodeInfo,
-	enableSsl bool,
-) error {
-	var addrs []string
-	isAnalytics := false
-	for _, node := range nodes {
-		if node.Type != "server-node" && node.Type != "columnar-node" {
-			continue
-		}
-
-		if node.Type == "columnar-node" {
-			isAnalytics = true
-		}
-
-		addrs = append(addrs, node.IPAddress)
-	}
-
-	return d.controller.UpdateNginxConfig(ctx, loadBalancerContainerId, addrs, enableSsl, isAnalytics)
-}
-
-func (d *Deployer) updateDnsRecords(
-	ctx context.Context,
-	dnsName string,
-	nodes []*NodeInfo,
-	isColumnar bool,
-	loadBalancerIp string,
-	isNewCluster bool,
-) error {
-	var records []DnsRecord
-
-	var allNodeAs []string
-	var allNodeSrvs []string
-	var allNodeSecSrvs []string
-
-	for _, node := range nodes {
-		if node.Type != "server-node" && node.Type != "columnar-node" {
-			continue
-		}
-
-		/* don't spam the dns names for now...
-		records = append(records, DnsRecord{
-			RecordType: "A",
-			Name:       node.DnsName,
-			Addrs:      []string{node.IPAddress},
-		})
-		*/
-
-		allNodeAs = append(allNodeAs, node.IPAddress)
-		allNodeSrvs = append(allNodeSrvs, "0 0 11210 "+node.IPAddress)
-		allNodeSecSrvs = append(allNodeSecSrvs, "0 0 11207 "+node.IPAddress)
-	}
-
-	if !isColumnar || loadBalancerIp == "" {
-		records = append(records, DnsRecord{
-			RecordType: "A",
-			Name:       dnsName,
-			Addrs:      allNodeAs,
-		})
-	} else {
-		// no need to update the A record for the load balancer on every modify
-		if isNewCluster {
-			records = append(records, DnsRecord{
-				RecordType: "A",
-				Name:       dnsName,
-				Addrs:      []string{loadBalancerIp},
-			})
-		}
-	}
-
-	if !isColumnar {
-		records = append(records, DnsRecord{
-			RecordType: "SRV",
-			Name:       "_couchbase._tcp.srv." + dnsName,
-			Addrs:      allNodeSrvs,
-		})
-
-		records = append(records, DnsRecord{
-			RecordType: "SRV",
-			Name:       "_couchbases._tcp.srv." + dnsName,
-			Addrs:      allNodeSecSrvs,
-		})
-	}
-
-	d.logger.Info("updating dns records", zap.Any("records", records))
-
-	noWait := isNewCluster
-	err := d.dnsProvider.UpdateRecords(ctx, records, noWait, false)
-	if err != nil {
-		return err
-	}
-
-	d.logger.Info("records created")
-	return nil
-}
-
-type deployedNodeInfo struct {
-	nodeInfo    *NodeInfo
-	ContainerID string
-	IPAddress   string
-	OTPNode     string
-	Version     string
-	Services    []clusterdef.Service
-}
-
-type deployedClusterInfo struct {
-	ID                      string
-	Purpose                 string
-	Expiry                  time.Time
-	Nodes                   []*deployedNodeInfo
-	IsColumnar              bool
-	DnsSuffix               string
-	LoadBalancerContainerID string
-	LoadBalancerIPAddress   string
-	UseDinoCerts            bool
-}
-
-func (d *Deployer) getClusterInfo(ctx context.Context, clusterID string) (*deployedClusterInfo, error) {
-	nodes, err := d.controller.ListNodes(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list nodes")
-	}
-
-	var purpose string
-	var expiry time.Time
-	var isColumnar bool
-	var useDinoCerts bool
-	var dnsSuffix string
-	var loadBalancerContainerID string
-	var loadBalancerIPAddress string
-	var nodeInfo []*deployedNodeInfo
-
-	for _, node := range nodes {
-		if node.ClusterID == clusterID {
-			if node.Type == "columnar-node" {
-				isColumnar = true
-			}
-
-			if node.DnsSuffix != "" {
-				dnsSuffix = node.DnsSuffix
-			}
-
-			if node.UsingDinoCerts {
-				useDinoCerts = true
-			}
-
-			if node.Purpose != "" {
-				purpose = node.Purpose
-			}
-			if !node.Expiry.IsZero() && node.Expiry.After(expiry) {
-				expiry = node.Expiry
-			}
-
-			var otpNode string
-			var services []clusterdef.Service
-
-			if node.Type == "server-node" || node.Type == "columnar-node" {
-				nodeCtrl := clustercontrol.NodeManager{
-					Endpoint: fmt.Sprintf("http://%s:8091", node.IPAddress),
-				}
-				thisNodeInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to list a nodes services")
-				}
-
-				services, err = clusterdef.NsServicesToServices(thisNodeInfo.Services)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to generate services list")
-				}
-
-				otpNode = thisNodeInfo.OTPNode
-			}
-
-			if node.Type == "nginx" {
-				loadBalancerContainerID = node.ContainerID
-				loadBalancerIPAddress = node.IPAddress
-			}
-
-			nodeInfo = append(nodeInfo, &deployedNodeInfo{
-				nodeInfo:    node,
-				ContainerID: node.ContainerID,
-				IPAddress:   node.IPAddress,
-				OTPNode:     otpNode,
-				Version:     node.InitialServerVersion,
-				Services:    services,
-			})
-		}
-	}
-
-	return &deployedClusterInfo{
-		ID:                      clusterID,
-		Purpose:                 purpose,
-		Expiry:                  expiry,
-		Nodes:                   nodeInfo,
-		IsColumnar:              isColumnar,
-		DnsSuffix:               dnsSuffix,
-		LoadBalancerContainerID: loadBalancerContainerID,
-		LoadBalancerIPAddress:   loadBalancerIPAddress,
-		UseDinoCerts:            useDinoCerts,
-	}, nil
+	return d.clusterInfoFromCluster(clusterInfo), nil
 }
 
 func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*clusterdef.Cluster, error) {
-	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get cluster info")
 	}
 
+	clusterInfoEx, err := d.getClusterInfoEx(ctx, clusterInfo)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get extended cluster info")
+	}
+
 	var nodeGroups []*clusterdef.NodeGroup
 
-	for _, node := range clusterInfo.Nodes {
+	for _, node := range clusterInfoEx.NodesEx {
 		nodeGroups = append(nodeGroups, &clusterdef.NodeGroup{
 			Count:    1,
-			Version:  node.Version,
+			Version:  node.InitialServerVersion,
 			Services: node.Services,
 		})
 	}
@@ -921,7 +119,7 @@ func (d *Deployer) GetDefinition(ctx context.Context, clusterID string) (*cluste
 }
 
 func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, newExpiryTime time.Time) error {
-	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get cluster info")
 	}
@@ -940,209 +138,6 @@ func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, ne
 	return nil
 }
 
-func (d *Deployer) addRemoveNodes(
-	ctx context.Context,
-	clusterInfo *deployedClusterInfo,
-	nodesToAdd []*clusterdef.NodeGroup,
-	nodesToRemove []*deployedNodeInfo,
-) ([]string, error) {
-	if len(nodesToRemove) == 0 && len(nodesToAdd) == 0 {
-		return nil, nil
-	}
-
-	ctrlNode := clusterInfo.Nodes[0]
-
-	d.logger.Debug("selected node for initial add commands",
-		zap.String("address", ctrlNode.IPAddress))
-
-	nodeCtrl := clustercontrol.NodeManager{
-		Endpoint: fmt.Sprintf("http://%s:8091", ctrlNode.IPAddress),
-	}
-
-	d.logger.Info("gathering node images")
-
-	nodesToAddImages, err := d.getImagesForNodeGrps(ctx, nodesToAdd, clusterInfo.IsColumnar)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to fetch images")
-	}
-
-	d.logger.Info("deploying new node containers")
-
-	var deployedNodes []*NodeInfo
-	var setupNodeOpts []*clustercontrol.AddNodeOptions
-	for nodeGrpIdx, nodeGrp := range nodesToAdd {
-		image := nodesToAddImages[nodeGrpIdx]
-
-		deployOpts := &DeployNodeOptions{
-			Purpose:            clusterInfo.Purpose,
-			ClusterID:          clusterInfo.ID,
-			Image:              image,
-			ImageServerVersion: nodeGrp.Version,
-			IsColumnar:         clusterInfo.IsColumnar,
-			Expiry:             time.Until(clusterInfo.Expiry),
-			EnvVars:            nodeGrp.Docker.EnvVars,
-		}
-
-		d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
-
-		node, err := d.controller.DeployNode(ctx, deployOpts)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to deploy a node")
-		}
-
-		nsServices, err := clusterdef.ServicesToNsServices(nodeGrp.Services)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to generate ns server services list")
-		}
-
-		setupNodeOpts = append(setupNodeOpts, &clustercontrol.AddNodeOptions{
-			ServerGroup: nodeGrp.ServerGroup,
-			Address:     node.IPAddress,
-			Services:    nsServices,
-			Username:    "",
-			Password:    "",
-		})
-
-		deployedNodes = append(deployedNodes, node)
-	}
-
-	if clusterInfo.UseDinoCerts {
-		d.logger.Info("setting up dinocert certificates", zap.String("cluster", clusterInfo.ID))
-
-		clusterCa, rootCaPem, err := d.getClusterDinoCert(clusterInfo.ID)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get cluster dino ca")
-		}
-
-		for _, node := range deployedNodes {
-			err := d.setupNodeCertificates(ctx, node, clusterCa, rootCaPem)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to setup node certificates")
-			}
-		}
-	}
-
-	d.logger.Info("registering new nodes")
-
-	for _, addNodeOpts := range setupNodeOpts {
-		err := nodeCtrl.Controller().AddNode(ctx, addNodeOpts)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to register new node")
-		}
-	}
-
-	var nodeIpsBeingRemoved []string
-	for _, node := range nodesToRemove {
-		nodeIpsBeingRemoved = append(nodeIpsBeingRemoved, node.IPAddress)
-	}
-
-	var postRemovalNodes []*NodeInfo
-	for _, clusterNode := range clusterInfo.Nodes {
-		if !slices.Contains(nodeIpsBeingRemoved, clusterNode.IPAddress) {
-			postRemovalNodes = append(postRemovalNodes, clusterNode.nodeInfo)
-		}
-	}
-
-	// only need to update if nodes were removed
-	if len(nodesToRemove) > 0 {
-		// only need to update if dns is enabled
-		if clusterInfo.DnsSuffix != "" {
-			err = d.updateDnsRecords(ctx, clusterInfo.DnsSuffix, postRemovalNodes, clusterInfo.IsColumnar, clusterInfo.LoadBalancerIPAddress, false)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to update dns records")
-			}
-		}
-
-		if clusterInfo.LoadBalancerContainerID != "" {
-			err = d.updateLoadBalancer(ctx, clusterInfo.LoadBalancerContainerID, postRemovalNodes, clusterInfo.UseDinoCerts)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to update load balancer")
-			}
-		}
-	}
-
-	otpsToRemove := make([]string, len(nodesToRemove))
-	for nodeIdx, nodeToRemove := range nodesToRemove {
-		otpsToRemove[nodeIdx] = nodeToRemove.OTPNode
-	}
-
-	// once all the new nodes are registered, we re-select a node to work with that is
-	// not being removed from the cluster, which can now include the new nodes...
-
-	for _, clusterNode := range clusterInfo.Nodes {
-		if clusterNode.nodeInfo.Type != "server-node" &&
-			clusterNode.nodeInfo.Type != "columnar-node" {
-			continue
-		}
-
-		if !slices.Contains(otpsToRemove, clusterNode.OTPNode) {
-			ctrlNode = clusterNode
-		}
-	}
-
-	d.logger.Debug("selected node for remove and rebalance commands",
-		zap.String("address", ctrlNode.IPAddress))
-
-	nodeCtrl = clustercontrol.NodeManager{
-		Endpoint: fmt.Sprintf("http://%s:8091", ctrlNode.IPAddress),
-	}
-
-	d.logger.Info("initiating rebalance")
-
-	err = nodeCtrl.Rebalance(ctx, otpsToRemove)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to start rebalance")
-	}
-
-	d.logger.Info("waiting for rebalance completion")
-
-	err = nodeCtrl.WaitForNoRunningTasks(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to wait for tasks to complete")
-	}
-
-	for _, node := range nodesToRemove {
-		d.logger.Info("removing node",
-			zap.String("container", node.ContainerID))
-
-		d.controller.RemoveNode(ctx, node.ContainerID)
-	}
-
-	if len(nodesToAdd) > 0 {
-		thisCluster, err := d.getClusterInfo(ctx, clusterInfo.ID)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get post-rebalance cluster info")
-		}
-
-		var allNodes []*NodeInfo
-		for _, node := range thisCluster.Nodes {
-			allNodes = append(allNodes, node.nodeInfo)
-		}
-
-		// no need to update if DNS is disabled
-		if thisCluster.DnsSuffix != "" {
-			err := d.updateDnsRecords(ctx, thisCluster.DnsSuffix, allNodes, thisCluster.IsColumnar, clusterInfo.LoadBalancerIPAddress, false)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to update dns records")
-			}
-		}
-
-		if thisCluster.LoadBalancerContainerID != "" {
-			err := d.updateLoadBalancer(ctx, thisCluster.LoadBalancerContainerID, allNodes, clusterInfo.UseDinoCerts)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to update load balancer")
-			}
-		}
-	}
-
-	var deployedNodeIds []string
-	for _, node := range deployedNodes {
-		deployedNodeIds = append(deployedNodeIds, node.NodeID)
-	}
-
-	return deployedNodeIds, nil
-}
-
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
 	if def.Columnar {
 		for _, nodeGrp := range def.NodeGroups {
@@ -1157,7 +152,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		}
 	}
 
-	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get cluster info")
 	}
@@ -1166,9 +161,14 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		return errors.New("cannot modify a cluster with no nodes")
 	}
 
+	clusterInfoEx, err := d.getClusterInfoEx(ctx, clusterInfo)
+	if err != nil {
+		return errors.Wrap(err, "failed to get extended cluster info")
+	}
+
 	if len(def.NodeGroups) > 0 {
-		nodesToRemove := make([]*deployedNodeInfo, len(clusterInfo.Nodes))
-		copy(nodesToRemove, clusterInfo.Nodes)
+		nodesToRemove := make([]*nodeInfoEx, len(clusterInfo.Nodes))
+		copy(nodesToRemove, clusterInfoEx.NodesEx)
 		nodesToAdd := []*clusterdef.NodeGroup{}
 
 		// build the list of individualized nodes we need
@@ -1183,13 +183,8 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		}
 
 		// remove all utility nodes from auto-deletion
-		nodesToRemove = slices.DeleteFunc(nodesToRemove, func(node *deployedNodeInfo) bool {
-			isClusterNode := false
-			if node.nodeInfo.Type == "server-node" ||
-				node.nodeInfo.Type == "columnar-node" {
-				isClusterNode = true
-			}
-			return !isClusterNode
+		nodesToRemove = slices.DeleteFunc(nodesToRemove, func(node *nodeInfoEx) bool {
+			return !node.IsClusterNode()
 		})
 
 		// first iterate and find any exact matches and use those
@@ -1199,7 +194,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 			}
 
 			for nodeIdx, node := range nodesToRemove {
-				if node.Version != nodeGrp.Version {
+				if node.InitialServerVersion != nodeGrp.Version {
 					continue
 				}
 
@@ -1225,7 +220,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		d.logger.Debug("identified nodes to remove",
 			zap.Any("nodes", nodesToRemove))
 
-		_, err := d.addRemoveNodes(ctx, clusterInfo, nodesToAdd, nodesToRemove)
+		_, err := d.addRemoveNodes(ctx, clusterInfoEx, nodesToAdd, nodesToRemove)
 		if err != nil {
 			return err
 		}
@@ -1235,25 +230,30 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 }
 
 func (d *Deployer) AddNode(ctx context.Context, clusterID string) (string, error) {
-	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get cluster info")
+	}
+
+	clusterInfoEx, err := d.getClusterInfoEx(ctx, clusterInfo)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get extended cluster info")
 	}
 
 	if len(clusterInfo.Nodes) == 0 {
 		return "", errors.New("cannot add a node to a cluster with no nodes")
 	}
 
-	nodeVersion := clusterInfo.Nodes[0].Version
-	nodeServices := clusterInfo.Nodes[0].Services
+	nodeVersion := clusterInfoEx.NodesEx[0].InitialServerVersion
+	nodeServices := clusterInfoEx.NodesEx[0].Services
 
-	for _, node := range clusterInfo.Nodes {
-		if nodeVersion != node.Version || slices.Compare(nodeServices, node.Services) != 0 {
+	for _, node := range clusterInfoEx.NodesEx {
+		if nodeVersion != node.InitialServerVersion || slices.Compare(nodeServices, node.Services) != 0 {
 			return "", errors.New("cluster must have homogenous versions to add a node")
 		}
 	}
 
-	nodeIds, err := d.addRemoveNodes(ctx, clusterInfo, []*clusterdef.NodeGroup{
+	nodeIds, err := d.addRemoveNodes(ctx, clusterInfoEx, []*clusterdef.NodeGroup{
 		{
 			Count:    1,
 			Version:  nodeVersion,
@@ -1272,21 +272,21 @@ func (d *Deployer) AddNode(ctx context.Context, clusterID string) (string, error
 }
 
 func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID string) error {
-	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get cluster info")
 	}
 
-	node, err := d.getNode(ctx, clusterID, nodeID)
+	clusterInfoEx, err := d.getClusterInfoEx(ctx, clusterInfo)
 	if err != nil {
-		return errors.Wrap(err, "failed to get node")
+		return errors.Wrap(err, "failed to get extended cluster info")
 	}
 
 	// we find the node the user selected, and a secondary node that we
 	// can use to actually manipulate the cluster
-	var foundNode *deployedNodeInfo
-	for _, clusterNode := range clusterInfo.Nodes {
-		if clusterNode.ContainerID == node.ContainerID {
+	var foundNode *nodeInfoEx
+	for _, clusterNode := range clusterInfoEx.NodesEx {
+		if clusterNode.ContainerID == nodeID {
 			foundNode = clusterNode
 		}
 	}
@@ -1294,81 +294,12 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 		return errors.Wrap(err, "failed to find deployed node")
 	}
 
-	_, err = d.addRemoveNodes(ctx, clusterInfo, nil, []*deployedNodeInfo{
+	_, err = d.addRemoveNodes(ctx, clusterInfoEx, nil, []*nodeInfoEx{
 		foundNode,
 	})
 	if err != nil {
 		return err
 	}
-
-	return nil
-}
-
-func (d *Deployer) appendNodeDnsNames(dnsNames []string, node *NodeInfo) []string {
-	if node.DnsName != "" {
-		if !slices.Contains(dnsNames, node.DnsName) {
-			dnsNames = append(dnsNames, node.DnsName)
-		}
-	}
-	if node.DnsSuffix != "" {
-		couchbaseRec := "_couchbase._tcp.srv." + node.DnsSuffix
-		couchbasesRec := "_couchbases._tcp.srv." + node.DnsSuffix
-
-		if !slices.Contains(dnsNames, node.DnsSuffix) {
-			dnsNames = append(dnsNames, node.DnsSuffix)
-		}
-		if !slices.Contains(dnsNames, couchbaseRec) {
-			dnsNames = append(dnsNames, couchbaseRec)
-		}
-		if !slices.Contains(dnsNames, couchbasesRec) {
-			dnsNames = append(dnsNames, couchbasesRec)
-		}
-	}
-
-	return dnsNames
-}
-
-func (d *Deployer) removeDnsNames(ctx context.Context, dnsNames []string) {
-	if len(dnsNames) > 0 {
-		if d.dnsProvider == nil {
-			d.logger.Warn("could not remove associated dns names due to no dns configuration")
-		} else {
-			d.logger.Info("removing dns names", zap.Any("names", dnsNames))
-			err := d.dnsProvider.RemoveRecords(ctx, dnsNames, true, true)
-			if err != nil {
-				d.logger.Warn("failed to remove dns names", zap.Error(err))
-			}
-		}
-	}
-}
-
-func (d *Deployer) removeNodes(ctx context.Context, nodes []*NodeInfo) error {
-	var dnsToRemove []string
-	for _, node := range nodes {
-		dnsToRemove = d.appendNodeDnsNames(dnsToRemove, node)
-	}
-
-	waitCh := make(chan error)
-	for _, node := range nodes {
-		go func(node *NodeInfo) {
-			d.logger.Info("removing node",
-				zap.String("id", node.NodeID),
-				zap.String("container", node.ContainerID))
-
-			d.controller.RemoveNode(ctx, node.ContainerID)
-
-			waitCh <- nil
-		}(node)
-	}
-
-	for range nodes {
-		err := <-waitCh
-		if err != nil {
-			return err
-		}
-	}
-
-	d.removeDnsNames(ctx, dnsToRemove)
 
 	return nil
 }
@@ -1379,7 +310,7 @@ func (d *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 		return err
 	}
 
-	var nodesToRemove []*NodeInfo
+	var nodesToRemove []*ContainerInfo
 	for _, node := range nodes {
 		if node.ClusterID == clusterID {
 			nodesToRemove = append(nodesToRemove, node)
@@ -1396,25 +327,6 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 	}
 
 	return d.removeNodes(ctx, nodes)
-}
-
-func (d *Deployer) getCluster(ctx context.Context, clusterID string) (*ClusterInfo, error) {
-	clusters, err := d.listClusters(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list nodes")
-	}
-
-	var thisCluster *ClusterInfo
-	for _, cluster := range clusters {
-		if cluster.ClusterID == clusterID {
-			thisCluster = cluster
-		}
-	}
-	if thisCluster == nil {
-		return nil, errors.New("failed to find cluster")
-	}
-
-	return thisCluster, nil
 }
 
 func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
@@ -1478,7 +390,7 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	mgmt := fmt.Sprintf("http://%s", mgmtAddr)
 	mgmtTls := fmt.Sprintf("https://%s", mgmtTlsAddr)
 
-	lbIp := thisCluster.LoadBalancerIPAddress
+	lbIp := thisCluster.LoadBalancerIPAddress()
 	if lbIp != "" {
 		analytics = fmt.Sprintf("http://%s:8095", lbIp)
 		analyticsTls = fmt.Sprintf("https://%s:18095", lbIp)
@@ -1505,7 +417,7 @@ func (d *Deployer) Cleanup(ctx context.Context) error {
 
 	curTime := time.Now()
 
-	var nodesToRemove []*NodeInfo
+	var nodesToRemove []*ContainerInfo
 	for _, node := range nodes {
 		if !node.Expiry.IsZero() && !node.Expiry.After(curTime) {
 			nodesToRemove = append(nodesToRemove, node)
@@ -1753,12 +665,12 @@ func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 }
 
 func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
-	cluster, err := d.getClusterInfo(ctx, clusterID)
+	cluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get cluster info")
 	}
 
-	if cluster.UseDinoCerts {
+	if cluster.UsingDinoCerts {
 		clusterCa, _, err := d.getClusterDinoCert(clusterID)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to get cluster CA")
@@ -1933,13 +845,13 @@ func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucke
 	return nil
 }
 
-func (d *Deployer) getNode(ctx context.Context, clusterID, nodeID string) (*NodeInfo, error) {
+func (d *Deployer) getNode(ctx context.Context, clusterID, nodeID string) (*ContainerInfo, error) {
 	nodes, err := d.controller.ListNodes(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list nodes")
 	}
 
-	var foundNode *NodeInfo
+	var foundNode *ContainerInfo
 	for _, node := range nodes {
 		if node.ClusterID == clusterID && node.NodeID == nodeID {
 			foundNode = node
@@ -1990,7 +902,7 @@ func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeI
 }
 
 func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
-	clusterInfo, err := d.getClusterInfo(ctx, clusterID)
+	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get cluster info")
 	}
@@ -2032,7 +944,7 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 		return nil, errors.Wrap(err, "failed to wait for log collection to complete")
 	}
 
-	nodeInfoFromIp := func(ipAddress string) *deployedNodeInfo {
+	nodeInfoFromIp := func(ipAddress string) *nodeInfo {
 		for _, nodeInfo := range clusterInfo.Nodes {
 			if nodeInfo.IPAddress == ipAddress {
 				return nodeInfo
