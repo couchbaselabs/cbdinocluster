@@ -74,33 +74,25 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 			return nil, errors.New("cannot pull community edition of columnar")
 		}
 
-		ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/columnar:%s", serverVersion)
-		image, err := MultiArchImagePuller{
-			Logger:       p.Logger,
-			DockerCli:    p.DockerCli,
-			RegistryAuth: p.genGhcrAuthStr(),
-			ImagePath:    ghcrImagePath,
-		}.Pull(ctx)
-		if err != nil {
-			p.Logger.Debug("ghcr provider failed to provide image from columnar repo", zap.Error(err))
+		var imagePaths []string
+		if len(serverVersion) > 0 && (serverVersion[0] == '0' || serverVersion[0] == '1') {
+			// For versions starting with 0 or 1, try the legacy columnar paths
+			imagePaths = []string{
+				fmt.Sprintf("ghcr.io/cb-vanilla/columnar:%s", serverVersion),
+				fmt.Sprintf("ghcr.io/cb-vanilla/couchbase-columnar:%s", serverVersion),
+			}
 
-			ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/couchbase-columnar:%s", serverVersion)
-			image, err := MultiArchImagePuller{
+			return p.tryImagePaths(ctx, imagePaths)
+		} else {
+			// For newer versions, use enterprise-analytics
+			ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/enterprise-analytics:%s", serverVersion)
+			return MultiArchImagePuller{
 				Logger:       p.Logger,
 				DockerCli:    p.DockerCli,
 				RegistryAuth: p.genGhcrAuthStr(),
 				ImagePath:    ghcrImagePath,
 			}.Pull(ctx)
-			if err != nil {
-				p.Logger.Debug("ghcr provider failed to provide image from couchbase-columnar repo", zap.Error(err))
-
-				return nil, errors.New("failed to pull image from both columnar and couchbase-columnar repos")
-			}
-
-			return image, nil
 		}
-
-		return image, nil
 	}
 }
 
@@ -196,4 +188,32 @@ func (p *GhcrImageProvider) SearchImages(ctx context.Context, version string) ([
 	}
 
 	return images, nil
+}
+
+// tryImagePaths attempts to pull from multiple image paths in sequence
+// Returns the first successful image or an error if all attempts fail
+func (p *GhcrImageProvider) tryImagePaths(ctx context.Context, imagePaths []string) (*ImageRef, error) {
+	var lastErr error
+
+	for i, imagePath := range imagePaths {
+		p.Logger.Debug("attempting to pull image", zap.String("imagePath", imagePath), zap.Int("attempt", i+1))
+
+		image, err := MultiArchImagePuller{
+			Logger:       p.Logger,
+			DockerCli:    p.DockerCli,
+			RegistryAuth: p.genGhcrAuthStr(),
+			ImagePath:    imagePath,
+		}.Pull(ctx)
+
+		if err != nil {
+			p.Logger.Debug("failed to pull image", zap.String("imagePath", imagePath), zap.Error(err))
+			lastErr = err
+			continue
+		}
+
+		p.Logger.Debug("successfully pulled image", zap.String("imagePath", imagePath))
+		return image, nil
+	}
+
+	return nil, fmt.Errorf("failed to pull image from all %d paths, last error: %w", len(imagePaths), lastErr)
 }
