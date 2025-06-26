@@ -11,6 +11,7 @@ type ClusterInfo struct {
 	Type           deployment.ClusterType
 	CloudProjectID string
 	CloudClusterID string
+	CloudProvider  string
 	Region         string
 	Expiry         time.Time
 	State          string
