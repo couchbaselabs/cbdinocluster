@@ -9,6 +9,7 @@ config/
 bin/
 data/
 .DS_Store
+logs/
 
 # Binaries for programs and plugins
 *.exe
