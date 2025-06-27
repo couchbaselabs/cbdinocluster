@@ -159,6 +159,7 @@ func (d *Deployer) getNodeInfoEx(ctx context.Context, nodeInfo *nodeInfo) (*node
 
 	if nodeInfo.IsClusterNode() {
 		nodeCtrl := clustercontrol.NodeManager{
+			Logger:   d.logger,
 			Endpoint: fmt.Sprintf("http://%s:8091", nodeInfo.IPAddress),
 		}
 		thisNodeInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)

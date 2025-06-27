@@ -39,6 +39,7 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 
 	firstNodeEndpoint := fmt.Sprintf("http://%s:%d", firstNodeAddress, 8091)
 	firstNodeMgr := &NodeManager{
+		Logger:   m.Logger,
 		Endpoint: firstNodeEndpoint,
 	}
 	firstNodeCtrl := firstNodeMgr.Controller()
@@ -56,8 +57,8 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 		Username: opts.Username,
 		Password: opts.Password,
 
-		Services:    firstNode.Services,
-		ServerGroup: firstNode.ServerGroup,
+		Services:          firstNode.Services,
+		ServerGroup:       firstNode.ServerGroup,
 		AnalyticsSettings: opts.AnalyticsSettings,
 	})
 	if err != nil {

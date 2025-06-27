@@ -5,14 +5,17 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type NodeManager struct {
+	Logger   *zap.Logger
 	Endpoint string
 }
 
 func (m *NodeManager) Controller() *Controller {
 	return &Controller{
+		Logger:   m.Logger,
 		Endpoint: m.Endpoint,
 	}
 }

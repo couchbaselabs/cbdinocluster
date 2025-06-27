@@ -63,6 +63,7 @@ func (d *Deployer) setupNodeCertificates(
 	}
 
 	nodeCtrl := clustercontrol.NodeManager{
+		Logger:   d.logger,
 		Endpoint: fmt.Sprintf("http://%s:8091", node.IPAddress),
 	}
 
