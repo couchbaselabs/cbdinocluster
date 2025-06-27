@@ -2396,15 +2396,15 @@ func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucke
 	return nil
 }
 
-func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string, trafficType deployment.BlockNodeTrafficType, rejectType string) error {
 	return errors.New("clouddeploy does not support traffic control")
 }
 
-func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
+func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error {
 	return errors.New("clouddeploy does not support traffic control")
 }
 
-func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error {
+func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string, rejectType string) error {
 	return errors.New("clouddeploy does not support traffic control")
 }
 

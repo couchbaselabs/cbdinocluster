@@ -16,11 +16,15 @@ var chaosPartitionTrafficCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
-		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
+		clusterId := args[0]
+		nodeIdents := args[1:]
+		blockTypeStr, _ := cmd.Flags().GetString("reject-with")
+
+		_, deployer, cluster := helper.IdentifyCluster(ctx, clusterId)
 
 		// parse any nodes the user has explicitly specified
 		var partitionNodeIds []string
-		for _, nodeArg := range args[1:] {
+		for _, nodeArg := range nodeIdents {
 			node := helper.IdentifyNode(ctx, cluster, nodeArg)
 			partitionNodeIds = append(partitionNodeIds, node.GetID())
 		}
@@ -31,6 +35,10 @@ var chaosPartitionTrafficCmd = &cobra.Command{
 			allNodes := cluster.GetNodes()
 			allNodeIds := make([]string, 0, len(allNodes))
 			for _, node := range allNodes {
+				if !node.IsClusterNode() {
+					continue
+				}
+
 				allNodeIds = append(allNodeIds, node.GetID())
 			}
 
@@ -45,7 +53,7 @@ var chaosPartitionTrafficCmd = &cobra.Command{
 			partitionNodeIds = allNodeIds[:numPartitionNodes]
 		}
 
-		err := deployer.PartitionNodeTraffic(ctx, cluster.GetID(), partitionNodeIds)
+		err := deployer.PartitionNodeTraffic(ctx, cluster.GetID(), partitionNodeIds, blockTypeStr)
 		if err != nil {
 			logger.Fatal("failed to partition node traffic", zap.Error(err))
 		}
@@ -54,4 +62,6 @@ var chaosPartitionTrafficCmd = &cobra.Command{
 
 func init() {
 	chaosCmd.AddCommand(chaosPartitionTrafficCmd)
+
+	chaosPartitionTrafficCmd.Flags().String("reject-with", "", "Specifies the reject-with type to use from iptables or empty for DROP")
 }

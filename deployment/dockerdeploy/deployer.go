@@ -865,14 +865,29 @@ func (d *Deployer) getNode(ctx context.Context, clusterID, nodeID string) (*Cont
 	return foundNode, nil
 }
 
-func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeID string, blockType deployment.BlockNodeTrafficType) error {
-	node, err := d.getNode(ctx, clusterID, nodeID)
-	if err != nil {
-		return errors.Wrap(err, "failed to get node")
+func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string, trafficType deployment.BlockNodeTrafficType, rejectType string) error {
+	var nodeContainerIDs []string
+	for _, nodeId := range nodeIDs {
+		node, err := d.getNode(ctx, clusterID, nodeId)
+		if err != nil {
+			return errors.Wrap(err, "failed to get node")
+		}
+
+		nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+	}
+	if len(nodeIDs) == 0 {
+		clusterInfo, err := d.getCluster(ctx, clusterID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get cluster info")
+		}
+
+		for _, node := range clusterInfo.Nodes {
+			nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+		}
 	}
 
 	var tcType TrafficControlType
-	switch blockType {
+	switch trafficType {
 	case deployment.BlockNodeTrafficNodes:
 		tcType = TrafficControlBlockNodes
 	case deployment.BlockNodeTrafficClients:
@@ -880,29 +895,49 @@ func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeI
 	case deployment.BlockNodeTrafficAll:
 		tcType = TrafficControlBlockAll
 	}
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, tcType, nil, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to block traffic")
+
+	for _, nodeContainerID := range nodeContainerIDs {
+		err := d.controller.SetTrafficControl(ctx, nodeContainerID, tcType, rejectType, nil, nil)
+		if err != nil {
+			return errors.Wrap(err, "failed to block traffic")
+		}
 	}
 
 	return nil
 }
 
-func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeID string) error {
-	node, err := d.getNode(ctx, clusterID, nodeID)
-	if err != nil {
-		return errors.Wrap(err, "failed to get node")
+func (d *Deployer) AllowNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error {
+	var nodeContainerIDs []string
+	for _, nodeId := range nodeIDs {
+		node, err := d.getNode(ctx, clusterID, nodeId)
+		if err != nil {
+			return errors.Wrap(err, "failed to get node")
+		}
+
+		nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+	}
+	if len(nodeIDs) == 0 {
+		clusterInfo, err := d.getCluster(ctx, clusterID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get cluster info")
+		}
+
+		for _, node := range clusterInfo.Nodes {
+			nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+		}
 	}
 
-	err = d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlAllowAll, nil, nil)
-	if err != nil {
-		return errors.Wrap(err, "failed to allow traffic")
+	for _, nodeContainerID := range nodeContainerIDs {
+		err := d.controller.SetTrafficControl(ctx, nodeContainerID, TrafficControlAllowAll, "", nil, nil)
+		if err != nil {
+			return errors.Wrap(err, "failed to allow traffic")
+		}
 	}
 
 	return nil
 }
 
-func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string) error {
+func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string, rejectType string) error {
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get cluster info")
@@ -941,7 +976,7 @@ func (d *Deployer) PartitionNodeTraffic(ctx context.Context, clusterID string, n
 			zap.String("ipAddress", node.IPAddress))
 
 		// block all inter-node traffic for this specific node, but allow traffic from the partition
-		err := d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlBlockNodes, nil, islandAllowedIps)
+		err := d.controller.SetTrafficControl(ctx, node.ContainerID, TrafficControlBlockNodes, rejectType, nil, islandAllowedIps)
 		if err != nil {
 			return errors.Wrapf(err, "failed to partition traffic for node %s", node.NodeID)
 		}
