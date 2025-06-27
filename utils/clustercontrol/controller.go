@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/go-querystring/query"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type non200StatusCodeError struct {
@@ -25,6 +26,7 @@ func (e *non200StatusCodeError) Error() string {
 }
 
 type Controller struct {
+	Logger   *zap.Logger
 	Endpoint string
 }
 
@@ -97,6 +99,10 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 				return errors.Wrap(err, fmt.Sprintf("failed after %d retries", maxRetries))
 			}
 
+			c.Logger.Warn("request failed, retrying",
+				zap.Int("retryNum", retryNum),
+				zap.Error(err),
+			)
 			retryNum++
 
 			select {

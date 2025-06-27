@@ -443,6 +443,7 @@ func (d *Deployer) getController(ctx context.Context, clusterID string) (*cluste
 	}
 
 	nodeCtrl := &clustercontrol.NodeManager{
+		Logger:   d.logger,
 		Endpoint: fmt.Sprintf("http://%s:8091", clusterInfo.Nodes[0].IPAddress),
 	}
 
@@ -960,6 +961,7 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 	}
 
 	nodeCtrl := clustercontrol.NodeManager{
+		Logger:   d.logger,
 		Endpoint: fmt.Sprintf("http://%s:8091", clusterInfo.Nodes[0].IPAddress),
 	}
 

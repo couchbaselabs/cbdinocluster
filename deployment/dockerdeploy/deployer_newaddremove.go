@@ -482,6 +482,7 @@ func (d *Deployer) addRemoveNodes(
 		zap.String("address", ctrlNode.IPAddress))
 
 	nodeCtrl := clustercontrol.NodeManager{
+		Logger:   d.logger,
 		Endpoint: fmt.Sprintf("http://%s:8091", ctrlNode.IPAddress),
 	}
 
@@ -611,6 +612,7 @@ func (d *Deployer) addRemoveNodes(
 		zap.String("address", ctrlNode.IPAddress))
 
 	nodeCtrl = clustercontrol.NodeManager{
+		Logger:   d.logger,
 		Endpoint: fmt.Sprintf("http://%s:8091", ctrlNode.IPAddress),
 	}
 

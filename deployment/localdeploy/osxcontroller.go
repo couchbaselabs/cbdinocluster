@@ -189,6 +189,7 @@ func (c *OsxController) Start(ctx context.Context, def *ServerDef) error {
 
 	// wait till it's ready
 	clusterCtrl := &clustercontrol.NodeManager{
+		Logger:   c.Logger,
 		Endpoint: fmt.Sprintf("http://%s:%d", "127.0.0.1", 8091),
 	}
 

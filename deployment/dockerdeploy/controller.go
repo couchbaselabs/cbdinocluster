@@ -706,6 +706,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*C
 	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
 
 	clusterCtrl := &clustercontrol.NodeManager{
+		Logger:   c.Logger,
 		Endpoint: fmt.Sprintf("http://%s:%d", node.IPAddress, 8091),
 	}
 
