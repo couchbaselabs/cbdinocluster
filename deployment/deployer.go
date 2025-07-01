@@ -41,6 +41,8 @@ type ConnectInfo struct {
 	Mgmt           string
 	MgmtTls        string
 	DataApiConnstr string
+	DnsAName       string
+	DnsSRVName     string
 }
 
 type UserInfo struct {

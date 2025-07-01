@@ -1708,11 +1708,14 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 
 	var connStr string
 	var dataApiConnstr string
+	var dnsSRV string
 	if clusterInfo.Cluster != nil {
 		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.Connect.Srv)
 		dataApiConnstr = fmt.Sprintf("https://%s", clusterInfo.Cluster.DataApiHostname)
+		dnsSRV = clusterInfo.Cluster.Connect.Srv
 	} else {
 		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Columnar.Config.Endpoint)
+		dnsSRV = clusterInfo.Columnar.Config.Endpoint
 	}
 
 	return &deployment.ConnectInfo{
@@ -1721,6 +1724,7 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		Mgmt:           "",
 		MgmtTls:        "",
 		DataApiConnstr: dataApiConnstr,
+		DnsSRVName:     dnsSRV,
 	}, nil
 }
 

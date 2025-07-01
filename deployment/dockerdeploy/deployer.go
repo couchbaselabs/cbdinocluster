@@ -336,6 +336,14 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	if thisCluster.DnsName != "" {
+		dnsAName := ""
+		dnsSRVName := ""
+		// SRV records for normal CB server
+		if thisCluster.Type == deployment.ClusterTypeServer {
+			dnsSRVName = "srv." + thisCluster.DnsName
+		} else if thisCluster.Type == deployment.ClusterTypeColumnar {
+			dnsAName = thisCluster.DnsName
+		}
 		return &deployment.ConnectInfo{
 			ConnStr:        fmt.Sprintf("couchbase://%s", "srv."+thisCluster.DnsName),
 			ConnStrTls:     fmt.Sprintf("couchbases://%s", "srv."+thisCluster.DnsName),
@@ -344,6 +352,8 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 			Mgmt:           fmt.Sprintf("http://%s", thisCluster.DnsName),
 			MgmtTls:        fmt.Sprintf("https://%s", thisCluster.DnsName),
 			DataApiConnstr: "",
+			DnsAName:       dnsAName,
+			DnsSRVName:     dnsSRVName,
 		}, nil
 	}
 
