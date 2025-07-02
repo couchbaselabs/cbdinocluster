@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -72,6 +73,11 @@ var allocateCmd = &cobra.Command{
 		cluster, err := deployer.NewCluster(ctx, def)
 		if err != nil {
 			logger.Fatal("cluster deployment failed", zap.Error(err))
+		}
+
+		if deployer == deployer.(*clouddeploy.Deployer) {
+			cloudCluster := cluster.(*clouddeploy.ClusterInfo)
+			logger.Info("cloud cluster allocated", zap.String("cloud cluster id", cloudCluster.CloudClusterID))
 		}
 
 		// for humans using dino-cluster, we print some helpful info if available
