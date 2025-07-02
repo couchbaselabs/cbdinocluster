@@ -77,7 +77,7 @@ var allocateCmd = &cobra.Command{
 
 		if deployer == deployer.(*clouddeploy.Deployer) {
 			cloudCluster := cluster.(*clouddeploy.ClusterInfo)
-			logger.Info("cloud cluster allocated", zap.String("cloud cluster id", cloudCluster.CloudClusterID))
+			logger.Info("cloud cluster allocated", zap.String("dbid from Capella", cloudCluster.CloudClusterID))
 		}
 
 		// for humans using dino-cluster, we print some helpful info if available
