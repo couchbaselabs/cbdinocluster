@@ -5,6 +5,7 @@ import (
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -72,6 +73,16 @@ var allocateCmd = &cobra.Command{
 		cluster, err := deployer.NewCluster(ctx, def)
 		if err != nil {
 			logger.Fatal("cluster deployment failed", zap.Error(err))
+		}
+
+		switch cluster := cluster.(type) {
+		case *clouddeploy.ClusterInfo:
+			if cluster.CloudClusterID != "" {
+				logger.Info("cloud cluster was allocated",
+					zap.String("cloud-id", cluster.CloudClusterID))
+			} else {
+				logger.Warn("cloud cluster id is unavailable, deployment may have failed")
+			}
 		}
 
 		// for humans using dino-cluster, we print some helpful info if available
