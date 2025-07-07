@@ -9,10 +9,11 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/dns/v2"
+	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	"google.golang.org/protobuf/proto"
-	"path"
 	"regexp"
+	"strings"
 )
 
 type PrivateEndpointsController struct {
@@ -198,17 +199,12 @@ func (c *PrivateEndpointsController) CreateIpAddressAndForwardingRule(ctx contex
 func (c *PrivateEndpointsController) CreatePrivateDNSZone(ctx context.Context, opts *CreatePrivateDNSZoneOptions) error {
 	netInfo := opts.NetworkInterface
 
-	networkShort := path.Base(*netInfo.Network)
-	if len(networkShort) > 15 {
-		networkShort = networkShort[:15]
-	}
-
 	clusterShort := opts.ClusterID
 	if len(clusterShort) > 15 {
 		clusterShort = clusterShort[:15]
 	}
 
-	managedZoneName := fmt.Sprintf("%s-%s", networkShort, clusterShort)
+	managedZoneName := fmt.Sprintf("cbdc2-managed-%s", clusterShort)
 
 	// Create DNS service with explicit credentials
 	tokenSource := c.Creds.TokenSource
@@ -298,6 +294,290 @@ func (c *PrivateEndpointsController) CreatePrivateDNSZone(ctx context.Context, o
 	c.Logger.Info("Successfully executed DNS transaction",
 		zap.String("zoneName", managedZoneName),
 		zap.Int("recordCount", len(additions)))
+
+	return nil
+}
+
+func (c *PrivateEndpointsController) removeForwardingRules(ctx context.Context, identifier string) error {
+	forwardingRuleClient, err := compute.NewForwardingRulesRESTClient(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to create forwarding rules client")
+	}
+	defer forwardingRuleClient.Close()
+
+	// List all forwarding rules in the region
+	listReq := &computepb.ListForwardingRulesRequest{
+		Project: c.ProjectID,
+		Region:  c.Region,
+	}
+
+	it := forwardingRuleClient.List(ctx, listReq)
+	for {
+		forwardingRule, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return errors.Wrap(err, "failed to list forwarding rules")
+		}
+
+		// Check if the forwarding rule name contains the identifier
+		if strings.Contains(forwardingRule.GetName(), identifier) {
+			c.Logger.Info("deleting forwarding rule", zap.String("name", forwardingRule.GetName()))
+
+			deleteReq := &computepb.DeleteForwardingRuleRequest{
+				Project:        c.ProjectID,
+				Region:         c.Region,
+				ForwardingRule: forwardingRule.GetName(),
+			}
+
+			op, err := forwardingRuleClient.Delete(ctx, deleteReq)
+			if err != nil {
+				c.Logger.Error("failed to delete forwarding rule",
+					zap.String("name", forwardingRule.GetName()),
+					zap.Error(err))
+				continue
+			}
+
+			if err := op.Wait(ctx); err != nil {
+				c.Logger.Error("failed to wait for forwarding rule deletion",
+					zap.String("name", forwardingRule.GetName()),
+					zap.Error(err))
+				continue
+			}
+
+			c.Logger.Info("successfully deleted forwarding rule", zap.String("name", forwardingRule.GetName()))
+		}
+	}
+
+	return nil
+}
+
+func (c *PrivateEndpointsController) removeIPAddresses(ctx context.Context, identifier string) error {
+	computeClient, err := compute.NewAddressesRESTClient(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to create addresses client")
+	}
+	defer computeClient.Close()
+
+	// List all addresses in the region
+	listReq := &computepb.ListAddressesRequest{
+		Project: c.ProjectID,
+		Region:  c.Region,
+	}
+
+	it := computeClient.List(ctx, listReq)
+	for {
+		address, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return errors.Wrap(err, "failed to list addresses")
+		}
+
+		// Check if the address name contains the identifier
+		if strings.Contains(address.GetName(), identifier) {
+			c.Logger.Info("deleting IP address", zap.String("name", address.GetName()))
+
+			deleteReq := &computepb.DeleteAddressRequest{
+				Project: c.ProjectID,
+				Region:  c.Region,
+				Address: address.GetName(),
+			}
+
+			op, err := computeClient.Delete(ctx, deleteReq)
+			if err != nil {
+				c.Logger.Error("failed to delete IP address",
+					zap.String("name", address.GetName()),
+					zap.Error(err))
+				continue
+			}
+
+			if err := op.Wait(ctx); err != nil {
+				c.Logger.Error("failed to wait for IP address deletion",
+					zap.String("name", address.GetName()),
+					zap.Error(err))
+				continue
+			}
+
+			c.Logger.Info("successfully deleted IP address", zap.String("name", address.GetName()))
+		}
+	}
+
+	return nil
+}
+
+func (c *PrivateEndpointsController) removeDNSZones(ctx context.Context, identifier string) error {
+	tokenSource := c.Creds.TokenSource
+	dnsService, err := dns.NewService(ctx, option.WithTokenSource(tokenSource))
+	if err != nil {
+		return errors.Wrap(err, "failed to create Cloud DNS service")
+	}
+
+	listCall := dnsService.ManagedZones.List(c.ProjectID, "global")
+	managedZones, err := listCall.Context(ctx).Do()
+	if err != nil {
+		return errors.Wrap(err, "failed to list managed zones")
+	}
+
+	for _, zone := range managedZones.ManagedZones {
+		// Check if the zone name contains the identifier
+		if strings.Contains(zone.Name, identifier) {
+			c.Logger.Info("deleting DNS zone", zap.String("name", zone.Name))
+
+			if err := c.deleteRecordSets(ctx, dnsService, zone.Name); err != nil {
+				c.Logger.Error("failed to delete record sets",
+					zap.String("zoneName", zone.Name),
+					zap.Error(err))
+				continue
+			}
+
+			err := dnsService.ManagedZones.Delete(c.ProjectID, "global", zone.Name).Context(ctx).Do()
+			if err != nil {
+				c.Logger.Error("failed to delete DNS zone",
+					zap.String("name", zone.Name),
+					zap.Error(err))
+				continue
+			}
+
+			c.Logger.Info("successfully deleted DNS zone", zap.String("name", zone.Name))
+		}
+	}
+
+	return nil
+}
+
+func (c *PrivateEndpointsController) deleteRecordSets(ctx context.Context, dnsService *dns.Service, zoneName string) error {
+	listCall := dnsService.ResourceRecordSets.List(c.ProjectID, "global", zoneName)
+	recordSets, err := listCall.Context(ctx).Do()
+	if err != nil {
+		return errors.Wrap(err, "failed to list record sets")
+	}
+
+	var deletions []*dns.ResourceRecordSet
+	for _, recordSet := range recordSets.Rrsets {
+		if recordSet.Type != "NS" && recordSet.Type != "SOA" {
+			deletions = append(deletions, recordSet)
+		}
+	}
+
+	if len(deletions) > 0 {
+		dnsChange := &dns.Change{
+			Deletions: deletions,
+		}
+
+		_, err = dnsService.Changes.Create(c.ProjectID, "global", zoneName, dnsChange).Context(ctx).Do()
+		if err != nil {
+			return errors.Wrap(err, "failed to delete record sets")
+		}
+
+		c.Logger.Info("successfully deleted record sets from DNS zone",
+			zap.String("zoneName", zoneName),
+			zap.Int("recordCount", len(deletions)))
+	}
+
+	return nil
+}
+
+func (c *PrivateEndpointsController) RemovePrivateDnsZone(ctx context.Context, identifier string) error {
+	c.Logger.Info("cleaning up private DNS zones", zap.String("identifierSubstring", identifier))
+
+	// Remove Forwarding rules that contains the identifier
+	if err := c.removeForwardingRules(ctx, identifier); err != nil {
+		return errors.Wrap(err, "failed to remove forwarding rules")
+	}
+
+	// Remove IP addresses that contain the identifier
+	if err := c.removeIPAddresses(ctx, identifier); err != nil {
+		return errors.Wrap(err, "failed to remove IP addresses")
+	}
+
+	// Remove the DNS zone that contains the identifier
+	if err := c.removeDNSZones(ctx, identifier); err != nil {
+		return errors.Wrap(err, "failed to remove DNS zones")
+	}
+
+	return nil
+}
+
+func (c *PrivateEndpointsController) RemoveAll(ctx context.Context) error {
+	c.Logger.Info("Removing all private DNS entries")
+
+	// Remove all private DNS entries created by cbdinocluster
+	return c.RemovePrivateDnsZone(ctx, "cbdc2-managed-")
+}
+
+func (c *PrivateEndpointsController) GetDNSZonesIdentifierToRemove(ctx context.Context) ([]string, error) {
+	forwardingRuleClient, err := compute.NewForwardingRulesRESTClient(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create forwarding rules client")
+	}
+	defer forwardingRuleClient.Close()
+
+	listReq := &computepb.ListForwardingRulesRequest{
+		Project: c.ProjectID,
+		Region:  c.Region,
+	}
+
+	var identifierList []string
+	it := forwardingRuleClient.List(ctx, listReq)
+	for {
+		forwardingRule, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to list forwarding rules")
+		}
+
+		ruleName := forwardingRule.GetName()
+		if strings.Contains(ruleName, "cbdc2-managed-") {
+			target := forwardingRule.GetTarget()
+			if target != "" && strings.Contains(target, "serviceAttachments/") {
+				pscConnectionStatus := forwardingRule.GetPscConnectionStatus()
+
+				c.Logger.Debug("Checking forwarding rule PSC status",
+					zap.String("ruleName", ruleName),
+					zap.String("pscStatus", pscConnectionStatus))
+
+				if pscConnectionStatus == "REJECTED" || pscConnectionStatus == "CLOSED" {
+					// Extract the last 15 characters, i.e, unique cluster ID part
+					currIdentifier := ruleName[len(ruleName)-15:]
+
+					found := false
+					for _, existing := range identifierList {
+						if existing == currIdentifier {
+							found = true
+							break
+						}
+					}
+					if !found {
+						identifierList = append(identifierList, currIdentifier)
+						c.Logger.Info("found DNS zone to remove due to PSC status",
+							zap.String("identifierSubstring", currIdentifier),
+							zap.String("pscStatus", pscConnectionStatus),
+							zap.String("forwardingRule", ruleName))
+					}
+				}
+			}
+		}
+	}
+
+	return identifierList, nil
+}
+
+func (c *PrivateEndpointsController) Cleanup(ctx context.Context) error {
+	identifierList, err := c.GetDNSZonesIdentifierToRemove(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to get DNS zone names to remove")
+	}
+
+	for _, identifier := range identifierList {
+		if err := c.RemovePrivateDnsZone(ctx, identifier); err != nil {
+			return errors.Wrapf(err, "failed to remove private DNS entries for identifier substring %s", identifier)
+		}
+	}
 
 	return nil
 }

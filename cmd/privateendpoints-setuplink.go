@@ -42,10 +42,6 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				logger.Fatal("must not specify both auto and instance-id/vm-id")
 			}
 
-			if vmId != "" {
-				instanceId = vmId
-			}
-
 			siCtrl := cloudinstancecontrol.SelfIdentifyController{
 				Logger: logger,
 			}
@@ -66,6 +62,10 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 			default:
 				logger.Fatal("unexpected self-identity type")
 			}
+		}
+
+		if vmId != "" {
+			instanceId = vmId
 		}
 
 		if instanceId == "" {
@@ -183,7 +183,7 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 
 			err = peCtrl.CreatePrivateDNSZone(ctx, &gcpcontrol.CreatePrivateDNSZoneOptions{
 				ClusterID:          cloudCluster.CloudClusterID,
-				BaseDnsName:        strings.SplitN(pe.PrivateDNS, ".", 2)[1] + ".", // remove the first part of the dns name, gcp needd tailing dot for DNS names
+				BaseDnsName:        strings.SplitN(pe.PrivateDNS, ".", 2)[1] + ".", // remove the first part of the dns name, gcp needs tailing dot for DNS names
 				NetworkInterface:   networkInterface,
 				ServiceAttachments: *serviceAttachments,
 			})
