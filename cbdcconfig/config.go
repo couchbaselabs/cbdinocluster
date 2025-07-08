@@ -87,8 +87,9 @@ type Config_AWS struct {
 }
 
 type Config_GCP struct {
-	Enabled StringBool `yaml:"enabled"`
-	Region  string     `yaml:"region"`
+	Enabled   StringBool `yaml:"enabled"`
+	Region    string     `yaml:"region"`
+	ProjectID string     `yaml:"project-id"`
 
 	_DefaultRegion string `yaml:"default-region"`
 }

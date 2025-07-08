@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
@@ -63,6 +64,23 @@ var cleanupCmd = &cobra.Command{
 			}
 
 			cleaners["azure"] = peCtrl
+		}
+
+		// add special GCP target for private links
+		// removable if we add an actual GCP deployer
+		if deployers["gcp"] != nil {
+			logger.Fatal("internal error, double gcp cleaners")
+		}
+		if config.GCP.Enabled.Value() {
+			gcpCreds := helper.GetGCPCredentials(ctx)
+			peCtrl := &gcpcontrol.PrivateEndpointsController{
+				Logger:    logger,
+				Region:    config.GCP.Region,
+				Creds:     gcpCreds,
+				ProjectID: config.GCP.ProjectID,
+			}
+
+			cleaners["gcp"] = peCtrl
 		}
 
 		if len(args) >= 1 {

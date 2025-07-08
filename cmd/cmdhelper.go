@@ -27,6 +27,7 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
+	"golang.org/x/oauth2/google"
 )
 
 type CmdHelper struct {
@@ -409,6 +410,22 @@ func (h *CmdHelper) GetAzureCredentials(ctx context.Context) azcore.TokenCredent
 	creds, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
 		logger.Fatal("failed to fetch azure credentials", zap.Error(err))
+	}
+
+	return creds
+}
+
+func (h *CmdHelper) GetGCPCredentials(ctx context.Context) *google.Credentials {
+	logger := h.GetLogger()
+	cbdcConfig := h.GetConfig(ctx)
+
+	if !cbdcConfig.GCP.Enabled.Value() {
+		logger.Fatal("cannot use GCP when configuration is disabled")
+	}
+
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		logger.Fatal("failed to fetch GCP credentials", zap.Error(err))
 	}
 
 	return creds

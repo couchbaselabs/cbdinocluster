@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -32,6 +33,23 @@ var removeAllCmd = &cobra.Command{
 			err := deployer.RemoveAll(ctx)
 			if err != nil {
 				logger.Fatal("failed to remove all clusters", zap.Error(err))
+			}
+
+			config := helper.GetConfig(ctx)
+			if deployerName == "cloud" && config.GCP.Enabled.Value() {
+				gcpCreds := helper.GetGCPCredentials(ctx)
+
+				peCtrl := gcpcontrol.PrivateEndpointsController{
+					Logger:    logger,
+					Creds:     gcpCreds,
+					ProjectID: config.GCP.ProjectID,
+					Region:    config.GCP.Region,
+				}
+
+				err = peCtrl.RemoveAll(ctx)
+				if err != nil {
+					logger.Fatal("failed to remove private DNS entries", zap.Error(err))
+				}
 			}
 		}
 	},
