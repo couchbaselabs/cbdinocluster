@@ -550,9 +550,28 @@ func (c *Controller) UploadCertificates(
 		zap.Int("nodeKeyLen", len(nodeKeyPem)),
 		zap.Int("numCaPems", len(caPems)))
 
-	err := c.execCmd(ctx, containerID, []string{"mkdir", "-p", "/opt/couchbase/var/lib/couchbase/inbox/"})
+	var installLocation string
+	// Check for /opt/couchbase directory
+	err := c.execCmd(ctx, containerID, []string{"test", "-d", "/opt/couchbase"})
+	if err == nil {
+		installLocation = "couchbase"
+	} else {
+		// Check for /opt/enterprise-analytics directory
+		err := c.execCmd(ctx, containerID, []string{"test", "-d", "/opt/enterprise-analytics"})
+		if err == nil {
+			installLocation = "enterprise-analytics"
+		} else {
+			return errors.New("neither /opt/couchbase nor /opt/enterprise-analytics directory found")
+		}
+	}
+
+	c.Logger.Debug("detected installation location", zap.String("location", installLocation))
+
+	inboxPath := fmt.Sprintf("/opt/%s/var/lib/couchbase/inbox/", installLocation)
+
+	err = c.execCmd(ctx, containerID, []string{"mkdir", "-p", inboxPath})
 	if err != nil {
-		return errors.Wrap(err, "failed to mkdir couchbase inbox")
+		return errors.Wrapf(err, "failed to mkdir inbox directory at %s", inboxPath)
 	}
 
 	tarBuf := bytes.NewBuffer(nil)
@@ -580,17 +599,17 @@ func (c *Controller) UploadCertificates(
 	}
 	tarFile.Flush()
 
-	err = c.DockerCli.CopyToContainer(ctx, containerID, "/opt/couchbase/var/lib/couchbase/inbox/", tarBuf, container.CopyToContainerOptions{})
+	err = c.DockerCli.CopyToContainer(ctx, containerID, inboxPath, tarBuf, container.CopyToContainerOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to write certificates")
 	}
 
-	err = c.execCmd(ctx, containerID, []string{"chown", "-R", "couchbase", "/opt/couchbase/var/lib/couchbase/inbox"})
+	err = c.execCmd(ctx, containerID, []string{"chown", "-R", "couchbase", inboxPath})
 	if err != nil {
 		return errors.Wrap(err, "failed to chown couchbase inbox")
 	}
 
-	err = c.execCmd(ctx, containerID, []string{"chmod", "-R", "0700", "/opt/couchbase/var/lib/couchbase/inbox"})
+	err = c.execCmd(ctx, containerID, []string{"chmod", "-R", "0700", inboxPath})
 	if err != nil {
 		return errors.Wrap(err, "failed to chmod couchbase inbox")
 	}
