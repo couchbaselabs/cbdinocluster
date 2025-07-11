@@ -2,6 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"net"
+	"strings"
+	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -22,6 +27,7 @@ var connstrCmd = &cobra.Command{
 		cb2Mode, _ := cmd.Flags().GetBool("couchbase2")
 		dapiMode, _ := cmd.Flags().GetBool("data-api")
 		analyticsMode, _ := cmd.Flags().GetBool("analytics")
+		waitVisible, _ := cmd.Flags().GetBool("wait-visible")
 
 		if useTLS && noTLS {
 			logger.Fatal("cannot request both TLS and non-TLS")
@@ -121,6 +127,37 @@ var connstrCmd = &cobra.Command{
 			logger.Fatal("unknown connstr type", zap.String("type", connstrType))
 		}
 
+		if waitVisible {
+			for {
+				// Get rid of protocol, port and multiple addresses
+				hostname := strings.Split(strings.Split(strings.Split(connStr, "://")[1], ":")[0], ",")[0]
+				var err error
+
+				if strings.Contains(hostname, "srv") {
+					var addrs []*net.SRV
+					_, addrs, err = net.LookupSRV("couchbase", "tcp", hostname)
+					if err == nil && len(addrs) == 0 {
+						err = errors.New("no srv entries for record")
+					}
+				} else {
+					// If hostname is an IP the lookup just returns the IP
+					var ips []net.IP
+					ips, err = net.LookupIP(hostname)
+					if err == nil && len(ips) == 0 {
+						err = errors.New("no ip addresses for hostname")
+					}
+				}
+
+				if err != nil {
+					logger.Info("waiting for dns to become accessible", zap.Error(err))
+					time.Sleep(10 * time.Second)
+					continue
+				}
+
+				break
+			}
+		}
+
 		fmt.Printf("%s\n", connStr)
 	},
 }
@@ -133,4 +170,5 @@ func init() {
 	connstrCmd.PersistentFlags().Bool("no-tls", false, "Explicitly requests non-TLS endpoint")
 	connstrCmd.PersistentFlags().Bool("data-api", false, "Requests a Data API connstr")
 	connstrCmd.PersistentFlags().Bool("analytics", false, "Requests an Analytics connstr")
+	connstrCmd.PersistentFlags().Bool("wait-visible", false, "Wait for the DNS to be visible to this host")
 }
