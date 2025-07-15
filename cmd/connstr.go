@@ -2,6 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"net"
+	"strings"
+	"time"
+
+	"github.com/pkg/errors"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -22,6 +27,7 @@ var connstrCmd = &cobra.Command{
 		cb2Mode, _ := cmd.Flags().GetBool("couchbase2")
 		dapiMode, _ := cmd.Flags().GetBool("data-api")
 		analyticsMode, _ := cmd.Flags().GetBool("analytics")
+		waitVisible, _ := cmd.Flags().GetBool("wait-visible")
 
 		if useTLS && noTLS {
 			logger.Fatal("cannot request both TLS and non-TLS")
@@ -121,6 +127,38 @@ var connstrCmd = &cobra.Command{
 			logger.Fatal("unknown connstr type", zap.String("type", connstrType))
 		}
 
+		if waitVisible {
+			for {
+				var err error
+				if connectInfo.DnsSRVName != "" {
+					var addrs []*net.SRV
+					_, addrs, err = net.LookupSRV("couchbases", "tcp", connectInfo.DnsSRVName)
+					if err == nil && len(addrs) == 0 {
+						err = errors.New("no srv entries for record")
+					}
+					//  cbdino uses IP address in SRV record which is not allowed so we'll ignore these errors for now
+					if err != nil && strings.Contains(err.Error(), "DNS response contained records which contain invalid names") {
+						logger.Info("DNS SRV response contained invalid names", zap.Error(err))
+						err = nil
+					}
+				} else if connectInfo.DnsAName != "" {
+					var ips []net.IP
+					ips, err = net.LookupIP(connectInfo.DnsAName)
+					if err == nil && len(ips) == 0 {
+						err = errors.New("no ip addresses for hostname")
+					}
+				}
+
+				if err != nil {
+					logger.Info("waiting for dns to become accessible", zap.Error(err))
+					time.Sleep(10 * time.Second)
+					continue
+				}
+
+				break
+			}
+		}
+
 		fmt.Printf("%s\n", connStr)
 	},
 }
@@ -133,4 +171,5 @@ func init() {
 	connstrCmd.PersistentFlags().Bool("no-tls", false, "Explicitly requests non-TLS endpoint")
 	connstrCmd.PersistentFlags().Bool("data-api", false, "Requests a Data API connstr")
 	connstrCmd.PersistentFlags().Bool("analytics", false, "Requests an Analytics connstr")
+	connstrCmd.PersistentFlags().Bool("wait-visible", false, "Wait for the DNS to be visible to this host")
 }
