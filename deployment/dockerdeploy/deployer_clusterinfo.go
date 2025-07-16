@@ -31,7 +31,12 @@ func (c clusterInfo) IsColumnar() bool {
 
 func (c clusterInfo) LoadBalancerIPAddress() string {
 	for _, node := range c.Nodes {
-		if node.IsLoadBalancerNode() {
+		if node.IsActiveLoadBalancerNode() {
+			return node.IPAddress
+		}
+	}
+	for _, node := range c.Nodes {
+		if node.IsPassiveLoadBalancerNode() {
 			return node.IPAddress
 		}
 	}
@@ -56,8 +61,19 @@ func (i nodeInfo) IsColumnarNode() bool {
 	return i.Type == "columnar-node"
 }
 
-func (i nodeInfo) IsLoadBalancerNode() bool {
+func (i nodeInfo) IsColumnarNodeEA() bool {
+	if !i.IsColumnarNode() {
+		return false
+	}
+	return isColumnarVersionEA(i.InitialServerVersion)
+}
+
+func (i nodeInfo) IsPassiveLoadBalancerNode() bool {
 	return i.Type == "nginx"
+}
+
+func (i nodeInfo) IsActiveLoadBalancerNode() bool {
+	return i.Type == "haproxy"
 }
 
 func (d *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {

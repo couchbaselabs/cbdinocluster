@@ -118,3 +118,10 @@ func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 
 	return nil
 }
+
+func isColumnarVersionEA(version string) bool {
+	if len(version) > 0 && (version[0] == '0' || version[0] == '1') {
+		return false
+	}
+	return true
+}

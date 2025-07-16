@@ -85,6 +85,8 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	}
 
 	clusterID := uuid.NewString()
+	d.logger.Debug("creating new cluster",
+		zap.String("id", clusterID))
 
 	useDns := def.Docker.EnableDNS
 	if useDns && d.dnsProvider == nil {
@@ -152,9 +154,8 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	}
 
 	nginxContainerId := ""
-	nginxIpAddress := ""
-	if def.Docker.EnableLoadBalancer {
-		d.logger.Info("deploying nginx for load balancing")
+	if def.Docker.PassiveLoadBalancer {
+		d.logger.Info("deploying nginx for passive load balancing")
 
 		node, err := d.controller.DeployNginxNode(ctx, clusterID, def.Expiry)
 		if err != nil {
@@ -165,7 +166,7 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 
 		if clusterCa != nil {
 			d.logger.Debug("uploading dinocert certificates to nginx",
-				zap.String("nginx", node.NodeID))
+				zap.String("containerID", node.NodeID))
 
 			ip := net.ParseIP(node.IPAddress)
 
@@ -189,7 +190,45 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 		}
 
 		nginxContainerId = node.ContainerID
-		nginxIpAddress = node.IPAddress
+	}
+
+	haproxyContainerId := ""
+	if def.Docker.ActiveLoadBalancer {
+		d.logger.Info("deploying haproxy for active load balancing")
+
+		node, err := d.controller.DeployHaproxyNode(ctx, clusterID, def.Expiry)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to deploy haproxy node")
+		}
+
+		d.logger.Debug("haproxy started", zap.String("ip", node.IPAddress))
+
+		if clusterCa != nil {
+			d.logger.Debug("uploading dinocert certificates to haproxy",
+				zap.String("containerID", node.NodeID))
+
+			ip := net.ParseIP(node.IPAddress)
+
+			var dnsNames []string
+			if dnsName != "" {
+				dnsNames = append(dnsNames, dnsName)
+			}
+
+			certPem, keyPem, err := clusterCa.MakeServerCertificate("haproxy-"+clusterID[:8], []net.IP{ip}, dnsNames)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to create haproxy certificate")
+			}
+
+			var chainPem []byte
+			chainPem = append(chainPem, certPem...)
+			chainPem = append(chainPem, clusterCa.CertPem...)
+			err = d.controller.UpdateHaproxyCertificates(ctx, node.ContainerID, chainPem, keyPem)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to upload haproxy certificates")
+			}
+		}
+
+		haproxyContainerId = node.ContainerID
 	}
 
 	d.logger.Info("gathering node images")
@@ -295,21 +334,28 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 
 	if useDns {
 		// since this is a net-new domain name, no need to wait for dns propagation
-		err = d.updateDnsRecords(ctx, dnsName, thisCluster.Nodes, def.Columnar, nginxIpAddress, true)
+		err = d.updateDnsRecords(ctx, dnsName, thisCluster.Nodes, def.Columnar, thisCluster.LoadBalancerIPAddress(), true)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to update dns records")
 		}
 	}
 
-	if nginxContainerId != "" {
-		useDinoCerts := false
-		if clusterCa != nil {
-			useDinoCerts = true
-		}
+	useDinoCerts := false
+	if clusterCa != nil {
+		useDinoCerts = true
+	}
 
-		err = d.updateLoadBalancer(ctx, nginxContainerId, thisCluster.Nodes, def.Columnar, useDinoCerts)
+	if nginxContainerId != "" {
+		err = d.updatePassiveLoadBalancer(ctx, nginxContainerId, thisCluster.Nodes, useDinoCerts, def.Columnar)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to update load balancer")
+			return nil, errors.Wrap(err, "failed to update passive load balancer")
+		}
+	}
+
+	if haproxyContainerId != "" {
+		err = d.updateActiveLoadBalancer(ctx, haproxyContainerId, thisCluster.Nodes, useDinoCerts, def.Columnar)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to update active load balancer")
 		}
 	}
 
@@ -570,6 +616,23 @@ func (d *Deployer) addRemoveNodes(
 		}
 	}
 
+	// only need to update active load balancer if nodes were added
+	if len(nodesToAdd) > 0 {
+		thisCluster, err := d.getCluster(ctx, clusterInfo.ClusterID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get post-deployment cluster info")
+		}
+
+		for _, node := range clusterInfo.Nodes {
+			if node.IsActiveLoadBalancerNode() {
+				err = d.updateActiveLoadBalancer(ctx, node.ContainerID, thisCluster.Nodes, clusterInfo.IsColumnar(), clusterInfo.UsingDinoCerts)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to update active load balancer")
+				}
+			}
+		}
+	}
+
 	// only need to update if nodes were removed
 	if len(nodesToRemove) > 0 {
 		// only need to update if dns is enabled
@@ -581,10 +644,10 @@ func (d *Deployer) addRemoveNodes(
 		}
 
 		for _, node := range clusterInfo.Nodes {
-			if node.IsLoadBalancerNode() {
-				err = d.updateLoadBalancer(ctx, node.ContainerID, postRemovalNodes, clusterInfo.IsColumnar(), clusterInfo.UsingDinoCerts)
+			if node.IsPassiveLoadBalancerNode() {
+				err = d.updatePassiveLoadBalancer(ctx, node.ContainerID, postRemovalNodes, clusterInfo.IsColumnar(), clusterInfo.UsingDinoCerts)
 				if err != nil {
-					return nil, errors.Wrap(err, "failed to update load balancer")
+					return nil, errors.Wrap(err, "failed to update passive load balancer")
 				}
 			}
 		}
@@ -637,25 +700,39 @@ func (d *Deployer) addRemoveNodes(
 		d.controller.RemoveNode(ctx, node.ContainerID)
 	}
 
-	if len(nodesToAdd) > 0 {
+	if len(nodesToAdd) > 0 || len(nodesToRemove) > 0 {
 		thisCluster, err := d.getCluster(ctx, clusterInfo.ClusterID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get post-rebalance cluster info")
 		}
 
-		// no need to update if DNS is disabled
-		if thisCluster.DnsName != "" {
-			err := d.updateDnsRecords(ctx, thisCluster.DnsName, thisCluster.Nodes, thisCluster.IsColumnar(), clusterInfo.LoadBalancerIPAddress(), false)
-			if err != nil {
-				return nil, errors.Wrap(err, "failed to update dns records")
+		if len(nodesToAdd) > 0 {
+			// no need to update if DNS is disabled
+			if thisCluster.DnsName != "" {
+				err := d.updateDnsRecords(ctx, thisCluster.DnsName, thisCluster.Nodes, thisCluster.IsColumnar(), clusterInfo.LoadBalancerIPAddress(), false)
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to update dns records")
+				}
+			}
+
+			for _, node := range clusterInfo.Nodes {
+				if node.IsPassiveLoadBalancerNode() {
+					err := d.updatePassiveLoadBalancer(ctx, node.ContainerID, thisCluster.Nodes, clusterInfo.UsingDinoCerts, clusterInfo.IsColumnar())
+					if err != nil {
+						return nil, errors.Wrap(err, "failed to update passive load balancer")
+					}
+				}
 			}
 		}
 
-		for _, node := range clusterInfo.Nodes {
-			if node.IsLoadBalancerNode() {
-				err := d.updateLoadBalancer(ctx, node.ContainerID, thisCluster.Nodes, clusterInfo.IsColumnar(), clusterInfo.UsingDinoCerts)
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to update load balancer")
+		// only need to update the active load balancer if nodes were removed
+		if len(nodesToRemove) > 0 {
+			for _, node := range clusterInfo.Nodes {
+				if node.IsActiveLoadBalancerNode() {
+					err := d.updateActiveLoadBalancer(ctx, node.ContainerID, thisCluster.Nodes, clusterInfo.UsingDinoCerts, clusterInfo.IsColumnar())
+					if err != nil {
+						return nil, errors.Wrap(err, "failed to update active load balancer")
+					}
 				}
 			}
 		}
