@@ -297,7 +297,7 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 		resp, err := http.Get(fmt.Sprintf("http://%s:%d", node.IPAddress, 9090))
 		if err != nil || resp.StatusCode != 200 {
 			logger.Debug("s3mock not ready yet", zap.Error(err))
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 
@@ -307,6 +307,11 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 	logger.Debug("container is ready!")
 
 	return node, nil
+}
+
+type ProxyTargetNode struct {
+	Address               string
+	IsEnterpriseAnalytics bool
 }
 
 func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expiry time.Duration) (*ContainerInfo, error) {
@@ -405,6 +410,290 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 	return node, nil
 }
 
+func (c *Controller) DeployHaproxyNode(ctx context.Context, clusterID string, expiry time.Duration) (*ContainerInfo, error) {
+	nodeID := "haproxy"
+	logger := c.Logger.With(zap.String("nodeId", nodeID))
+
+	logger.Debug("deploying haproxy node")
+
+	_, err := MultiArchImagePuller{
+		Logger:    c.Logger,
+		DockerCli: c.DockerCli,
+		ImagePath: "haproxy:latest",
+	}.Pull(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to pull haproxy image")
+	}
+
+	containerName := "cbdynnode-haproxy-" + clusterID
+
+	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
+		Image: "haproxy",
+		Labels: map[string]string{
+			"com.couchbase.dyncluster.cluster_id": clusterID,
+			"com.couchbase.dyncluster.type":       "haproxy",
+			"com.couchbase.dyncluster.purpose":    "haproxy backing for cluster",
+			"com.couchbase.dyncluster.node_id":    nodeID,
+		},
+		// same effect as ntp
+		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
+	}, &container.HostConfig{
+		// AutoRemove:  true,
+		NetworkMode: container.NetworkMode(c.NetworkName),
+		CapAdd:      []string{"NET_ADMIN"},
+		Resources: container.Resources{
+			Ulimits: []*units.Ulimit{
+				{Name: "nofile", Soft: 200000, Hard: 200000},
+			},
+		},
+	}, nil, nil, containerName)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create container")
+	}
+
+	containerID := createResult.ID
+
+	logger.Debug("container created, creating base config", zap.String("container", containerID))
+
+	configBytes := []byte("frontend myfrontend\n  mode http\n  bind :80\n")
+
+	tarBuf := bytes.NewBuffer(nil)
+	tarFile := tar.NewWriter(tarBuf)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "haproxy/haproxy.cfg",
+		Size: int64(len(configBytes)),
+		Mode: 0666,
+	})
+	tarFile.Write(configBytes)
+	tarFile.Flush()
+
+	err = c.DockerCli.CopyToContainer(ctx, containerID, "/usr/local/etc", tarBuf, container.CopyToContainerOptions{})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to store base haproxy config")
+	}
+
+	logger.Debug("container config stored, starting", zap.String("container", containerID))
+
+	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to start container")
+	}
+
+	expiryTime := time.Time{}
+	if expiry > 0 {
+		expiryTime = time.Now().Add(expiry)
+	}
+
+	err = c.WriteNodeState(ctx, containerID, &DockerNodeState{
+		Expiry: expiryTime,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed write node state")
+	}
+
+	// Cheap hack for simpler parsing...
+	allNodes, err := c.ListNodes(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list nodes")
+	}
+
+	var node *ContainerInfo
+	for _, allNode := range allNodes {
+		if allNode.ContainerID == containerID {
+			node = allNode
+		}
+	}
+	if node == nil {
+		return nil, errors.New("failed to find newly created container")
+	}
+
+	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
+
+	for {
+		resp, err := http.Get(fmt.Sprintf("http://%s:%d", node.IPAddress, 80))
+		if err != nil || resp.StatusCode != 503 {
+			logger.Debug("haproxy not ready yet", zap.Error(err))
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		break
+	}
+
+	logger.Debug("container is ready!")
+
+	return node, nil
+}
+
+func (c *Controller) UpdateHaproxyCertificates(ctx context.Context, containerID string, certPem []byte, keyPem []byte) error {
+	c.Logger.Debug("uploading haproxy certificates",
+		zap.String("container", containerID),
+		zap.Int("certLen", len(certPem)),
+		zap.Int("keyLen", len(keyPem)))
+
+	concatPem := append(certPem, keyPem...)
+
+	tarBuf := bytes.NewBuffer(nil)
+	tarFile := tar.NewWriter(tarBuf)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "cert.pem",
+		Size: int64(len(concatPem)),
+		Mode: 0666,
+	})
+	tarFile.Write(concatPem)
+	tarFile.Flush()
+
+	err := c.DockerCli.CopyToContainer(ctx, containerID, "/usr/local/etc/haproxy/", tarBuf, container.CopyToContainerOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to write certificates")
+	}
+
+	return nil
+}
+
+func (c *Controller) UpdateHaproxyConfig(
+	ctx context.Context,
+	containerID string,
+	targets []ProxyTargetNode,
+	enableSsl,
+	isColumnar bool,
+) error {
+	// this is configured to broadly match AWS Network Load Balancer defaults
+	maxRetrys := 0
+	connectTimeout := "350s"
+	clientTimeout := "350s"
+	serverTimeout := "350s"
+	checkConfig := "check inter 30s fall 2 rise 5"
+
+	c.Logger.Debug("writing haproxy config", zap.String("container", containerID), zap.Any("targets", targets))
+
+	var haConf string
+
+	haConf += "defaults\n"
+	haConf += "  mode http\n"
+	haConf += fmt.Sprintf("  retries %d\n", maxRetrys)
+	haConf += fmt.Sprintf("  timeout connect %s\n", connectTimeout)
+	haConf += fmt.Sprintf("  timeout client %s\n", clientTimeout)
+	haConf += fmt.Sprintf("  timeout server %s\n", serverTimeout)
+	haConf += "\n"
+
+	haConf += "backend static_backend\n"
+	haConf += `  http-request return status 200 content-type "text/plain" lf-string "HAProxy"` + "\n"
+	haConf += "\n"
+
+	writeForwardedPort := func(port int, stickySession, withSsl bool) {
+		healthPath := "/"
+		switch port {
+		case 8091, 18091:
+			healthPath = "/whoami"
+		case 8092, 18092:
+			healthPath = "/"
+		case 8093, 18093:
+			healthPath = "/admin/ping"
+		case 8094, 18094:
+			healthPath = "/api/ping"
+		case 8095, 18095:
+			healthPath = "/admin/ping"
+			for _, target := range targets {
+				if target.IsEnterpriseAnalytics {
+					healthPath = "/api/v1/health"
+					break
+				}
+			}
+		}
+
+		haConf += fmt.Sprintf("frontend frontend%d\n", port)
+		if withSsl {
+			haConf += fmt.Sprintf("  bind :%d ssl crt %s\n", port, "/usr/local/etc/haproxy/cert.pem")
+		} else {
+			haConf += fmt.Sprintf("  bind :%d\n", port)
+		}
+		haConf += fmt.Sprintf("  default_backend backend%d\n", port)
+		haConf += "\n"
+		haConf += fmt.Sprintf("backend backend%d\n", port)
+		if !stickySession {
+			haConf += "  balance roundrobin\n"
+		} else {
+			haConf += "  balance source\n"
+		}
+		haConf += fmt.Sprintf("  option httpchk GET %s\n", healthPath)
+		for i, target := range targets {
+			sslConfig := ""
+			if withSsl {
+				sslConfig = "ssl verify none"
+			}
+
+			haConf += fmt.Sprintf("  server node%d %s:%d %s %s\n", i, target.Address, port, sslConfig, checkConfig)
+		}
+		haConf += "\n"
+	}
+
+	writeForwardedPort(8091, true, false)
+	writeForwardedPort(8092, false, false)
+	writeForwardedPort(8093, false, false)
+	writeForwardedPort(8094, false, false)
+	writeForwardedPort(8095, false, false)
+
+	if enableSsl {
+		writeForwardedPort(18091, true, true)
+		writeForwardedPort(18092, false, true)
+		writeForwardedPort(18093, false, true)
+		writeForwardedPort(18094, false, true)
+		writeForwardedPort(18095, false, true)
+	}
+
+	haConf += "frontend frontend80\n"
+	haConf += "  bind :80\n"
+	haConf += "  stats enable\n"
+	haConf += "  stats refresh 10s\n"
+	haConf += "  stats uri /stats\n"
+	haConf += "  stats show-modules\n"
+	haConf += "  stats admin if TRUE\n"
+	if isColumnar {
+		haConf += `  http-request add-header X-Analytics "1" if { path_beg /analytics }` + "\n"
+		haConf += `  http-request replace-path ^/analytics(?:/)?(.*) /\1 if { hdr_cnt(X-Analytics) gt 0 }` + "\n"
+		haConf += "  use_backend backend8095 if { hdr_cnt(X-Analytics) gt 0 }\n"
+	}
+	haConf += "  default_backend static_backend\n"
+	haConf += "\n"
+
+	if enableSsl {
+		haConf += "frontend frontend443\n"
+		haConf += "  bind :443 ssl crt /usr/local/etc/haproxy/cert.pem\n"
+		if isColumnar {
+			haConf += `  http-request add-header X-Analytics "1" if { path_beg /analytics }` + "\n"
+			haConf += `  http-request replace-path ^/analytics(?:/)?(.*) /\1 if { hdr_cnt(X-Analytics) gt 0 }` + "\n"
+			haConf += "  use_backend backend8095 if { hdr_cnt(X-Analytics) gt 0 }\n"
+		}
+		haConf += "  default_backend static_backend\n"
+		haConf += "\n"
+	}
+
+	confBytes := []byte(haConf)
+
+	tarBuf := bytes.NewBuffer(nil)
+	tarFile := tar.NewWriter(tarBuf)
+	tarFile.WriteHeader(&tar.Header{
+		Name: "haproxy.cfg",
+		Size: int64(len(confBytes)),
+		Mode: 0666,
+	})
+	tarFile.Write(confBytes)
+	tarFile.Flush()
+
+	err := c.DockerCli.CopyToContainer(ctx, containerID, "/usr/local/etc/haproxy/", tarBuf, container.CopyToContainerOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to write nginx config")
+	}
+
+	err = c.DockerCli.ContainerKill(ctx, containerID, "HUP")
+	if err != nil {
+		return errors.Wrap(err, "failed to reload haproxy config")
+	}
+
+	return nil
+}
+
 func (c *Controller) UpdateNginxCertificates(ctx context.Context, containerID string, certPem []byte, keyPem []byte) error {
 	c.Logger.Debug("uploading nginx certificates",
 		zap.String("container", containerID),
@@ -438,12 +727,12 @@ func (c *Controller) UpdateNginxCertificates(ctx context.Context, containerID st
 	return nil
 }
 
-func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, addrs []string, enableSsl, isColumnar bool) error {
-	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("addrs", addrs))
+func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, targets []ProxyTargetNode, enableSsl, isColumnar bool) error {
+	c.Logger.Debug("writing nginx config", zap.String("container", containerID), zap.Any("targets", targets))
 
 	var nginxConf string
 	writePortMapping := func(listenPort, targetPort int, stickySession, withSsl bool, path string) {
-		if len(addrs) == 0 {
+		if len(targets) == 0 {
 			return
 		}
 		if path == "" {
@@ -457,8 +746,8 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 		if stickySession {
 			nginxConf += "    ip_hash;\n"
 		}
-		for _, addr := range addrs {
-			nginxConf += fmt.Sprintf("    server %s:%d;\n", addr, targetPort)
+		for _, target := range targets {
+			nginxConf += fmt.Sprintf("    server %s:%d;\n", target.Address, targetPort)
 		}
 		nginxConf += "}\n"
 

@@ -4,5 +4,5 @@ nodes:
     version: 1.2.0-1055
 docker:
   dns: true
-  load-balancer: true
+  active-load-balancer: true
   use-dino-certs: true

@@ -12,6 +12,10 @@ func Parse(data []byte) (*Cluster, error) {
 		return nil, errors.Wrap(err, "yaml parsing failed")
 	}
 
+	if parsedDef.Docker._EnableLoadBalancer {
+		parsedDef.Docker.PassiveLoadBalancer = true
+	}
+
 	return parsedDef, nil
 }
 

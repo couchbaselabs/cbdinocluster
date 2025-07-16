@@ -26,10 +26,14 @@ type DockerCluster struct {
 	CbasMemoryMB     int `yaml:"cbas-memory,omitempty"`
 	EventingMemoryMB int `yaml:"eventing-memory,omitempty"`
 
-	Analytics          AnalyticsSettings `yaml:"analytics,omitempty"`
-	EnableDNS          bool              `yaml:"dns,omitempty"`
-	EnableLoadBalancer bool              `yaml:"load-balancer,omitempty"`
-	UseDinoCerts       bool              `yaml:"use-dino-certs,omitempty"`
+	Analytics           AnalyticsSettings `yaml:"analytics,omitempty"`
+	EnableDNS           bool              `yaml:"dns,omitempty"`
+	PassiveLoadBalancer bool              `yaml:"passive-load-balancer,omitempty"`
+	ActiveLoadBalancer  bool              `yaml:"active-load-balancer,omitempty"`
+	UseDinoCerts        bool              `yaml:"use-dino-certs,omitempty"`
+
+	// load-balancer is deprecated in favor of the specific load balancer settings
+	_EnableLoadBalancer bool `yaml:"load-balancer,omitempty"`
 }
 
 type AnalyticsSettings struct {

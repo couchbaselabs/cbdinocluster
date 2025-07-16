@@ -75,7 +75,7 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 		}
 
 		var imagePaths []string
-		if len(serverVersion) > 0 && (serverVersion[0] == '0' || serverVersion[0] == '1') {
+		if !isColumnarVersionEA(serverVersion) {
 			// For versions starting with 0 or 1, try the legacy columnar paths
 			imagePaths = []string{
 				fmt.Sprintf("ghcr.io/cb-vanilla/columnar:%s", serverVersion),
