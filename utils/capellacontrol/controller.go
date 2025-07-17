@@ -1366,7 +1366,16 @@ type UserInfo struct {
 }
 
 type UserInfo_Permission struct {
-	Buckets []string `json:"buckets"`
+	Buckets []UserInfo_PermissionBucket `json:"buckets"`
+}
+
+type UserInfo_PermissionBucket struct {
+	Name   string                              `json:"name"`
+	Scopes []CreateUserRequest_PermissionScope `json:"scopes,omitempty"`
+}
+
+type UserInfo_PermissionScope struct {
+	Name string `json:"name"`
 }
 
 type ListUsersResponse PagedResourceResponse[*UserInfo]
@@ -1390,13 +1399,23 @@ func (c *Controller) ListUsers(
 }
 
 type CreateUserRequest struct {
-	Name        string                                  `json:"name"`
-	Password    string                                  `json:"password"`
-	Permissions map[string]CreateUserRequest_Permission `json:"permissions"`
+	Name           string                                  `json:"name"`
+	Password       string                                  `json:"password"`
+	Permissions    map[string]CreateUserRequest_Permission `json:"permissions"`
+	CredentialType string                                  `json:"credentialType,omitempty"`
 }
 
 type CreateUserRequest_Permission struct {
-	Buckets []string `json:"buckets,omitempty"`
+	Buckets []CreateUserRequest_PermissionBucket `json:"buckets,omitempty"`
+}
+
+type CreateUserRequest_PermissionBucket struct {
+	Name   string                              `json:"name"`
+	Scopes []CreateUserRequest_PermissionScope `json:"scopes,omitempty"`
+}
+
+type CreateUserRequest_PermissionScope struct {
+	Name string `json:"name"`
 }
 
 func (c *Controller) CreateUser(
