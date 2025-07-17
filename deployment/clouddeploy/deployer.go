@@ -1869,9 +1869,10 @@ func (p *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deplo
 		}
 
 		err = p.mgr.Client.CreateUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateUserRequest{
-			Name:        opts.Username,
-			Password:    opts.Password,
-			Permissions: perms,
+			Name:           opts.Username,
+			Password:       opts.Password,
+			Permissions:    perms,
+			CredentialType: "basic",
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to create user")
