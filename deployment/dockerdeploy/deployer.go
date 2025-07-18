@@ -573,12 +573,13 @@ func (d *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 }
 
 func (d *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
-	controller, err := d.getController(ctx, clusterID)
+	agent, err := d.getAgent(ctx, clusterID, "")
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get cluster controller")
+		return nil, errors.Wrap(err, "failed to get cluster agent")
 	}
+	defer agent.Close()
 
-	resp, err := controller.Controller().ListBuckets(ctx)
+	resp, err := agent.GetAllBuckets(ctx, &cbmgmtx.GetAllBucketsOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list buckets")
 	}
@@ -623,10 +624,11 @@ func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucke
 }
 
 func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
-	controller, err := d.getController(ctx, clusterID)
+	agent, err := d.getAgent(ctx, clusterID, "")
 	if err != nil {
-		return errors.Wrap(err, "failed to get cluster controller")
+		return errors.Wrap(err, "failed to get cluster agent")
 	}
+	defer agent.Close()
 
 	ramQuotaMb := 256
 	if opts.RamQuotaMB > 0 {
@@ -638,38 +640,58 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		numReplicas = opts.NumReplicas
 	}
 
-	err = controller.Controller().CreateBucket(ctx, &clustercontrol.CreateBucketRequest{
-		Name:                   opts.Name,
-		BucketType:             "membase",
-		StorageBackend:         "couchstore",
-		AutoCompactionDefined:  false,
-		EvictionPolicy:         "valueOnly",
-		ThreadsNumber:          3,
-		ReplicaNumber:          numReplicas,
-		DurabilityMinLevel:     "none",
-		CompressionMode:        "passive",
-		MaxTTL:                 0,
-		ReplicaIndex:           0,
-		ConflictResolutionType: "seqno",
-		RamQuotaMB:             ramQuotaMb,
-		FlushEnabled:           opts.FlushEnabled,
+	err = agent.CreateBucket(ctx, &cbmgmtx.CreateBucketOptions{
+		BucketName: opts.Name,
+		BucketSettings: cbmgmtx.BucketSettings{
+			BucketType:             "membase",
+			StorageBackend:         "couchstore",
+			ReplicaIndex:           false,
+			ConflictResolutionType: "seqno",
+			MutableBucketSettings: cbmgmtx.MutableBucketSettings{
+				EvictionPolicy:     "valueOnly",
+				ReplicaNumber:      uint32(numReplicas),
+				DurabilityMinLevel: "none",
+				CompressionMode:    "passive",
+				MaxTTL:             0,
+				RAMQuotaMB:         uint64(ramQuotaMb),
+				FlushEnabled:       opts.FlushEnabled,
+			},
+		},
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create bucket")
+	}
+
+	err = agent.EnsureBucket(ctx, &gocbcorex.EnsureBucketOptions{
+		BucketName: opts.Name,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to ensure bucket")
 	}
 
 	return nil
 }
 
 func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
-	controller, err := d.getController(ctx, clusterID)
+	agent, err := d.getAgent(ctx, clusterID, "")
 	if err != nil {
-		return errors.Wrap(err, "failed to get cluster controller")
+		return errors.Wrap(err, "failed to get cluster agent")
 	}
+	defer agent.Close()
 
-	err = controller.Controller().DeleteBucket(ctx, bucketName)
+	agent.DeleteBucket(ctx, &cbmgmtx.DeleteBucketOptions{
+		BucketName: bucketName,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to delete bucket")
+	}
+
+	err = agent.EnsureBucket(ctx, &gocbcorex.EnsureBucketOptions{
+		BucketName:  bucketName,
+		WantMissing: true,
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to ensure bucket")
 	}
 
 	return nil
