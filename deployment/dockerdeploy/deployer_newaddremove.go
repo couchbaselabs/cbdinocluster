@@ -412,6 +412,14 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	username := "Administrator"
 	password := "password"
 
+	if def.Columnar {
+		kvMemoryQuotaMB = 0
+		indexMemoryQuotaMB = 0
+		ftsMemoryQuotaMB = 0
+		cbasMemoryQuotaMB = 1024
+		eventingMemoryQuotaMB = 0
+	}
+
 	hasKvService := slices.Contains(clusterServices, clusterdef.KvService)
 	hasIndexService := slices.Contains(clusterServices, clusterdef.IndexService)
 	hasFtsService := slices.Contains(clusterServices, clusterdef.SearchService)
@@ -456,23 +464,23 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 		password = def.Docker.Password
 	}
 
-	if kvMemoryQuotaMB < 256 && hasKvService {
+	if kvMemoryQuotaMB > 0 && kvMemoryQuotaMB < 256 && hasKvService {
 		d.logger.Warn("kv memory must be at least 256, adjusting it...")
 		kvMemoryQuotaMB = 256
 	}
-	if indexMemoryQuotaMB < 256 && hasIndexService {
+	if indexMemoryQuotaMB > 0 && indexMemoryQuotaMB < 256 && hasIndexService {
 		d.logger.Warn("index memory must be at least 256, adjusting it...")
 		indexMemoryQuotaMB = 256
 	}
-	if ftsMemoryQuotaMB < 256 && hasFtsService {
+	if ftsMemoryQuotaMB > 0 && ftsMemoryQuotaMB < 256 && hasFtsService {
 		d.logger.Warn("fts memory must be at least 256, adjusting it...")
 		ftsMemoryQuotaMB = 256
 	}
-	if cbasMemoryQuotaMB < 1024 && hasAnalyticsService {
+	if cbasMemoryQuotaMB > 0 && cbasMemoryQuotaMB < 1024 && hasAnalyticsService {
 		d.logger.Warn("cbas memory must be at least 1024, adjusting it...")
 		cbasMemoryQuotaMB = 1024
 	}
-	if eventingMemoryQuotaMB < 256 && hasEventingService {
+	if eventingMemoryQuotaMB > 0 && eventingMemoryQuotaMB < 256 && hasEventingService {
 		d.logger.Warn("eventing memory must be at least 256, adjusting it...")
 		eventingMemoryQuotaMB = 256
 	}
