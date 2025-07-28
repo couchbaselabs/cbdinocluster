@@ -33,10 +33,7 @@ environments.
 
 ### Installing
 
-- Download the latest release
-  ```
-  https://github.com/couchbaselabs/cbdinocluster/releases
-  ```
+- Download the latest [release](https://github.com/couchbaselabs/cbdinocluster/releases)
 
 - [Generate personal access token (classic)](https://github.com/settings/tokens) with `read:packages` to access
 non-public server builds on the GitHub Package Registry.
