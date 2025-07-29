@@ -67,7 +67,7 @@ func (c *PrivateEndpointsController) CreateVPCEndpoint(ctx context.Context, opts
 	c.Logger.Debug("got virtual machine data", zap.Any("vmData", vmData))
 
 	vmLocation := *vmData.Location
-	if strings.EqualFold(c.Region, vmLocation) {
+	if !strings.EqualFold(c.Region, vmLocation) {
 		return nil, errors.New("virtual machine is not in expected region")
 	}
 
