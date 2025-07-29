@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/oauth2/google"
 	"net"
 	"os"
 	"os/exec"
@@ -14,6 +13,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2/google"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -1330,7 +1331,7 @@ var initCmd = &cobra.Command{
 					capellaAzureRegion = flagCapellaAzureRegion
 				} else {
 					if capellaAzureRegion == "" && curConfig.Azure.Region != "" {
-						capellaAzureRegion = curConfig.Azure.Region
+						capellaAzureRegion = strings.ToLower(curConfig.Azure.Region)
 					}
 					if capellaAzureRegion == "" {
 						capellaAzureRegion = cbdcconfig.DEFAULT_AZURE_REGION
