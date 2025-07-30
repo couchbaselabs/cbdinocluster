@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -836,4 +837,38 @@ type DeleteTrustedCAOptions struct {
 
 func (c *Controller) DeleteTrustedCA(ctx context.Context, opts *DeleteTrustedCAOptions) error {
 	return c.doDelete(ctx, fmt.Sprintf("/pools/default/trustedCAs/%d", opts.ID), nil)
+}
+
+type HardFailOverOptions struct {
+	NodeOTPs    []string
+	AllowUnsafe bool
+}
+
+func (c *Controller) HardFailOver(ctx context.Context, opts *HardFailOverOptions) error {
+	form := make(url.Values)
+	form.Add("otpNode", strings.Join(opts.NodeOTPs, ","))
+	if opts.AllowUnsafe != false { //false is default
+		form.Add("allowUnsafe", strconv.FormatBool(opts.AllowUnsafe))
+	}
+
+	return c.doFormPost(ctx, "/controller/failOver", form, true, nil)
+}
+
+func (c *Controller) GracefulFailOver(ctx context.Context, nodeOTPs []string) error {
+	form := make(url.Values)
+	form.Add("otpNode", strings.Join(nodeOTPs, ","))
+	return c.doFormPost(ctx, "/controller/startGracefulFailover", form, true, nil)
+}
+
+type FailOverRecoveryType struct {
+	NodeOTPs     []string
+	RecoveryType string
+}
+
+func (c *Controller) SetRecovery(ctx context.Context, opts *FailOverRecoveryType) error {
+	form := make(url.Values)
+	form.Add("otpNode", strings.Join(opts.NodeOTPs, ","))
+	form.Add("recoveryType", opts.RecoveryType)
+
+	return c.doFormPost(ctx, "/controller/setRecoveryType", form, true, nil)
 }
