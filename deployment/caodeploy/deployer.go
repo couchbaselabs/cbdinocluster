@@ -768,3 +768,15 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
 	return errors.New("caodeploy does not support enabling data api")
 }
+
+func (d *Deployer) FailOverNode(ctx context.Context, clusterID string, nodeID string, failOverType deployment.FailOverType, allowUnsafe bool) error {
+	return errors.New("caodeploy does not support failing over a node")
+}
+
+func (d *Deployer) SetNodeRecovery(ctx context.Context, clusterID string, nodeID string, recoverType deployment.RecoveryType) error {
+	return errors.New("caodeploy does not support failover recovery")
+}
+
+func (d *Deployer) RebalanceCluster(ctx context.Context, clusterID string, nodesToEject []string) error {
+	return errors.New("caodeploy does not support rebalance cluster")
+}
