@@ -663,7 +663,8 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 	}
 
 	err = agent.EnsureBucket(ctx, &gocbcorex.EnsureBucketOptions{
-		BucketName: opts.Name,
+		BucketName:  opts.Name,
+		WantHealthy: true,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to ensure bucket")
