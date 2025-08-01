@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.16.30
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.212.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.51.1
-	github.com/couchbase/gocbcorex v0.0.0-20250731225837-b8167289d870
+	github.com/couchbase/gocbcorex v0.0.0-20250801191310-4cb6d4881bfd
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/docker/docker v28.1.1+incompatible
 	github.com/google/go-github/v53 v53.2.0
