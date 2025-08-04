@@ -2460,10 +2460,10 @@ func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployme
 	return nil, errors.New("clouddeploy does not support image search")
 }
 
-func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID string) error {
+func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeIDs []string) error {
 	return errors.New("clouddeploy does not support node pausing")
 }
 
-func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
+func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeIDs []string) error {
 	return errors.New("clouddeploy does not support node pausing")
 }
