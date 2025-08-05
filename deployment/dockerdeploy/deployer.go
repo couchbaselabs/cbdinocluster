@@ -1191,7 +1191,7 @@ func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeIDs []
 	for _, nodeContainerID := range nodeContainerIDs {
 		err := d.dockerCli.ContainerUnpause(ctx, nodeContainerID)
 		if err != nil {
-			return errors.Wrap(err, "failed to pause node")
+			return errors.Wrap(err, "failed to unpause node")
 		}
 	}
 
