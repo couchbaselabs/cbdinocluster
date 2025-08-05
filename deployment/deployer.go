@@ -150,6 +150,5 @@ type Deployer interface {
 	CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error
 	DropLink(ctx context.Context, columnarID, linkName string) error
 	EnableDataApi(ctx context.Context, clusterID string) error
-	StartCouchbase(ctx context.Context, clusterID string, nodes []string) error
-	StopCouchbase(ctx context.Context, clusterID string, nodes []string) error
+	KillCouchbase(ctx context.Context, clusterID string, nodes []string) error
 }

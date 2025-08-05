@@ -2479,3 +2479,7 @@ func (d *Deployer) SetNodeRecovery(ctx context.Context, clusterID string, nodeID
 func (d *Deployer) RebalanceCluster(ctx context.Context, clusterID string, nodesToEject []string) error {
 	return errors.New("clouddeploy does not support rebalance cluster")
 }
+
+func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodeIDs []string) error {
+	return errors.New("clouddeploy does not support killing couchbase process")
+}

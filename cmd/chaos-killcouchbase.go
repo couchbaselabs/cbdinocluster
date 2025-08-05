@@ -5,9 +5,9 @@ import (
 	"go.uber.org/zap"
 )
 
-var chaosStopCouchbaseCmd = &cobra.Command{
-	Use:   "stop-couchbase <cluster-id> [<node-id-or-ip> ...]",
-	Short: "Stop couchbase service on node/s present in the cluster.",
+var chaosKillCouchbaseCmd = &cobra.Command{
+	Use:   "kill-couchbase <cluster-id> [<node-id-or-ip> ...]",
+	Short: "Kills couchbase service on node/s present in the cluster.",
 	Args:  cobra.MinimumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
@@ -23,13 +23,13 @@ var chaosStopCouchbaseCmd = &cobra.Command{
 			nodeIds = append(nodeIds, node.GetID())
 		}
 
-		err := deployer.StopCouchbase(ctx, cluster.GetID(), nodeIds)
+		err := deployer.KillCouchbase(ctx, cluster.GetID(), nodeIds)
 		if err != nil {
-			logger.Fatal("failed to stop couchbase", zap.Error(err))
+			logger.Fatal("failed to kill couchbase", zap.Error(err))
 		}
 	},
 }
 
 func init() {
-	chaosCmd.AddCommand(chaosStopCouchbaseCmd)
+	chaosCmd.AddCommand(chaosKillCouchbaseCmd)
 }

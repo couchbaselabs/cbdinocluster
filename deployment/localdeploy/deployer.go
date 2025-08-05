@@ -271,3 +271,7 @@ func (d *Deployer) SetNodeRecovery(ctx context.Context, clusterID string, nodeID
 func (d *Deployer) RebalanceCluster(ctx context.Context, clusterID string, nodesToEject []string) error {
 	return errors.New("localdeploy does not support rebalance cluster")
 }
+
+func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodes []string) error {
+	return errors.New("localdeploy does not support killing couchbase process")
+}
