@@ -126,8 +126,8 @@ type Deployer interface {
 	CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error)
 	ListImages(ctx context.Context) ([]Image, error)
 	SearchImages(ctx context.Context, version string) ([]Image, error)
-	PauseNode(ctx context.Context, clusterID string, nodeID string) error
-	UnpauseNode(ctx context.Context, clusterID string, nodeID string) error
+	PauseNode(ctx context.Context, clusterID string, nodeIDs []string) error
+	UnpauseNode(ctx context.Context, clusterID string, nodeIDs []string) error
 	RedeployCluster(ctx context.Context, clusterID string) error
 	CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error
 	CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error

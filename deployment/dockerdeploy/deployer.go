@@ -1136,29 +1136,63 @@ func (d *Deployer) SearchImages(ctx context.Context, version string) ([]deployme
 	return d.imageProvider.SearchImages(ctx, version)
 }
 
-func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeID string) error {
-	node, err := d.getNode(ctx, clusterID, nodeID)
-	if err != nil {
-		return errors.Wrap(err, "failed to get node")
+func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeIDs []string) error {
+	var nodeContainerIDs []string
+	for _, nodeId := range nodeIDs {
+		node, err := d.getNode(ctx, clusterID, nodeId)
+		if err != nil {
+			return errors.Wrap(err, "failed to get node")
+		}
+
+		nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+	}
+	if len(nodeIDs) == 0 {
+		clusterInfo, err := d.getCluster(ctx, clusterID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get cluster info")
+		}
+
+		for _, node := range clusterInfo.Nodes {
+			nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+		}
 	}
 
-	err = d.dockerCli.ContainerPause(ctx, node.ContainerID)
-	if err != nil {
-		return errors.Wrap(err, "failed to pause container")
+	for _, nodeContainerID := range nodeContainerIDs {
+		err := d.dockerCli.ContainerPause(ctx, nodeContainerID)
+		if err != nil {
+			return errors.Wrap(err, "failed to pause node")
+		}
 	}
 
 	return nil
 }
 
-func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeID string) error {
-	node, err := d.getNode(ctx, clusterID, nodeID)
-	if err != nil {
-		return errors.Wrap(err, "failed to get node")
+func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeIDs []string) error {
+	var nodeContainerIDs []string
+	for _, nodeId := range nodeIDs {
+		node, err := d.getNode(ctx, clusterID, nodeId)
+		if err != nil {
+			return errors.Wrap(err, "failed to get node")
+		}
+
+		nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+	}
+	if len(nodeIDs) == 0 {
+		clusterInfo, err := d.getCluster(ctx, clusterID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get cluster info")
+		}
+
+		for _, node := range clusterInfo.Nodes {
+			nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+		}
 	}
 
-	err = d.dockerCli.ContainerUnpause(ctx, node.ContainerID)
-	if err != nil {
-		return errors.Wrap(err, "failed to unpause container")
+	for _, nodeContainerID := range nodeContainerIDs {
+		err := d.dockerCli.ContainerUnpause(ctx, nodeContainerID)
+		if err != nil {
+			return errors.Wrap(err, "failed to pause node")
+		}
 	}
 
 	return nil
