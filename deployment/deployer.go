@@ -92,6 +92,20 @@ const (
 	BlockNodeTrafficAll     BlockNodeTrafficType = "all"
 )
 
+type FailOverType string
+
+const (
+	HardFailOver     FailOverType = "hard"
+	GracefulFailOver FailOverType = "graceful"
+)
+
+type RecoveryType string
+
+const (
+	FullRecovery  RecoveryType = "full"
+	DeltaRecovery RecoveryType = "delta"
+)
+
 type Deployer interface {
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
 	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
@@ -101,6 +115,9 @@ type Deployer interface {
 	UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error
 	AddNode(ctx context.Context, clusterID string) (string, error)
 	RemoveNode(ctx context.Context, clusterID string, nodeID string) error
+	FailOverNode(ctx context.Context, clusterID string, nodeID string, failOverType FailOverType, allowUnsafe bool) error
+	SetNodeRecovery(ctx context.Context, clusterID string, nodeID string, recoveryType RecoveryType) error
+	RebalanceCluster(ctx context.Context, clusterID string, nodesToEject []string) error
 	RemoveCluster(ctx context.Context, clusterID string) error
 	RemoveAll(ctx context.Context) error
 	Cleanup(ctx context.Context) error

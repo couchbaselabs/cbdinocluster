@@ -2467,3 +2467,15 @@ func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeIDs []st
 func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeIDs []string) error {
 	return errors.New("clouddeploy does not support node pausing")
 }
+
+func (d *Deployer) FailOverNode(ctx context.Context, clusterID string, nodeID string, failOverType deployment.FailOverType, allowUnsafe bool) error {
+	return errors.New("clouddeploy does not support failing over a node")
+}
+
+func (d *Deployer) SetNodeRecovery(ctx context.Context, clusterID string, nodeID string, recoverType deployment.RecoveryType) error {
+	return errors.New("clouddeploy does not support failover recovery")
+}
+
+func (d *Deployer) RebalanceCluster(ctx context.Context, clusterID string, nodesToEject []string) error {
+	return errors.New("clouddeploy does not support rebalance cluster")
+}

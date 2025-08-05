@@ -1198,6 +1198,109 @@ func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeIDs []
 	return nil
 }
 
+func (d *Deployer) RebalanceCluster(ctx context.Context, clusterID string, nodeIDsToEject []string) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get controller for cluster")
+	}
+
+	var OTPs []string
+	for _, nodeID := range nodeIDsToEject {
+		otp, err := d.getNodeOTP(ctx, clusterID, nodeID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get OTP for node")
+		}
+		OTPs = append(OTPs, otp)
+	}
+
+	return controller.Rebalance(ctx, OTPs)
+}
+
+func (d *Deployer) FailOverNode(ctx context.Context, clusterID string, nodeID string, failOverType deployment.FailOverType, allowUnsafe bool) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get controller for cluster")
+	}
+
+	otp, err := d.getNodeOTP(ctx, clusterID, node.NodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get OTP for node")
+	}
+
+	if failOverType == deployment.HardFailOver {
+		opts := &clustercontrol.HardFailOverOptions{
+			NodeOTPs:    []string{otp},
+			AllowUnsafe: allowUnsafe,
+		}
+		err := controller.Controller().HardFailOver(ctx, opts)
+		if err != nil {
+			return errors.Wrap(err, "hard failover failed")
+		}
+	} else if failOverType == deployment.GracefulFailOver {
+		err := controller.Controller().GracefulFailOver(ctx, []string{otp})
+		if err != nil {
+			return errors.Wrap(err, "graceful failover start failed")
+		}
+
+		d.logger.Info("waiting for rebalance completion started by graceful failover")
+
+		err = controller.WaitForNoRunningTasks(ctx)
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for tasks to complete")
+		}
+	}
+	return nil
+}
+
+func (d *Deployer) SetNodeRecovery(ctx context.Context, clusterID string, nodeID string, recoveryType deployment.RecoveryType) error {
+	node, err := d.getNode(ctx, clusterID, nodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get node")
+	}
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get cluster info")
+	}
+
+	otp, err := d.getNodeOTP(ctx, clusterID, node.NodeID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get OTP for node")
+	}
+
+	opts := &clustercontrol.FailOverRecoveryType{
+		NodeOTPs:     []string{otp},
+		RecoveryType: string(recoveryType),
+	}
+
+	err = controller.Controller().SetRecovery(ctx, opts)
+	if err != nil {
+		return errors.Wrap(err, "set recovery failed")
+	}
+	return nil
+}
+
+func (d *Deployer) getNodeOTP(ctx context.Context, clusterID string, nodeId string) (string, error) {
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster info")
+	}
+	clusterInfoEx, err := d.getClusterInfoEx(ctx, clusterInfo)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get extended cluster info")
+	}
+
+	for _, nodeEx := range clusterInfoEx.NodesEx {
+		if nodeId == nodeEx.NodeID {
+			return nodeEx.OTPNode, nil
+		}
+	}
+	return "", nil
+}
+
 func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
 	return errors.New("docker deploy does not support redeploy cluster")
 }
