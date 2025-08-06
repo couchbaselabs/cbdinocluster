@@ -182,3 +182,49 @@ func (d *CertAuthority) MakeServerCertificate(
 
 	return certPem.Bytes(), privKeyPem.Bytes(), nil
 }
+
+func (d *CertAuthority) MakeClientCertificate(
+	username string,
+) ([]byte, []byte, error) {
+	rnd := newSeededRand(username)
+
+	privKey, err := rsa.GenerateKey(&certRandReader{rnd}, 4096)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	subjectKeyId := makeSubjectKeyId(privKey)
+	authorityKeyId := d.SubjectKeyId
+
+	cert := &x509.Certificate{
+		SerialNumber: big.NewInt(3),
+		Subject: pkix.Name{
+			CommonName: "dinoclientcert-" + username,
+		},
+		EmailAddresses: []string{username + "@dinocert.com"},
+		NotBefore:      time.Date(2025, 01, 01, 00, 00, 00, 00, time.UTC),
+		NotAfter:       time.Date(2035, 01, 01, 00, 00, 00, 00, time.UTC),
+		KeyUsage:       x509.KeyUsageDigitalSignature,
+		SubjectKeyId:   subjectKeyId,
+		AuthorityKeyId: authorityKeyId,
+	}
+
+	certBytes, err := x509.CreateCertificate(nil, cert, d.Cert, &privKey.PublicKey, d.PrivKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	certPem := new(bytes.Buffer)
+	pem.Encode(certPem, &pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certBytes,
+	})
+
+	privKeyPem := new(bytes.Buffer)
+	pem.Encode(privKeyPem, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privKey),
+	})
+
+	return certPem.Bytes(), privKeyPem.Bytes(), nil
+}

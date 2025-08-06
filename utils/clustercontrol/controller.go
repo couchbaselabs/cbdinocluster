@@ -847,7 +847,7 @@ type HardFailOverOptions struct {
 func (c *Controller) HardFailOver(ctx context.Context, opts *HardFailOverOptions) error {
 	form := make(url.Values)
 	form.Add("otpNode", strings.Join(opts.NodeOTPs, ","))
-	if opts.AllowUnsafe != false { //false is default
+	if opts.AllowUnsafe {
 		form.Add("allowUnsafe", strconv.FormatBool(opts.AllowUnsafe))
 	}
 
@@ -871,4 +871,19 @@ func (c *Controller) SetRecovery(ctx context.Context, opts *FailOverRecoveryType
 	form.Add("recoveryType", opts.RecoveryType)
 
 	return c.doFormPost(ctx, "/controller/setRecoveryType", form, true, nil)
+}
+
+type SetupClientCertAuthOptions struct {
+	State    string                              `json:"state"` // "enable" or "disable"
+	Prefixes []SetupClientCertAuthOptions_Prefix `json:"prefixes,omitempty"`
+}
+
+type SetupClientCertAuthOptions_Prefix struct {
+	Delimiter string `json:"delimiter"`
+	Prefix    string `json:"prefix"`
+	Path      string `json:"path"`
+}
+
+func (c *Controller) SetupClientCertAuth(ctx context.Context, opts *SetupClientCertAuthOptions) error {
+	return c.doJsonReq(ctx, "POST", "/settings/clientCertAuth", opts, true, nil)
 }

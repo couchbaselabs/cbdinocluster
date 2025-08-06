@@ -516,6 +516,29 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 		return nil, errors.Wrap(err, "failed to setup cluster")
 	}
 
+	if def.Docker.UseDinoCerts {
+		d.logger.Info("enabling client certificate authentication")
+
+		nodeCtrl := clustercontrol.NodeManager{
+			Logger:   d.logger,
+			Endpoint: fmt.Sprintf("http://%s:8091", thisCluster.Nodes[0].IPAddress),
+		}
+
+		err = nodeCtrl.Controller().SetupClientCertAuth(ctx, &clustercontrol.SetupClientCertAuthOptions{
+			State: "enable",
+			Prefixes: []clustercontrol.SetupClientCertAuthOptions_Prefix{
+				{
+					Delimiter: "@",
+					Prefix:    "",
+					Path:      "san.email",
+				},
+			},
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to setup client certificate authentication")
+		}
+	}
+
 	leaveNodesAfterReturn = true
 	return thisCluster, nil
 }
