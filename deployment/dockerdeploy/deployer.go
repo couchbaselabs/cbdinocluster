@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 	"io"
 	"os"
 	"path"
@@ -1299,6 +1301,74 @@ func (d *Deployer) getNodeOTP(ctx context.Context, clusterID string, nodeId stri
 		}
 	}
 	return "", nil
+}
+
+func (d *Deployer) execInContainer(ctx context.Context, containerID string, cmd []string) error {
+	execOpts := container.ExecOptions{
+		Cmd:          cmd,
+		AttachStdout: true,
+		AttachStderr: true,
+		Tty:          false,
+		Privileged:   false,
+	}
+
+	execResp, err := d.dockerCli.ContainerExecCreate(ctx, containerID, execOpts)
+	if err != nil {
+		return fmt.Errorf("ContainerExecCreate failed: %w", err)
+	}
+
+	attachResp, err := d.dockerCli.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	if err != nil {
+		return fmt.Errorf("ContainerExecAttach failed: %w", err)
+	}
+	defer attachResp.Close()
+
+	_, err = stdcopy.StdCopy(os.Stdout, os.Stderr, attachResp.Reader)
+	if err != nil {
+		return fmt.Errorf("copying output failed: %w", err)
+	}
+
+	return nil
+}
+
+/*
+KillCouchbase stops the couchbase-server process on the specified nodes.
+The runSv supervisor will automatically restart couchbase-server within 10 seconds.
+This method is used to simulate a stop and restart of the couchbase server.
+*/
+func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodeIDs []string) error {
+	var nodeContainerIDs []string
+
+	for _, nodeId := range nodeIDs {
+		node, err := d.getNode(ctx, clusterID, nodeId)
+		if err != nil {
+			return errors.Wrap(err, "failed to get node")
+		}
+
+		nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+	}
+	if len(nodeIDs) == 0 {
+		clusterInfo, err := d.getCluster(ctx, clusterID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get cluster info")
+		}
+
+		for _, node := range clusterInfo.Nodes {
+			nodeContainerIDs = append(nodeContainerIDs, node.ContainerID)
+		}
+	}
+
+	for _, nodeContainerID := range nodeContainerIDs {
+		d.logger.Info("killing couchbase process on node",
+			zap.String("containerID", nodeContainerID))
+
+		err := d.execInContainer(ctx, nodeContainerID, []string{"pkill", "-f", "couchbase-server"})
+		if err != nil {
+			return errors.Wrapf(err, "failed to kill couchbase process on node %s", nodeContainerID)
+		}
+	}
+
+	return nil
 }
 
 func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
