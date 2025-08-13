@@ -20,8 +20,6 @@ This command is useful in case where a Couchbase server may be unexpectedly stop
 It allows observing behavior during the transition period when the server is restarting, 
 which can reveal issues with connection handling, retries, and error recovery.
 
-```
-
 ### Kill Couchbase Service
 
 ```
