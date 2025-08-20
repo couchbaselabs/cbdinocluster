@@ -151,4 +151,5 @@ type Deployer interface {
 	DropLink(ctx context.Context, columnarID, linkName string) error
 	EnableDataApi(ctx context.Context, clusterID string) error
 	KillCouchbase(ctx context.Context, clusterID string, nodes []string) error
+	KillSockets(ctx context.Context, clusterID string, nodeIDs []string, services []string) error
 }

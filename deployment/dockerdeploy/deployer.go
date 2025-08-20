@@ -2,13 +2,14 @@ package dockerdeploy
 
 import (
 	"archive/tar"
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"io"
 	"os"
+	"os/exec"
 	"path"
 	"strings"
 	"time"
@@ -19,7 +20,9 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -682,7 +685,7 @@ func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 	}
 	defer agent.Close()
 
-	agent.DeleteBucket(ctx, &cbmgmtx.DeleteBucketOptions{
+	err = agent.DeleteBucket(ctx, &cbmgmtx.DeleteBucketOptions{
 		BucketName: bucketName,
 	})
 	if err != nil {
@@ -1365,6 +1368,121 @@ func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodeIDs 
 		err := d.execInContainer(ctx, nodeContainerID, []string{"pkill", "-f", "couchbase-server"})
 		if err != nil {
 			return errors.Wrapf(err, "failed to kill couchbase process on node %s", nodeContainerID)
+		}
+	}
+
+	return nil
+}
+
+func (d *Deployer) execSocketStatisticsOnHost(args []string) error {
+
+	if _, err := exec.LookPath("sudo"); err != nil {
+		return errors.New("sudo executable not found")
+	}
+
+	if _, err := exec.LookPath("ss"); err != nil {
+		return errors.New("ss executable not found")
+	}
+
+	args = append([]string{"ss"}, args...)
+
+	d.logger.Debug("executing cmd on the host",
+		zap.Strings("cmd", append([]string{"sudo"}, args...)))
+
+	cmd := exec.Command("sudo", args...)
+
+	output, err := cmd.CombinedOutput()
+
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	for scanner.Scan() {
+		line := scanner.Text()
+		d.logger.Debug("host exec output", zap.String("text", line))
+	}
+	if err != nil {
+		return errors.Wrap(err, "failed to execute ss command on the host")
+	}
+
+	return nil
+}
+
+func (d *Deployer) KillSockets(ctx context.Context, clusterID string, nodeIDs []string, services []string) error {
+	type nodeInfo struct {
+		containerID string
+		ipAddress   string
+		privileged  bool
+	}
+
+	var nodes []nodeInfo
+	for _, nodeId := range nodeIDs {
+		node, err := d.getNode(ctx, clusterID, nodeId)
+		if err != nil {
+			return errors.Wrap(err, "failed to get node")
+		}
+
+		nodes = append(nodes, nodeInfo{
+			containerID: node.ContainerID,
+			ipAddress:   node.IPAddress,
+			privileged:  node.Privileged,
+		})
+	}
+	if len(nodeIDs) == 0 {
+		clusterInfo, err := d.getCluster(ctx, clusterID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get cluster info")
+		}
+
+		for _, node := range clusterInfo.Nodes {
+			nodes = append(nodes, nodeInfo{
+				containerID: node.ContainerID,
+				ipAddress:   node.IPAddress,
+				privileged:  node.Privileged,
+			})
+		}
+	}
+
+	ports, err := clusterdef.ServicesToPorts(services)
+	if err != nil {
+		return errors.Wrap(err, "failed to map services to ports")
+	}
+
+	for _, node := range nodes {
+		d.logger.Info("killing couchbase sockets on node",
+			zap.String("containerID", node.containerID),
+			zap.String("ipAddress", node.ipAddress),
+			zap.Any("services", services),
+			zap.Any("ports", ports))
+
+		addressPredicate := "dst"
+		portPredicate := "dport"
+		if node.privileged {
+			// If the container is running in privileged mode, we can terminate the socket
+			// from within the container. In this case, the filter predicates will be
+			// applied in the reverse direction.
+			addressPredicate = "src"
+			portPredicate = "sport"
+		}
+
+		command := []string{
+			"--tcp",
+			"--kill",
+			addressPredicate, node.ipAddress,
+			"and", "(",
+		}
+		for i, port := range ports {
+			command = append(command, portPredicate, fmt.Sprintf("%d", port))
+			if i < len(ports)-1 {
+				command = append(command, "or")
+			}
+		}
+		command = append(command, ")")
+
+		if node.privileged {
+			err = d.controller.execSocketStatistics(ctx, node.containerID, command)
+		} else {
+			err = d.execSocketStatisticsOnHost(command)
+		}
+		if err != nil {
+			return errors.Wrapf(err, "failed to kill couchbase sockets on node %s", node.containerID)
 		}
 	}
 

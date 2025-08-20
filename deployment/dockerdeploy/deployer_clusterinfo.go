@@ -51,6 +51,7 @@ type nodeInfo struct {
 	IPAddress            string
 	DnsName              string
 	InitialServerVersion string
+	Privileged           bool
 }
 
 func (i nodeInfo) IsClusterNode() bool {
@@ -113,6 +114,7 @@ func (d *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 			IPAddress:            node.IPAddress,
 			DnsName:              node.DnsName,
 			InitialServerVersion: node.InitialServerVersion,
+			Privileged:           node.Privileged,
 		}
 		cluster.Nodes = append(cluster.Nodes, nodeInfo)
 

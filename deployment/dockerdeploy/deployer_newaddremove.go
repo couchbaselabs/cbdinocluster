@@ -277,6 +277,7 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 				Expiry:             def.Expiry,
 				EnvVars:            nodeGrp.Docker.EnvVars,
 				UseDinoCerts:       def.Docker.UseDinoCerts,
+				Privileged:         def.Docker.Privileged,
 			}
 
 			nodeOpts = append(nodeOpts, deployOpts)

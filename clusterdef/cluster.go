@@ -20,6 +20,8 @@ type DockerCluster struct {
 	Username string `yaml:"username,omitempty"`
 	Password string `yaml:"password,omitempty"`
 
+	Privileged bool `yaml:"privileged,omitempty"`
+
 	KvMemoryMB       int `yaml:"kv-memory,omitempty"`
 	IndexMemoryMB    int `yaml:"index-memory,omitempty"`
 	FtsMemoryMB      int `yaml:"fts-memory,omitempty"`

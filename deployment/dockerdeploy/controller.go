@@ -43,6 +43,7 @@ type ContainerInfo struct {
 	IPAddress            string
 	InitialServerVersion string
 	UsingDinoCerts       bool
+	Privileged           bool
 }
 
 func (c *Controller) parseContainerInfo(container container.Summary) *ContainerInfo {
@@ -55,6 +56,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *ContainerI
 	purpose := container.Labels["com.couchbase.dyncluster.purpose"]
 	initialServerVersion := container.Labels["com.couchbase.dyncluster.initial_server_version"]
 	usingDinoCerts := container.Labels["com.couchbase.dyncluster.using_dino_certs"]
+	privileged := container.Labels["com.couchbase.dyncluster.privileged"]
 
 	// If there is no cluster ID specified, this is not a cbdyncluster container
 	if clusterID == "" {
@@ -74,6 +76,11 @@ func (c *Controller) parseContainerInfo(container container.Summary) *ContainerI
 	var usingDinoCertsBool bool
 	if usingDinoCerts != "" {
 		usingDinoCertsBool = true
+	}
+
+	var privilegedBool bool
+	if privileged != "" {
+		privilegedBool = true
 	}
 
 	var dnsSuffix string
@@ -99,6 +106,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *ContainerI
 		IPAddress:            pickedNetwork.IPAddress,
 		InitialServerVersion: initialServerVersion,
 		UsingDinoCerts:       usingDinoCertsBool,
+		Privileged:           privilegedBool,
 	}
 }
 
@@ -916,6 +924,7 @@ type DeployNodeOptions struct {
 	DnsSuffix          string
 	EnvVars            map[string]string
 	UseDinoCerts       bool
+	Privileged         bool
 }
 
 func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*ContainerInfo, error) {
@@ -946,6 +955,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*C
 		usingDinoCerts = "true"
 	}
 
+	privileged := ""
+	if def.Privileged {
+		privileged = "true"
+	}
+
 	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
 		Image: def.Image.ImagePath,
 		Labels: map[string]string{
@@ -956,11 +970,13 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*C
 			"com.couchbase.dyncluster.node_id":                nodeID,
 			"com.couchbase.dyncluster.initial_server_version": def.ImageServerVersion,
 			"com.couchbase.dyncluster.using_dino_certs":       usingDinoCerts,
+			"com.couchbase.dyncluster.privileged":             privileged,
 		},
 		// same effect as ntp
 		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
 		Env:     envVars,
 	}, &container.HostConfig{
+		Privileged:  def.Privileged,
 		AutoRemove:  true,
 		NetworkMode: container.NetworkMode(c.NetworkName),
 		CapAdd:      []string{"NET_ADMIN"},
@@ -1124,6 +1140,32 @@ func (c *Controller) execIptables(ctx context.Context, containerID string, args 
 		err = c.execCmd(ctx, containerID, append([]string{"iptables"}, args...))
 		if err != nil {
 			return errors.Wrap(err, "failed to execute iptables command")
+		}
+	}
+
+	return nil
+}
+
+func (c *Controller) execSocketStatistics(ctx context.Context, containerID string, args []string) error {
+	err := c.execCmd(ctx, containerID, append([]string{"ss"}, args...))
+	if err != nil {
+		// if the ss command fails initially, we attempt to install iproute2 first
+		c.Logger.Debug("failed to execute ss, attempting to install")
+
+		err := c.execCmd(ctx, containerID, []string{"apt-get", "update"})
+		if err != nil {
+			return errors.Wrap(err, "failed to update apt")
+		}
+
+		err = c.execCmd(ctx, containerID, []string{"apt-get", "-y", "install", "iproute2"})
+		if err != nil {
+			return errors.Wrap(err, "failed to install iproute2")
+		}
+
+		// try it again after installing iproute2
+		err = c.execCmd(ctx, containerID, append([]string{"ss"}, args...))
+		if err != nil {
+			return errors.Wrap(err, "failed to execute ss command")
 		}
 	}
 

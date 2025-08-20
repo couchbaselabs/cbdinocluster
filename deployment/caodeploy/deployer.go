@@ -784,3 +784,8 @@ func (d *Deployer) RebalanceCluster(ctx context.Context, clusterID string, nodes
 func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodes []string) error {
 	return errors.New("caodeploy does not support killing couchbase process")
 }
+
+func (d *Deployer) KillSockets(ctx context.Context, clusterID string, nodeIDs []string, services []string) error {
+	return errors.New("caodeploy does not support killing couchbase sockets")
+}
+
