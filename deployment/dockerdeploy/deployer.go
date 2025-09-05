@@ -5,13 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"io"
 	"os"
 	"path"
 	"strings"
 	"time"
+
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/couchbase/gocbcorex"
@@ -288,12 +289,12 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 	// can use to actually manipulate the cluster
 	var foundNode *nodeInfoEx
 	for _, clusterNode := range clusterInfoEx.NodesEx {
-		if clusterNode.ContainerID == nodeID {
+		if clusterNode.NodeID == nodeID {
 			foundNode = clusterNode
 		}
 	}
 	if foundNode == nil {
-		return errors.Wrap(err, "failed to find deployed node")
+		return errors.New("failed to find deployed node")
 	}
 
 	_, err = d.addRemoveNodes(ctx, clusterInfoEx, nil, []*nodeInfoEx{
