@@ -244,8 +244,9 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	leaveNodesAfterReturn := false
 	cleanupNodes := func() {
 		if !leaveNodesAfterReturn {
-			for _, node := range nodes {
-				if node != nil {
+			allNodes, _ := d.controller.ListNodes(ctx)
+			for _, node := range allNodes {
+				if node.ClusterID == clusterID {
 					d.controller.RemoveNode(ctx, node.ContainerID)
 				}
 			}
@@ -318,8 +319,6 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	if err != nil {
 		return nil, errors.New("failed to find new cluster after deployment")
 	}
-
-	leaveNodesAfterReturn = true
 
 	if clusterCa != nil {
 		d.logger.Info("setting up dinocert certificates", zap.String("cluster", clusterID))
