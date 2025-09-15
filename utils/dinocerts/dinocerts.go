@@ -127,6 +127,27 @@ func GetRootCertAuthority() (*CertAuthority, error) {
 	return rootCertAuthority, nil
 }
 
+func (d *CertAuthority) GetRS256SigningKeys() (*rsa.PublicKey, *rsa.PrivateKey, error) {
+	// we just re-use the existing certificate keys since they are
+	// already RSA 4096 keys.
+	return &d.PrivKey.PublicKey, d.PrivKey, nil
+}
+
+func (d *CertAuthority) GetRS256PublicKeyPem() ([]byte, error) {
+	pubKey, _, err := d.GetRS256SigningKeys()
+	if err != nil {
+		return nil, err
+	}
+
+	publicKeyPem := new(bytes.Buffer)
+	pem.Encode(publicKeyPem, &pem.Block{
+		Type:  "RSA PUBLIC KEY",
+		Bytes: x509.MarshalPKCS1PublicKey(pubKey),
+	})
+
+	return publicKeyPem.Bytes(), nil
+}
+
 func (d *CertAuthority) MakeIntermediaryCA(
 	seed string,
 ) (*CertAuthority, error) {

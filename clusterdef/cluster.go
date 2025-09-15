@@ -31,6 +31,7 @@ type DockerCluster struct {
 	PassiveLoadBalancer bool              `yaml:"passive-load-balancer,omitempty"`
 	ActiveLoadBalancer  bool              `yaml:"active-load-balancer,omitempty"`
 	UseDinoCerts        bool              `yaml:"use-dino-certs,omitempty"`
+	EnableJwt           bool              `yaml:"jwt,omitempty"`
 
 	// load-balancer is deprecated in favor of the specific load balancer settings
 	_EnableLoadBalancer bool `yaml:"load-balancer,omitempty"`
