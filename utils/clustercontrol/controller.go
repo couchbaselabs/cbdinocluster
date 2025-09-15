@@ -887,3 +887,28 @@ type SetupClientCertAuthOptions_Prefix struct {
 func (c *Controller) SetupClientCertAuth(ctx context.Context, opts *SetupClientCertAuthOptions) error {
 	return c.doJsonReq(ctx, "POST", "/settings/clientCertAuth", opts, true, nil)
 }
+
+type SetupJwtAuthOptions struct {
+	Enabled bool                     `json:"enabled"`
+	Issuers []SetupJwtOptions_Issuer `json:"issuers,omitempty"`
+}
+
+type SetupJwtOptions_Issuer struct {
+	Name                 string   `json:"name"`
+	SigningAlgorithm     string   `json:"signingAlgorithm"`
+	AudClaim             string   `json:"audClaim"`
+	AudienceHandling     string   `json:"audienceHandling"`
+	Audiences            []string `json:"audiences"`
+	SubClaim             string   `json:"subClaim"`
+	RolesClaim           string   `json:"rolesClaim"`
+	RolesMaps            []string `json:"rolesMaps,omitempty"`
+	PublicKeySource      string   `json:"publicKeySource"`
+	PublicKey            string   `json:"publicKey,omitempty"`
+	JwksUri              string   `json:"jwksUri,omitempty"`
+	JwksUriTlsVerifyPeer bool     `json:"jwksUriTlsVerifyPeer,omitempty"`
+	JitProvisioning      bool     `json:"jitProvisioning,omitempty"`
+}
+
+func (c *Controller) SetupJwtAuth(ctx context.Context, opts *SetupJwtAuthOptions) error {
+	return c.doJsonReq(ctx, "PUT", "/settings/jwt", opts, true, nil)
+}

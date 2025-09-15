@@ -538,6 +538,47 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 		}
 	}
 
+	if def.Docker.EnableJwt {
+		d.logger.Info("enabling jwt authentication")
+
+		nodeCtrl := clustercontrol.NodeManager{
+			Logger:   d.logger,
+			Endpoint: fmt.Sprintf("http://%s:8091", thisCluster.Nodes[0].IPAddress),
+		}
+
+		rootCa, err := dinocerts.GetRootCertAuthority()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get dinocluster cert authority")
+		}
+
+		pubKeyPem, err := rootCa.GetRS256PublicKeyPem()
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get RS256 public key")
+		}
+
+		err = nodeCtrl.Controller().SetupJwtAuth(ctx, &clustercontrol.SetupJwtAuthOptions{
+			Enabled: true,
+			Issuers: []clustercontrol.SetupJwtOptions_Issuer{
+				{
+					Name:             "dino",
+					SigningAlgorithm: "RS256",
+					AudienceHandling: "all",
+					SubClaim:         "sub",
+					AudClaim:         "aud",
+					Audiences:        []string{"client"},
+					RolesClaim:       "roles",
+					RolesMaps:        []string{"(.*) \\1"},
+					PublicKeySource:  "pem",
+					PublicKey:        string(pubKeyPem),
+					JitProvisioning:  true,
+				},
+			},
+		})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to setup jwt authentication")
+		}
+	}
+
 	leaveNodesAfterReturn = true
 	return thisCluster, nil
 }
