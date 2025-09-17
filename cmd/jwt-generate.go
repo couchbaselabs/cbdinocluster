@@ -27,6 +27,19 @@ var jwtGenerateCmd = &cobra.Command{
 		username := args[0]
 		canRead, _ := cmd.Flags().GetBool("can-read")
 		canWrite, _ := cmd.Flags().GetBool("can-write")
+		expiresInStr, _ := cmd.Flags().GetString("expires-in")
+
+		var expiresInClaim *jwt.NumericDate
+		if expiresInStr == "none" {
+			// leave the expiresInClaim as nil
+		} else {
+			expiresIn, err := time.ParseDuration(expiresInStr)
+			if err != nil {
+				logger.Fatal("failed to parse expires-in duration", zap.Error(err))
+			}
+
+			expiresInClaim = jwt.NewNumericDate(time.Now().Add(expiresIn))
+		}
 
 		var roles []string
 		if canWrite {
@@ -57,7 +70,7 @@ var jwtGenerateCmd = &cobra.Command{
 				Issuer:    "dino",
 				Subject:   username,
 				Audience:  []string{"client"},
-				ExpiresAt: jwt.NewNumericDate(time.Now().Add(365 * 24 * time.Hour)),
+				ExpiresAt: expiresInClaim,
 			},
 		})
 
@@ -74,4 +87,5 @@ func init() {
 	jwtCmd.AddCommand(jwtGenerateCmd)
 	jwtGenerateCmd.Flags().Bool("can-read", true, "Whether the token can read data")
 	jwtGenerateCmd.Flags().Bool("can-write", true, "Whether the token can write data")
+	jwtGenerateCmd.Flags().String("expires-in", "8766h", "How long before the token expires (e.g. 24h, 30m, 10s, -1h) or 'none' for no expiration claim")
 }
