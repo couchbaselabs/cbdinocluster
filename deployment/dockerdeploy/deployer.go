@@ -638,11 +638,6 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		ramQuotaMb = opts.RamQuotaMB
 	}
 
-	numReplicas := 1
-	if opts.NumReplicas > 1 {
-		numReplicas = opts.NumReplicas
-	}
-
 	err = agent.CreateBucket(ctx, &cbmgmtx.CreateBucketOptions{
 		BucketName: opts.Name,
 		BucketSettings: cbmgmtx.BucketSettings{
@@ -652,7 +647,7 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 			ConflictResolutionType: "seqno",
 			MutableBucketSettings: cbmgmtx.MutableBucketSettings{
 				EvictionPolicy:     "valueOnly",
-				ReplicaNumber:      uint32(numReplicas),
+				ReplicaNumber:      uint32(opts.NumReplicas),
 				DurabilityMinLevel: "none",
 				CompressionMode:    "passive",
 				MaxTTL:             0,
