@@ -113,6 +113,22 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	}
 
 	if def.Columnar {
+		columnarEACount := 0
+		for _, nodeGrp := range def.NodeGroups {
+			versionInfo, err := versionident.Identify(ctx, nodeGrp.Version)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to identify version")
+			}
+
+			if isColumnarVersionEA(versionInfo.Version) {
+				columnarEACount++
+			}
+		}
+
+		if columnarEACount > 0 && columnarEACount != len(def.NodeGroups) {
+			return nil, errors.New("cannot mix EA and non-EA versions in columnar clusters")
+		}
+
 		d.logger.Info("deploying mock s3 for blob storage")
 
 		d.logger.Debug("deploying s3mock container")
@@ -144,12 +160,15 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 		d.logger.Info("s3 mock is ready")
 
 		def.Docker.Analytics.BlobStorage = clusterdef.AnalyticsBlobStorageSettings{
-			Region:         "local",
-			Bucket:         "columnar",
-			Scheme:         "s3",
-			Endpoint:       fmt.Sprintf("http://%s:9090", node.IPAddress),
-			AnonymousAuth:  true,
-			ForcePathStyle: true,
+			Region:        "local",
+			Bucket:        "columnar",
+			Scheme:        "s3",
+			Endpoint:      fmt.Sprintf("http://%s:9090", node.IPAddress),
+			AnonymousAuth: true,
+		}
+
+		if columnarEACount > 0 {
+			def.Docker.Analytics.BlobStorage.ForcePathStyle = true
 		}
 	}
 
