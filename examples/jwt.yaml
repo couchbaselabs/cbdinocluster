@@ -1,5 +1,5 @@
 nodes:
   - count: 3
-    version: 8.1.0-1064
+    version: 8.1.0-1087
 docker:
   jwt: true
