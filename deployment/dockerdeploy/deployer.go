@@ -649,7 +649,7 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 				EvictionPolicy:     "valueOnly",
 				ReplicaNumber:      uint32(opts.NumReplicas),
 				DurabilityMinLevel: "none",
-				CompressionMode:    "passive",
+				CompressionMode:    "",
 				MaxTTL:             0,
 				RAMQuotaMB:         uint64(ramQuotaMb),
 				FlushEnabled:       opts.FlushEnabled,
