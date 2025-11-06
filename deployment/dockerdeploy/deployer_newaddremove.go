@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/couchbase/gocbcorex/cbhttpx"
+	"github.com/couchbase/gocbcorex/cbmgmtx"
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/dinocerts"
@@ -794,6 +796,60 @@ func (d *Deployer) addRemoveNodes(
 		thisCluster, err := d.getCluster(ctx, clusterInfo.ClusterID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get post-rebalance cluster info")
+		}
+
+		// Wait until all nodes in the cluster acknowledge each other
+		d.logger.Info("waiting for all nodes to acknowledge each other")
+
+		// First we fetch all the OTPs for nodes we know about in cbdinocluster
+		thisClusterEx, err := d.getClusterInfoEx(ctx, thisCluster)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get post-rebalance extended cluster info")
+		}
+
+		allNodeOtps := make([]string, 0, len(thisClusterEx.NodesEx))
+		for _, node := range thisClusterEx.NodesEx {
+			allNodeOtps = append(allNodeOtps, node.OTPNode)
+		}
+		slices.Sort(allNodeOtps)
+
+		// Now we check that all nodes acknowledge all other nodes using OTPs to match
+		for {
+			allNodesAcked := true
+
+			for _, node := range thisClusterEx.NodesEx {
+				mgmt := &cbmgmtx.Management{
+					Transport: http.DefaultTransport,
+					Endpoint:  fmt.Sprintf("http://%s:8091", node.IPAddress),
+					Auth: cbhttpx.BasicAuth{
+						Username: "Administrator",
+						Password: "password",
+					},
+				}
+
+				nodeConfig, err := mgmt.GetClusterConfig(ctx, &cbmgmtx.GetClusterConfigOptions{})
+				if err != nil {
+					return nil, errors.Wrap(err, "failed to get cluster config from a node")
+				}
+
+				nodeNodeOtps := make([]string, 0, len(nodeConfig.Nodes))
+				for _, nodeConfigNode := range nodeConfig.Nodes {
+					nodeNodeOtps = append(nodeNodeOtps, nodeConfigNode.OTPNode)
+				}
+				slices.Sort(nodeNodeOtps)
+
+				// both sets are sorted, so we can just do an equality check
+				if !slices.Equal(allNodeOtps, nodeNodeOtps) {
+					allNodesAcked = false
+				}
+			}
+
+			if allNodesAcked {
+				break
+			}
+
+			d.logger.Info("not all nodes have acknowledged each other... waiting")
+			time.Sleep(1 * time.Second)
 		}
 
 		if len(nodesToAdd) > 0 {
