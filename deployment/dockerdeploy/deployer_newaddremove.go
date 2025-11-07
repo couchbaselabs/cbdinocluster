@@ -789,7 +789,10 @@ func (d *Deployer) addRemoveNodes(
 		d.logger.Info("removing node",
 			zap.String("container", node.ContainerID))
 
-		d.controller.RemoveNode(ctx, node.ContainerID)
+		err := d.controller.RemoveNode(ctx, node.ContainerID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to remove node container")
+		}
 	}
 
 	if len(nodesToAdd) > 0 || len(nodesToRemove) > 0 {
