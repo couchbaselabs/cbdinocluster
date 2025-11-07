@@ -1048,7 +1048,10 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 		Force: true,
 	})
 	if err != nil {
-		return errors.Wrap(err, "failed to remove container")
+		lowerText := strings.ToLower(err.Error())
+		if !strings.Contains(lowerText, "already in progress") {
+			return errors.Wrap(err, "failed to remove container")
+		}
 	}
 
 	logger.Debug("waiting for container to disappear")
