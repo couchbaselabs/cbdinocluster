@@ -11,6 +11,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 type clusterInfo struct {
@@ -164,8 +165,10 @@ type clusterInfoEx struct {
 type nodeInfoEx struct {
 	nodeInfo
 
-	OTPNode  string
-	Services []clusterdef.Service
+	Status                string
+	OTPNode               string
+	Services              []clusterdef.Service
+	ClusterNeedsRebalance bool
 }
 
 func (d *Deployer) getNodeInfoEx(ctx context.Context, nodeInfo *nodeInfo) (*nodeInfoEx, error) {
@@ -173,24 +176,32 @@ func (d *Deployer) getNodeInfoEx(ctx context.Context, nodeInfo *nodeInfo) (*node
 		nodeInfo: *nodeInfo,
 	}
 
-	if nodeInfo.IsClusterNode() {
-		nodeCtrl := clustercontrol.NodeManager{
-			Logger:   d.logger,
-			Endpoint: fmt.Sprintf("http://%s:8091", nodeInfo.IPAddress),
-		}
-		thisNodeInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to list a nodes services")
-		}
-
-		services, err := clusterdef.NsServicesToServices(thisNodeInfo.Services)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to generate services list")
-		}
-
-		nodeEx.OTPNode = thisNodeInfo.OTPNode
-		nodeEx.Services = services
+	if !nodeInfo.IsClusterNode() {
+		return nodeEx, nil
 	}
+
+	nodeCtrl := clustercontrol.NodeManager{
+		Logger:   d.logger,
+		Endpoint: fmt.Sprintf("http://%s:8091", nodeInfo.IPAddress),
+	}
+	thisNodeInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
+	if err != nil {
+		// there are cases where we want to fetch extended cluster information while
+		// one of the nodes will not respond to this endpoint so we consider this non-fatal
+		d.logger.Info("failed to get extended node info, skipping",
+			zap.String("node", nodeInfo.Name))
+		return nodeEx, nil
+	}
+
+	services, err := clusterdef.NsServicesToServices(thisNodeInfo.Services)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to generate services list")
+	}
+
+	nodeEx.Status = thisNodeInfo.Status
+	nodeEx.OTPNode = thisNodeInfo.OTPNode
+	nodeEx.Services = services
+	nodeEx.ClusterNeedsRebalance = thisNodeInfo.ClusterNeedsRebalance
 
 	return nodeEx, nil
 }

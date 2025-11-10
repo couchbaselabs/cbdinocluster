@@ -10,8 +10,6 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
-	"github.com/couchbase/gocbcorex/cbhttpx"
-	"github.com/couchbase/gocbcorex/cbmgmtx"
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/dinocerts"
@@ -745,44 +743,16 @@ func (d *Deployer) addRemoveNodes(
 		}
 	}
 
-	otpsToRemove := make([]string, len(nodesToRemove))
-	for nodeIdx, nodeToRemove := range nodesToRemove {
-		otpsToRemove[nodeIdx] = nodeToRemove.OTPNode
+	var nodeOtpsBeingRemoved []string
+	for _, node := range nodesToRemove {
+		nodeOtpsBeingRemoved = append(nodeOtpsBeingRemoved, node.OTPNode)
 	}
 
-	// once all the new nodes are registered, we re-select a node to work with that is
-	// not being removed from the cluster, which can now include the new nodes...
+	d.logger.Debug("performing rebalance reconciliation")
 
-	for _, clusterNode := range clusterInfo.NodesEx {
-		if !clusterNode.IsClusterNode() {
-			continue
-		}
-
-		if !slices.Contains(otpsToRemove, clusterNode.OTPNode) {
-			ctrlNode = clusterNode
-		}
-	}
-
-	d.logger.Debug("selected node for remove and rebalance commands",
-		zap.String("address", ctrlNode.IPAddress))
-
-	nodeCtrl = clustercontrol.NodeManager{
-		Logger:   d.logger,
-		Endpoint: fmt.Sprintf("http://%s:8091", ctrlNode.IPAddress),
-	}
-
-	d.logger.Info("initiating rebalance")
-
-	err = nodeCtrl.Rebalance(ctx, otpsToRemove)
+	err = d.reconcileRebalance(ctx, clusterInfo, nodeOtpsBeingRemoved)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to start rebalance")
-	}
-
-	d.logger.Info("waiting for rebalance completion")
-
-	err = nodeCtrl.WaitForNoRunningTasks(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to wait for tasks to complete")
+		return nil, errors.Wrap(err, "failed to reconcile rebalance")
 	}
 
 	for _, node := range nodesToRemove {
@@ -799,60 +769,6 @@ func (d *Deployer) addRemoveNodes(
 		thisCluster, err := d.getCluster(ctx, clusterInfo.ClusterID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to get post-rebalance cluster info")
-		}
-
-		// Wait until all nodes in the cluster acknowledge each other
-		d.logger.Info("waiting for all nodes to acknowledge each other")
-
-		// First we fetch all the OTPs for nodes we know about in cbdinocluster
-		thisClusterEx, err := d.getClusterInfoEx(ctx, thisCluster)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to get post-rebalance extended cluster info")
-		}
-
-		allNodeOtps := make([]string, 0, len(thisClusterEx.NodesEx))
-		for _, node := range thisClusterEx.NodesEx {
-			allNodeOtps = append(allNodeOtps, node.OTPNode)
-		}
-		slices.Sort(allNodeOtps)
-
-		// Now we check that all nodes acknowledge all other nodes using OTPs to match
-		for {
-			allNodesAcked := true
-
-			for _, node := range thisClusterEx.NodesEx {
-				mgmt := &cbmgmtx.Management{
-					Transport: http.DefaultTransport,
-					Endpoint:  fmt.Sprintf("http://%s:8091", node.IPAddress),
-					Auth: cbhttpx.BasicAuth{
-						Username: "Administrator",
-						Password: "password",
-					},
-				}
-
-				nodeConfig, err := mgmt.GetClusterConfig(ctx, &cbmgmtx.GetClusterConfigOptions{})
-				if err != nil {
-					return nil, errors.Wrap(err, "failed to get cluster config from a node")
-				}
-
-				nodeNodeOtps := make([]string, 0, len(nodeConfig.Nodes))
-				for _, nodeConfigNode := range nodeConfig.Nodes {
-					nodeNodeOtps = append(nodeNodeOtps, nodeConfigNode.OTPNode)
-				}
-				slices.Sort(nodeNodeOtps)
-
-				// both sets are sorted, so we can just do an equality check
-				if !slices.Equal(allNodeOtps, nodeNodeOtps) {
-					allNodesAcked = false
-				}
-			}
-
-			if allNodesAcked {
-				break
-			}
-
-			d.logger.Info("not all nodes have acknowledged each other... waiting")
-			time.Sleep(1 * time.Second)
 		}
 
 		if len(nodesToAdd) > 0 {

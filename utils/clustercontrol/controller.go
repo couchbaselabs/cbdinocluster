@@ -459,14 +459,21 @@ func (c *Controller) AddNode(ctx context.Context, opts *AddNodeOptions) error {
 }
 
 type LocalInfo struct {
+	Status   string
 	OTPNode  string
 	Services []string
+
+	// these are technically not specific to the node, but it's useful
+	// to fetch it concurrently with the node info
+	ClusterNeedsRebalance bool
 }
 
 func (c *Controller) GetLocalInfo(ctx context.Context) (*LocalInfo, error) {
 	var resp struct {
-		Nodes []struct {
+		ServicesNeedRebalance []struct{} `json:"servicesNeedRebalance"`
+		Nodes                 []struct {
 			ThisNode bool     `json:"thisNode"`
+			Status   string   `json:"status"`
 			OTPNode  string   `json:"otpNode"`
 			Services []string `json:"services"`
 		} `json:"nodes"`
@@ -479,8 +486,10 @@ func (c *Controller) GetLocalInfo(ctx context.Context) (*LocalInfo, error) {
 	for _, node := range resp.Nodes {
 		if node.ThisNode {
 			return &LocalInfo{
-				OTPNode:  node.OTPNode,
-				Services: node.Services,
+				Status:                node.Status,
+				OTPNode:               node.OTPNode,
+				Services:              node.Services,
+				ClusterNeedsRebalance: len(resp.ServicesNeedRebalance) > 0,
 			}, nil
 		}
 	}
