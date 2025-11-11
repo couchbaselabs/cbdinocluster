@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
 	"github.com/pkg/errors"
@@ -15,17 +16,19 @@ func (d *Deployer) reconcileRebalance(
 	clusterInfoEx *clusterInfoEx,
 	otpsToRemove []string,
 ) error {
-	return d.reconcileRebalanceWithRetry(ctx, clusterInfoEx, otpsToRemove, 5)
+	// we keep retrying to rebalance until more than 15 minutes have passed
+	lastAllowedRetryTime := time.Now().Add(15 * time.Minute)
+	return d.reconcileRebalanceWithRetry(ctx, clusterInfoEx, otpsToRemove, lastAllowedRetryTime)
 }
 
 func (d *Deployer) reconcileRebalanceWithRetry(
 	ctx context.Context,
 	clusterInfoEx *clusterInfoEx,
 	otpsToRemove []string,
-	retriesRemaining int,
+	lastAllowedRetryTime time.Time,
 ) error {
-	if retriesRemaining <= 0 {
-		return errors.New("exhausted retries for rebalance operation")
+	if time.Now().After(lastAllowedRetryTime) {
+		return errors.New("exhausted retry time for rebalance operation")
 	}
 
 	// we need to fetch the most up to date information about the cluster
@@ -118,7 +121,8 @@ func (d *Deployer) reconcileRebalanceWithRetry(
 	}
 
 	if !rebalanceSuccess {
-		d.logger.Info("rebalance did not complete successfully, retrying")
+		allowedTimeLeft := time.Until(lastAllowedRetryTime)
+		d.logger.Info("rebalance did not complete successfully, retrying", zap.Duration("time_left", allowedTimeLeft))
 
 		allNodeOtps := make([]string, 0)
 		for _, clusterNode := range clusterInfoEx.NodesEx {
@@ -145,7 +149,9 @@ func (d *Deployer) reconcileRebalanceWithRetry(
 			newOtpsToRemove = append(newOtpsToRemove, otpToRemove)
 		}
 
-		return d.reconcileRebalanceWithRetry(ctx, clusterInfoEx, newOtpsToRemove, retriesRemaining-1)
+		// wait 5 seconds and then retry the rebalance
+		time.Sleep(5 * time.Second)
+		return d.reconcileRebalanceWithRetry(ctx, clusterInfoEx, newOtpsToRemove, lastAllowedRetryTime)
 	}
 
 	return nil
