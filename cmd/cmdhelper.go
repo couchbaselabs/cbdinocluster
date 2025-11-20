@@ -55,7 +55,7 @@ func (h *CmdHelper) GetLogger() *zap.Logger {
 			log.Fatalf("failed to initialize verbose logger: %s", err)
 		}
 
-		logger.Info("logger initialized")
+		logger.Debug("logger initialized")
 
 		h.logger = logger
 	}
