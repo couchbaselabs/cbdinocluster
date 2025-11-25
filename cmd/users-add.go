@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"fmt"
+	"time"
+
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -27,14 +30,36 @@ var usersAddCmd = &cobra.Command{
 
 		_, deployer, cluster := helper.IdentifyCluster(ctx, clusterID)
 
-		err := deployer.CreateUser(ctx, cluster.GetID(), &deployment.CreateUserOptions{
+		opts := &deployment.CreateUserOptions{
 			Username: username,
 			Password: password,
 			CanRead:  canRead,
 			CanWrite: canWrite,
-		})
+		}
+		err := deployer.CreateUser(ctx, cluster.GetID(), opts)
 		if err != nil {
 			logger.Fatal("failed to create user", zap.Error(err))
+		}
+
+		logger.Info("checking user is ready to use")
+
+		for {
+			users, err := deployer.ListUsers(ctx, clusterID)
+			if err != nil {
+				logger.Fatal(fmt.Sprintf("failed to wait for user to be ready: %w", err))
+			}
+
+			for _, user := range users {
+				// If the target has canWrite = true but canRead = false the created
+				// user will have both as true
+				if user.Username == opts.Username && (user.CanRead == opts.CanRead || user.CanWrite) {
+					logger.Info("user is ready", zap.Any("user", user))
+					return
+				}
+			}
+
+			logger.Info("waiting for user to be ready...")
+			time.Sleep(time.Second)
 		}
 	},
 }
