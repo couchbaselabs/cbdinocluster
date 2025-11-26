@@ -38,7 +38,7 @@ func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return errors.Wrap(err, "failed to execute request")
+		return errors.Wrap(err, "failed to do request")
 	}
 
 	defer resp.Body.Close()
@@ -100,7 +100,7 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 				return errors.Wrap(err, fmt.Sprintf("failed after %d retries", maxRetries))
 			}
 
-			c.Logger.Warn("request failed, retrying",
+			c.Logger.Debug("request failed, retrying",
 				zap.Int("retryNum", retryNum),
 				zap.Error(err),
 			)
@@ -495,6 +495,33 @@ func (c *Controller) GetLocalInfo(ctx context.Context) (*LocalInfo, error) {
 	}
 
 	return nil, errors.New("no node was marked as this node")
+}
+
+type TerseClusterInfo struct {
+	ClusterUUID          string
+	Orchestrator         string
+	IsBalanced           bool
+	ClusterCompatVersion string
+}
+
+func (c *Controller) GetTerseClusterInfo(ctx context.Context) (*TerseClusterInfo, error) {
+	var resp struct {
+		ClusterUUID          string `json:"clusterUUID"`
+		Orchestrator         string `json:"orchestrator"`
+		IsBalanced           bool   `json:"isBalanced"`
+		ClusterCompatVersion string `json:"clusterCompatVersion"`
+	}
+	err := c.doGet(ctx, "/pools/default/terseClusterInfo", &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return &TerseClusterInfo{
+		ClusterUUID:          resp.ClusterUUID,
+		Orchestrator:         resp.Orchestrator,
+		IsBalanced:           resp.IsBalanced,
+		ClusterCompatVersion: resp.ClusterCompatVersion,
+	}, nil
 }
 
 func (c *Controller) ListNodeOTPs(ctx context.Context) ([]string, error) {
