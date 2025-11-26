@@ -168,6 +168,7 @@ type nodeInfoEx struct {
 	Status                string
 	OTPNode               string
 	Services              []clusterdef.Service
+	IsClusterOrchestrator bool
 	ClusterNeedsRebalance bool
 }
 
@@ -184,11 +185,21 @@ func (d *Deployer) getNodeInfoEx(ctx context.Context, nodeInfo *nodeInfo) (*node
 		Logger:   d.logger,
 		Endpoint: fmt.Sprintf("http://%s:8091", nodeInfo.IPAddress),
 	}
+
 	thisNodeInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
 	if err != nil {
 		// there are cases where we want to fetch extended cluster information while
 		// one of the nodes will not respond to this endpoint so we consider this non-fatal
 		d.logger.Info("failed to get extended node info, skipping",
+			zap.String("node", nodeInfo.Name), zap.Error(err))
+		return nodeEx, nil
+	}
+
+	terseClusterInfo, err := nodeCtrl.Controller().GetTerseClusterInfo(ctx)
+	if err != nil {
+		// there are cases where we want to fetch extended cluster information while
+		// one of the nodes will not respond to this endpoint so we consider this non-fatal
+		d.logger.Info("failed to get terse cluster info, skipping",
 			zap.String("node", nodeInfo.Name))
 		return nodeEx, nil
 	}
@@ -201,7 +212,8 @@ func (d *Deployer) getNodeInfoEx(ctx context.Context, nodeInfo *nodeInfo) (*node
 	nodeEx.Status = thisNodeInfo.Status
 	nodeEx.OTPNode = thisNodeInfo.OTPNode
 	nodeEx.Services = services
-	nodeEx.ClusterNeedsRebalance = thisNodeInfo.ClusterNeedsRebalance
+	nodeEx.ClusterNeedsRebalance = !terseClusterInfo.IsBalanced
+	nodeEx.IsClusterOrchestrator = (terseClusterInfo.Orchestrator == thisNodeInfo.OTPNode)
 
 	return nodeEx, nil
 }
