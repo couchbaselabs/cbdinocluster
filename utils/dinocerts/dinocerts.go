@@ -206,6 +206,7 @@ func (d *CertAuthority) MakeServerCertificate(
 
 func (d *CertAuthority) MakeClientCertificate(
 	username string,
+	expiresIn time.Duration,
 ) ([]byte, []byte, error) {
 	rnd := newSeededRand(username)
 
@@ -217,14 +218,23 @@ func (d *CertAuthority) MakeClientCertificate(
 	subjectKeyId := makeSubjectKeyId(privKey)
 	authorityKeyId := d.SubjectKeyId
 
+	var notAfter time.Time
+	if expiresIn == 0 {
+		notAfter = time.Date(2035, 01, 01, 00, 00, 00, 00, time.UTC)
+	} else {
+		notAfter = time.Now().Add(expiresIn)
+	}
+
+	notBefore := notAfter.Add(-10 * 365 * 24 * time.Hour)
+
 	cert := &x509.Certificate{
 		SerialNumber: big.NewInt(3),
 		Subject: pkix.Name{
 			CommonName: "dinoclientcert-" + username,
 		},
 		EmailAddresses: []string{username + "@dinocert.com"},
-		NotBefore:      time.Date(2025, 01, 01, 00, 00, 00, 00, time.UTC),
-		NotAfter:       time.Date(2035, 01, 01, 00, 00, 00, 00, time.UTC),
+		NotBefore:      notBefore,
+		NotAfter:       notAfter,
 		KeyUsage:       x509.KeyUsageDigitalSignature,
 		SubjectKeyId:   subjectKeyId,
 		AuthorityKeyId: authorityKeyId,
