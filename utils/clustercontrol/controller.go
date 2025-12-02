@@ -948,3 +948,17 @@ type SetupJwtOptions_Issuer struct {
 func (c *Controller) SetupJwtAuth(ctx context.Context, opts *SetupJwtAuthOptions) error {
 	return c.doJsonReq(ctx, "PUT", "/settings/jwt", opts, true, nil)
 }
+
+type AppTelemetryOptions struct {
+	Enabled bool
+}
+
+func (c *Controller) SetAppTelemetry(ctx context.Context, opts *AppTelemetryOptions) error {
+	form := make(url.Values)
+	enabled := false
+	if opts != nil {
+		enabled = opts.Enabled
+	}
+	form.Add("enabled", strconv.FormatBool(enabled))
+	return c.doFormPost(ctx, "/settings/appTelemetry", form, true, nil)
+}
