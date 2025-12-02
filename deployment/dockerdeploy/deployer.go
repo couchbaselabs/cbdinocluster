@@ -1367,6 +1367,17 @@ func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodeIDs 
 	return nil
 }
 
+func (d *Deployer) EnableAppTelemetry(ctx context.Context, clusterID string, enable bool) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get controller for cluster")
+	}
+
+	return controller.Controller().ToggleAppTelemetry(ctx, &clustercontrol.AppTelemetryOptions{
+		Enabled: enable,
+	})
+}
+
 func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
 	return errors.New("docker deploy does not support redeploy cluster")
 }
