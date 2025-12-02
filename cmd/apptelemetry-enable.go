@@ -22,7 +22,7 @@ var appTelemetryEnableCmd = &cobra.Command{
 			logger.Fatal("Toggling app telemetry is only supported for docker deployer")
 		}
 
-		err := dockerDeployer.EnableAppTelemetry(ctx, cluster.GetID(), true)
+		err := dockerDeployer.SetAppTelemetry(ctx, cluster.GetID(), true)
 		if err != nil {
 			logger.Fatal("failed to enable app telemetry", zap.Error(err))
 		}

@@ -1367,13 +1367,13 @@ func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodeIDs 
 	return nil
 }
 
-func (d *Deployer) EnableAppTelemetry(ctx context.Context, clusterID string, enable bool) error {
+func (d *Deployer) SetAppTelemetry(ctx context.Context, clusterID string, enable bool) error {
 	controller, err := d.getController(ctx, clusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to get controller for cluster")
 	}
 
-	return controller.Controller().ToggleAppTelemetry(ctx, &clustercontrol.AppTelemetryOptions{
+	return controller.Controller().SetAppTelemetry(ctx, &clustercontrol.AppTelemetryOptions{
 		Enabled: enable,
 	})
 }

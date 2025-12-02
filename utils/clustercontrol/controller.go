@@ -953,7 +953,7 @@ type AppTelemetryOptions struct {
 	Enabled bool
 }
 
-func (c *Controller) ToggleAppTelemetry(ctx context.Context, opts *AppTelemetryOptions) error {
+func (c *Controller) SetAppTelemetry(ctx context.Context, opts *AppTelemetryOptions) error {
 	form := make(url.Values)
 	enabled := false
 	if opts != nil {
