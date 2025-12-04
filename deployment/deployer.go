@@ -131,6 +131,7 @@ type Deployer interface {
 	LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error
 	GetCertificate(ctx context.Context, clusterID string) (string, error)
 	GetGatewayCertificate(ctx context.Context, clusterID string) (string, error)
+	GetMetrics(ctx context.Context, clusterID string) (string, error)
 	ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error)
 	ListCollections(ctx context.Context, clusterID string, bucketName string) ([]ScopeInfo, error)
 	CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error

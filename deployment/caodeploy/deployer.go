@@ -679,6 +679,10 @@ func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) 
 	return string(secretData), nil
 }
 
+func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, error) {
+	return "", errors.New("caodeploy does not support getting metrics")
+}
+
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
 	return "", errors.New("caodeploy does not support executing queries")
 }
