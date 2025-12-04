@@ -962,3 +962,12 @@ func (c *Controller) SetAppTelemetry(ctx context.Context, opts *AppTelemetryOpti
 	form.Add("enabled", strconv.FormatBool(enabled))
 	return c.doFormPost(ctx, "/settings/appTelemetry", form, true, nil)
 }
+
+func (c *Controller) GetMetrics(ctx context.Context) (string, error) {
+	var resp []byte
+	err := c.doGet(ctx, "/metrics", &resp)
+	if err != nil {
+		return "", err
+	}
+	return string(resp), nil
+}
