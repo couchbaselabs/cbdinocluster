@@ -2083,6 +2083,10 @@ func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 	return strings.TrimSpace(returnCert.Pem), nil
 }
 
+func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, error) {
+	return "", errors.New("clouddeploy does not support getting required metrics as of now. Refer - AV-118082")
+}
+
 func (d *Deployer) startLogCollection(ctx context.Context, cluster *clusterInfo) error {
 	var startCollectingServerLogsRequest = &capellacontrol.StartCollectingServerLogsRequest{
 		HostName: d.uploadServerLogsHostName,

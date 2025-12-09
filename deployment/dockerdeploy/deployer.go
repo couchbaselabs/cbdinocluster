@@ -740,6 +740,20 @@ func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) 
 	return "", errors.New("dockerdeploy does not support getting gateway certificates")
 }
 
+func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, error) {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster controller")
+	}
+
+	metrics, err := controller.Controller().GetMetrics(ctx)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster metrics")
+	}
+
+	return metrics, nil
+}
+
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
 	agent, err := d.getAgent(ctx, clusterID, "")
 	if err != nil {
