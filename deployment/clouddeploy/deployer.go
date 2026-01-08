@@ -955,7 +955,6 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 			clusterVersion = nodeGroup.Version
 			serverImage = nodeGroup.Cloud.ServerImage
 			imageAgentHash = nodeGroup.Cloud.ImageAgentHash
-
 		} else {
 			if clusterVersion != nodeGroup.Version || serverImage != nodeGroup.Cloud.ServerImage || imageAgentHash != nodeGroup.Cloud.ImageAgentHash {
 				return nil, errors.New("all node groups must have the same version, image and agent hash")
