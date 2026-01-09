@@ -900,6 +900,11 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 				Image: def.NodeGroups[0].Cloud.ServerImage,
 				Token: p.overrideToken,
 			}
+			if def.NodeGroups[0].Cloud.ImageAgentHash != "" {
+				createReq.Override.Agent = &capellacontrol.CreateOverrideAgentRequest{
+					Hash: def.NodeGroups[0].Cloud.ImageAgentHash,
+				}
+			}
 		}
 		p.logger.Debug("creating columnar", zap.Any("req", createReq))
 
@@ -942,15 +947,17 @@ func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	var (
 		clusterVersion = ""
 		serverImage    = ""
+		imageAgentHash = ""
 	)
 	// Ensure all node groups have the same version and image
 	for _, nodeGroup := range def.NodeGroups {
 		if clusterVersion == "" {
 			clusterVersion = nodeGroup.Version
 			serverImage = nodeGroup.Cloud.ServerImage
+			imageAgentHash = nodeGroup.Cloud.ImageAgentHash
 		} else {
-			if clusterVersion != nodeGroup.Version || serverImage != nodeGroup.Cloud.ServerImage {
-				return nil, errors.New("all node groups must have the same version and image")
+			if clusterVersion != nodeGroup.Version || serverImage != nodeGroup.Cloud.ServerImage || imageAgentHash != nodeGroup.Cloud.ImageAgentHash {
+				return nil, errors.New("all node groups must have the same version, image and agent hash")
 			}
 		}
 	}

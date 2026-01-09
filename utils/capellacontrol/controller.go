@@ -704,9 +704,14 @@ type CreateServices struct {
 }
 
 type CreateOverrideRequest struct {
-	Image  string `json:"image"`
-	Token  string `json:"token"`
-	Server string `json:"server,omitempty"`
+	Image  string                      `json:"image"`
+	Token  string                      `json:"token"`
+	Server string                      `json:"server,omitempty"`
+	Agent  *CreateOverrideAgentRequest `json:"agent,omitempty"`
+}
+
+type CreateOverrideAgentRequest struct {
+	Hash string `json:"hash"`
 }
 
 func (o CreateOverrideRequest) IsEmpty() bool {
