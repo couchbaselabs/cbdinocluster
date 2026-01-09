@@ -44,7 +44,7 @@ var usersAddCmd = &cobra.Command{
 		logger.Info("checking user is ready to use")
 
 		for {
-			users, err := deployer.ListUsers(ctx, clusterID)
+			users, err := deployer.ListUsers(ctx, cluster.GetID())
 			if err != nil {
 				logger.Fatal(fmt.Sprintf("failed to wait for user to be ready: %w", err))
 			}
