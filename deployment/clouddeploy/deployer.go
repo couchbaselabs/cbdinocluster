@@ -1512,8 +1512,14 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 	}
 
 	fullEndpointId := ""
+	providerName := ""
+	if clusterInfo.Columnar != nil {
+		providerName = clusterInfo.Columnar.Config.Provider
+	} else if clusterInfo.Cluster != nil {
+		providerName = clusterInfo.Cluster.Provider.Name
+	}
 
-	if clusterInfo.Cluster.Provider.Name == "gcp" {
+	if providerName == "gcp" {
 		// GCP's private endpoint implementation differs from other providers:
 		// The endpoint ID is only generated after accepting the link, unlike
 		// AWS/Azure where it's available before acceptance. Therefore, we use
@@ -1537,7 +1543,7 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 		// The endpoint ID is only generated after accepting the link, unlike
 		// AWS/Azure where it's available before acceptance. Therefore, we use
 		// the provided endpoint ID directly for GCP.
-		if clusterInfo.Cluster.Provider.Name != "gcp" {
+		if providerName != "gcp" {
 			_, err = p.mgr.WaitForPrivateEndpointLink(ctx, clusterInfo.Columnar != nil, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, fullEndpointId)
 			if err != nil {
 				return errors.Wrap(err, "failed to wait for private endpoint link")
