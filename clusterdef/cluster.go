@@ -8,13 +8,29 @@ type Cluster struct {
 	Expiry  time.Duration `yaml:"expiry,omitempty"`
 	Purpose string        `yaml:"purpose,omitempty"`
 
-	Columnar   bool         `yaml:"columnar,omitempty"`
-	NodeGroups []*NodeGroup `yaml:"nodes,omitempty"`
+	Columnar   bool              `yaml:"columnar,omitempty"`
+	NodeGroups []*NodeGroup      `yaml:"nodes,omitempty"`
+	Buckets    map[string]Bucket `yaml:"buckets,omitempty"`
 
 	Docker DockerCluster `yaml:"docker,omitempty"`
 	Cao    CaoCluster    `yaml:"cao,omitempty"`
 	Cloud  CloudCluster  `yaml:"cloud,omitempty"`
 }
+
+type Bucket struct {
+	Settings Settings `yaml:"settings,omitempty"`
+	Scopes   Scopes   `yaml:",inline"`
+}
+
+type Settings struct {
+	RamQuotaMB   int  `yaml:"ram-quota-mb,omitempty"`
+	FlushEnabled bool `yaml:"flush-enabled,omitempty"`
+	NumReplicas  int  `yaml:"num-replicas,omitempty"`
+}
+
+type Scopes map[string]Collections
+
+type Collections []string
 
 type DockerCluster struct {
 	Username string `yaml:"username,omitempty"`

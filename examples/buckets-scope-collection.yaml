@@ -1,0 +1,18 @@
+nodes:
+  - count: 3
+    services: [kv, n1ql, index]
+buckets:
+  app-data:
+    settings:
+      ram-quota-mb: 512
+      flush-enabled: true
+      num-replicas: 1
+    inventory:
+      - products
+      - warehouses
+    sales: []
+  logs:
+    ops:
+      - requests
+      - errors
+  client-info: {}

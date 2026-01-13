@@ -75,6 +75,41 @@ var allocateCmd = &cobra.Command{
 			logger.Fatal("cluster deployment failed", zap.Error(err))
 		}
 
+		if len(def.Buckets) > 0 {
+			for bucketName, bucketDef := range def.Buckets {
+				err := deployer.CreateBucket(ctx, cluster.GetID(), &deployment.CreateBucketOptions{
+					Name:         bucketName,
+					RamQuotaMB:   bucketDef.Settings.RamQuotaMB,
+					FlushEnabled: bucketDef.Settings.FlushEnabled,
+					NumReplicas:  bucketDef.Settings.NumReplicas,
+				})
+				if err != nil {
+					logger.Fatal("failed to create bucket", zap.String("bucket", bucketName), zap.Error(err))
+				}
+				logger.Info("bucket created", zap.String("bucket", bucketName))
+
+				for scopeName, collections := range bucketDef.Scopes {
+					if scopeName == "" {
+						continue
+					}
+					if err := deployer.CreateScope(ctx, cluster.GetID(), bucketName, scopeName); err != nil {
+						logger.Fatal("failed to create scope", zap.String("bucket", bucketName), zap.String("scope", scopeName), zap.Error(err))
+					}
+					logger.Info("scope created", zap.String("bucket", bucketName), zap.String("scope", scopeName))
+
+					for _, collName := range collections {
+						if collName == "" {
+							continue
+						}
+						if err := deployer.CreateCollection(ctx, cluster.GetID(), bucketName, scopeName, collName); err != nil {
+							logger.Fatal("failed to create collection", zap.String("bucket", bucketName), zap.String("scope", scopeName), zap.String("collection", collName), zap.Error(err))
+						}
+						logger.Info("collection created", zap.String("bucket", bucketName), zap.String("scope", scopeName), zap.String("collection", collName))
+					}
+				}
+			}
+		}
+
 		switch cluster := cluster.(type) {
 		case *clouddeploy.ClusterInfo:
 			if cluster.CloudClusterID != "" {
