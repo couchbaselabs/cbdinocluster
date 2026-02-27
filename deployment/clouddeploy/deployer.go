@@ -988,7 +988,7 @@ func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, ne
 	_, err = d.client.UpdateProject(
 		ctx,
 		d.tenantID,
-		clusterInfo.Cluster.Project.Id,
+		clusterInfo.Project.ID,
 		&capellacontrol.UpdateProjectRequest{
 			Name: newProjectName,
 		})
@@ -2100,19 +2100,19 @@ func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, er
 	return "", errors.New("clouddeploy does not support getting required metrics as of now. Refer - AV-118082")
 }
 
-func (d *Deployer) startLogCollection(ctx context.Context, cluster *clusterInfo) error {
+func (d *Deployer) startLogCollection(ctx context.Context, cloudClusterId string) error {
 	var startCollectingServerLogsRequest = &capellacontrol.StartCollectingServerLogsRequest{
 		HostName: d.uploadServerLogsHostName,
 	}
 
-	var err = d.mgr.Client.StartCollectingServerLogs(ctx, cluster.Cluster.Id, d.internalSupportToken,
+	var err = d.mgr.Client.StartCollectingServerLogs(ctx, cloudClusterId, d.internalSupportToken,
 		startCollectingServerLogsRequest)
 
 	if err != nil {
 		errors.Wrap(err,
 			fmt.Sprintf("failed to start server log collection: %s", err))
 	} else {
-		d.logger.Info(fmt.Sprintf("Log collection have started for cluster: %s", cluster.Cluster.Id))
+		d.logger.Info(fmt.Sprintf("Log collection have started for cluster: %s", cloudClusterId))
 	}
 
 	return err
@@ -2124,11 +2124,14 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 		return []string{}, err
 	}
 
+	var cloudClusterId string
 	if cluster.Columnar != nil {
-		return nil, errors.New("collectlogs not supported for columanr clusters yet")
+		cloudClusterId = cluster.Columnar.Config.Id
+	} else if cluster.Cluster != nil {
+		cloudClusterId = cluster.Cluster.Id
 	}
 
-	err = d.startLogCollection(ctx, cluster)
+	err = d.startLogCollection(ctx, cloudClusterId)
 
 	if err != nil {
 		return nil, err
@@ -2138,7 +2141,7 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 		HostName: d.uploadServerLogsHostName,
 	}
 
-	perNodeMap, err := d.mgr.WaitForServerLogsCollected(ctx, cluster.Cluster.Id, d.internalSupportToken,
+	perNodeMap, err := d.mgr.WaitForServerLogsCollected(ctx, cloudClusterId, d.internalSupportToken,
 		downloadServerLogsRequest)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to wait for logs to be collected")

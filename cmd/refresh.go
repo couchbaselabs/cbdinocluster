@@ -33,7 +33,7 @@ var refreshCmd = &cobra.Command{
 			cluster.GetID(),
 			newExpiryTime)
 		if err != nil {
-			logger.Fatal("failed to remove cluster", zap.Error(err))
+			logger.Fatal("failed to refresh cluster", zap.Error(err))
 		}
 	},
 }
