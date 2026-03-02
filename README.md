@@ -50,6 +50,9 @@ See [Managing your personal access tokens](https://docs.github.com/en/authentica
 
 ### Using cbdinocluster
 
+#### Configuration file
+By default, cbdinocluster will create `~/.cbdinocluster` file with empty configuration. 
+
 #### List your local clusters
 
 ```
@@ -210,4 +213,22 @@ cbdinocluster_connstr_with_certificate() {
     cbdinocluster certificates getca "${cluster_id}" > "${cert_file}"
     echo "$(cbdinocluster connstr --tls "${cluster_id}")?trust_certificate=${cert_file}"
 }
+```
+
+#### Capella connection
+Cbdinocluster supports deploying and configuring clusters in Capella. Here's an example configuration from `~/.cbdinocluster`:
+```
+capella:
+    enabled: "true"
+    endpoint: "https://api.cloud.couchbase.com"
+    username: "example@example.com
+    password: "password"
+    organization-id: "<oid argument from Capella URLs>"
+    override-token: ""
+    Internal-support-token: ""
+    default-cloud: "aws"
+    default-aws-region: "us-east-1"
+    default-azure-region: ""
+    default-gcp-region: ""
+    upload-server-logs-host-name: ""
 ```
