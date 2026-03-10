@@ -114,6 +114,26 @@ func (e requestError) Unwrap() error {
 	return e.Cause
 }
 
+func isRetryableError(err error) bool {
+	var reqErr *requestError
+	if !errors.As(err, &reqErr) {
+		// Not an HTTP status error (e.g. network error), always retryable.
+		return true
+	}
+
+	// Retry on transient HTTP status codes.
+	switch {
+	case reqErr.StatusCode == 408: // Request Timeout
+		return true
+	case reqErr.StatusCode == 429: // Too Many Requests
+		return true
+	case reqErr.StatusCode >= 500: // Server errors (500, 502, 503, 504, etc.)
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Controller) doReq(
 	ctx context.Context,
 	req *http.Request,
@@ -182,6 +202,12 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 						continue
 					}
 				}
+			}
+
+			if !isRetryableError(err) {
+				c.logger.Debug("request failed with non-retryable error",
+					zap.Error(err))
+				return err
 			}
 
 			if retryNum == maxRetries {
@@ -447,7 +473,7 @@ func (c *Controller) ListProjects(
 
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/projects?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -608,7 +634,7 @@ func (c *Controller) ListAllClusters(
 
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/clusters?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -627,7 +653,7 @@ func (c *Controller) ListAllColumnars(
 
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/instance?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +977,7 @@ func (c *Controller) ListClusterJobs(
 	resp := &ListClusterJobsResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/jobs", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1024,7 +1050,7 @@ func (c *Controller) GetProviderDeploymentOptions(
 
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/clusters/deployment-options/v2?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1053,7 +1079,7 @@ func (c *Controller) ListAllowListEntries(
 
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/allowlists?%s", tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1070,7 +1096,7 @@ func (c *Controller) ListAllowListEntriesColumnar(
 
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/allowlists?%s", tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1197,7 +1223,7 @@ func (c *Controller) GetPrivateEndpoint(
 	resp := &GetPrivateEndpointResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1212,7 +1238,7 @@ func (c *Controller) GetPrivateEndpointColumnar(
 	resp := &GetPrivateEndpointResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1233,7 +1259,7 @@ func (c *Controller) GetPrivateEndpointDetails(
 	resp := &ResourceResponse[PrivateEndpointDetailsInfo]{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/details", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1248,7 +1274,7 @@ func (c *Controller) GetPrivateEndpointDetailsColumnar(
 	resp := &ResourceResponse[PrivateEndpointDetailsInfo]{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/details", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1271,7 +1297,7 @@ func (c *Controller) ListPrivateEndpointLinks(
 	resp := &ListPrivateEndpointLinksResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/connection", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1286,7 +1312,7 @@ func (c *Controller) ListPrivateEndpointLinksColumnar(
 	resp := &ListPrivateEndpointLinksResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/connection", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1395,7 +1421,7 @@ func (c *Controller) ListUsers(
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/users?%s",
 		tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1477,7 +1503,7 @@ func (c *Controller) GetColumnarRoles(
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/roles?%s",
 		tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1495,7 +1521,7 @@ func (c *Controller) ListColumnarUsers(
 	form, _ := query.Values(req)
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/apikeys?%s",
 		tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1582,7 +1608,7 @@ func (c *Controller) ListBuckets(
 	resp := &ListBucketsResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/buckets", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1650,7 +1676,7 @@ func (c *Controller) GetTrustedCAs(
 	resp := &GetTrustedCAsResponse{}
 
 	path := fmt.Sprintf("/v2/databases/%s/proxy/pools/default/trustedCAs", clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1665,7 +1691,7 @@ func (c *Controller) GetTrustedCAsColumnar(
 	resp := &GetTrustedCAsResponse{}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/certificates", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "GET", path, nil, &resp)
+	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
