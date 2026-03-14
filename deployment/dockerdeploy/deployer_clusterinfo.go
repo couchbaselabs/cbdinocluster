@@ -190,8 +190,9 @@ func (d *Deployer) getNodeInfoEx(ctx context.Context, nodeInfo *nodeInfo) (*node
 	if err != nil {
 		// there are cases where we want to fetch extended cluster information while
 		// one of the nodes will not respond to this endpoint so we consider this non-fatal
+		// and do not include the error to avoid spamming the logs.
 		d.logger.Info("failed to get extended node info, skipping",
-			zap.String("node", nodeInfo.Name), zap.Error(err))
+			zap.String("node", nodeInfo.Name))
 		return nodeEx, nil
 	}
 
