@@ -31,7 +31,8 @@ import (
 )
 
 type CmdHelper struct {
-	logger *zap.Logger
+	logger         *zap.Logger
+	internalLogger *zap.Logger
 
 	config *cbdcconfig.Config
 }
@@ -45,6 +46,7 @@ func (h *CmdHelper) GetLogger() *zap.Logger {
 		verbose, _ := rootCmd.Flags().GetBool("verbose")
 
 		logConfig := zap.NewDevelopmentConfig()
+		logConfig.DisableStacktrace = true
 		if !verbose {
 			logConfig.Level.SetLevel(zap.InfoLevel)
 			logConfig.DisableCaller = true
@@ -58,9 +60,17 @@ func (h *CmdHelper) GetLogger() *zap.Logger {
 		logger.Info("logger initialized")
 
 		h.logger = logger
+		h.internalLogger = logger.WithOptions(zap.AddStacktrace(zap.WarnLevel))
 	}
 
 	return h.logger
+}
+
+// GetInternalLogger returns a logger with stack traces enabled,
+// intended for passing to deployers and other internal libraries.
+func (h *CmdHelper) GetInternalLogger() *zap.Logger {
+	h.GetLogger() // ensure initialization
+	return h.internalLogger
 }
 
 func (h *CmdHelper) GetConfig(ctx context.Context) *cbdcconfig.Config {
@@ -85,10 +95,8 @@ func (h *CmdHelper) GetConfig(ctx context.Context) *cbdcconfig.Config {
 }
 
 func (h *CmdHelper) getLocalDeployer() (*localdeploy.Deployer, error) {
-	logger := h.GetLogger()
-
 	localDeployer, err := localdeploy.NewDeployer(&localdeploy.DeployerOptions{
-		Logger: logger,
+		Logger: h.GetInternalLogger(),
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to initialize local deployer")
@@ -98,7 +106,7 @@ func (h *CmdHelper) getLocalDeployer() (*localdeploy.Deployer, error) {
 }
 
 func (h *CmdHelper) getDockerDeployer(ctx context.Context) (*dockerdeploy.Deployer, error) {
-	logger := h.GetLogger()
+	logger := h.GetInternalLogger()
 	config := h.GetConfig(ctx)
 
 	if !config.Docker.Enabled.Value() {
@@ -150,7 +158,7 @@ func (h *CmdHelper) getDockerDeployer(ctx context.Context) (*dockerdeploy.Deploy
 }
 
 func (h *CmdHelper) getCaoDeployer(ctx context.Context) (*caodeploy.Deployer, error) {
-	logger := h.GetLogger()
+	logger := h.GetInternalLogger()
 	config := h.GetConfig(ctx)
 
 	if !config.K8s.Enabled.Value() {
@@ -181,7 +189,7 @@ func (h *CmdHelper) getCaoDeployer(ctx context.Context) (*caodeploy.Deployer, er
 }
 
 func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer, error) {
-	logger := h.GetLogger()
+	logger := h.GetInternalLogger()
 	config := h.GetConfig(ctx)
 
 	if !config.Capella.Enabled.Value() {
