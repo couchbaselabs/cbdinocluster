@@ -657,6 +657,9 @@ func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		},
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("%w: %s", deployment.ErrBucketAlreadyExists, err.Error())
+		}
 		return errors.Wrap(err, "failed to create bucket")
 	}
 
