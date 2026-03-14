@@ -85,8 +85,8 @@ func (c *Controller) doRetriableReq(ctx context.Context, makeReq func() (*http.R
 		if err != nil {
 			var non200Err *non200StatusCodeError
 			if errors.As(err, &non200Err) {
-				if non200Err.StatusCode == 404 {
-					// if we get a 404 error, we don't retry
+				if non200Err.StatusCode >= 400 && non200Err.StatusCode < 500 {
+					// if we get a 4xx client error, we don't retry
 					return errors.Wrap(err, "failed to execute request")
 				}
 			}
