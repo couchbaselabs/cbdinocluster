@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"errors"
+
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -31,6 +33,9 @@ var bucketsAddCmd = &cobra.Command{
 			NumReplicas:  numReplicas,
 		})
 		if err != nil {
+			if errors.Is(err, deployment.ErrBucketAlreadyExists) {
+				logger.Fatal("failed to create bucket as it already exists")
+			}
 			logger.Fatal("failed to create bucket", zap.Error(err))
 		}
 	},
