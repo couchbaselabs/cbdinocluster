@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -46,7 +45,7 @@ var usersAddCmd = &cobra.Command{
 		for {
 			users, err := deployer.ListUsers(ctx, cluster.GetID())
 			if err != nil {
-				logger.Fatal(fmt.Sprintf("failed to wait for user to be ready: %w", err))
+				logger.Fatal("failed to wait for user to be ready", zap.Error(err))
 			}
 
 			for _, user := range users {
