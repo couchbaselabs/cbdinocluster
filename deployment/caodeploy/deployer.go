@@ -788,3 +788,7 @@ func (d *Deployer) RebalanceCluster(ctx context.Context, clusterID string, nodes
 func (d *Deployer) KillCouchbase(ctx context.Context, clusterID string, nodes []string) error {
 	return errors.New("caodeploy does not support killing couchbase process")
 }
+
+func (d *Deployer) SetAutoFailover(ctx context.Context, clusterID string, enabled bool, timeout int) error {
+	return errors.New("caodeploy does not support setting auto-failover")
+}

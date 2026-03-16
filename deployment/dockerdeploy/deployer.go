@@ -1399,6 +1399,18 @@ func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error 
 	return errors.New("docker deploy does not support redeploy cluster")
 }
 
+func (d *Deployer) SetAutoFailover(ctx context.Context, clusterID string, enabled bool, timeout int) error {
+	controller, err := d.getController(ctx, clusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get controller for cluster")
+	}
+
+	return controller.Controller().SetAutoFailover(ctx, &clustercontrol.SetAutoFailoverOptions{
+		Enabled: enabled,
+		Timeout: timeout,
+	})
+}
+
 func (d *Deployer) CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error {
 	return errors.New("docker deploy does not support create capella link")
 }
