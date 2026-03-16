@@ -963,6 +963,20 @@ func (c *Controller) SetAppTelemetry(ctx context.Context, opts *AppTelemetryOpti
 	return c.doFormPost(ctx, "/settings/appTelemetry", form, true, nil)
 }
 
+type SetAutoFailoverOptions struct {
+	Enabled bool
+	Timeout int
+}
+
+func (c *Controller) SetAutoFailover(ctx context.Context, opts *SetAutoFailoverOptions) error {
+	form := make(url.Values)
+	form.Add("enabled", strconv.FormatBool(opts.Enabled))
+	if opts.Timeout > 0 {
+		form.Add("timeout", strconv.Itoa(opts.Timeout))
+	}
+	return c.doFormPost(ctx, "/settings/autoFailover", form, true, nil)
+}
+
 func (c *Controller) GetMetrics(ctx context.Context) (string, error) {
 	var resp []byte
 	err := c.doGet(ctx, "/metrics", &resp)

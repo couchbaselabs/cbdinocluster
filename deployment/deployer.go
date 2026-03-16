@@ -152,4 +152,5 @@ type Deployer interface {
 	DropLink(ctx context.Context, columnarID, linkName string) error
 	EnableDataApi(ctx context.Context, clusterID string) error
 	KillCouchbase(ctx context.Context, clusterID string, nodes []string) error
+	SetAutoFailover(ctx context.Context, clusterID string, enabled bool, timeout int) error
 }
