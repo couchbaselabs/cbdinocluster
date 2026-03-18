@@ -874,8 +874,19 @@ func (c *Controller) waitCouchbaseClusterAvailable(
 		}
 
 		// mark it unavailable if we are in the middle of scaling
+		blockingScaleCondTypes := []string{
+			"Scaling",
+			"ScalingUp",
+			"ScalingDown",
+			"Upgrading",
+			"Hibernating",
+			"Error",
+			"Migrating",
+			"Rebalancing",
+			"BucketMigrating",
+		}
 		for _, cond := range status.Conditions {
-			if cond.Type == "Scaling" && cond.Status == "True" {
+			if slices.Contains(blockingScaleCondTypes, string(cond.Type)) && cond.Status == "True" {
 				clusterAvailable = false
 			}
 		}
