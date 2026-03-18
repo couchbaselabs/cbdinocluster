@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/couchbase/gocbcorex"
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/commondeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/cbdcuuid"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const (
@@ -37,6 +40,84 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 		logger: opts.Logger,
 		client: opts.Client,
 	}, nil
+}
+
+func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName string) (*gocbcorex.Agent, error) {
+	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster namespace")
+	}
+
+	secret, err := d.client.GetSecret(ctx, namespaceName, "cbdc2-admin-auth")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get admin auth secret")
+	}
+
+	username := string(secret.Data[corev1.BasicAuthUsernameKey])
+	password := string(secret.Data[corev1.BasicAuthPasswordKey])
+
+	service, err := d.client.GetService(ctx, namespaceName, CouchbaseClusterName+"-ui")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cluster ui service")
+	}
+
+	nodes, err := d.client.GetNodes(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get k8s nodes")
+	}
+
+	var externalIP string
+	for _, node := range nodes.Items {
+		for _, address := range node.Status.Addresses {
+			externalIP = address.Address
+			break
+		}
+		if externalIP != "" {
+			break
+		}
+	}
+	if externalIP == "" {
+		return nil, errors.New("could not identify node IP to use")
+	}
+
+	var httpPort int32
+	var memdPort int32
+	for _, port := range service.Spec.Ports {
+		switch port.Name {
+		case "couchbase-ui":
+			httpPort = port.NodePort
+		case "data":
+			memdPort = port.NodePort
+		}
+	}
+	if httpPort == 0 {
+		return nil, errors.New("could not identify mgmt port")
+	}
+	if memdPort == 0 {
+		return nil, errors.New("could not identify data port")
+	}
+
+	httpEndpoint := fmt.Sprintf("%s:%d", externalIP, httpPort)
+	memdEndpoint := fmt.Sprintf("%s:%d", externalIP, memdPort)
+
+	agent, err := gocbcorex.CreateAgent(ctx, gocbcorex.AgentOptions{
+		Logger:     d.logger.Named("agent"),
+		TLSConfig:  nil,
+		BucketName: bucketName,
+		Authenticator: &gocbcorex.PasswordAuthenticator{
+			Username: username,
+			Password: password,
+		},
+		SeedConfig: gocbcorex.SeedConfig{
+			HTTPAddrs: []string{httpEndpoint},
+			MemdAddrs: []string{memdEndpoint},
+		},
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create gocbcorex agent")
+	}
+
+	return agent, nil
 }
 
 func (d *Deployer) formatExpiry(expiry time.Time) string {
@@ -640,16 +721,35 @@ func (d *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 	return errors.New("caodeploy does not support deleting users")
 }
 
+func withAgent[T any](d *Deployer, ctx context.Context, clusterID string, fn func(agent *gocbcorex.Agent) (T, error)) (T, error) {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		var zero T
+		return zero, errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	return fn(agent)
+}
+
 func (d *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
-	return nil, errors.New("caodeploy does not support listing buckets")
+	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) ([]deployment.BucketInfo, error) {
+		return commondeploy.ClusterHelper{Agent: agent}.ListBuckets(ctx)
+	})
 }
 
 func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
-	return errors.New("caodeploy does not support creating buckets")
+	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
+		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateBucket(ctx, opts)
+	})
+	return err
 }
 
 func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
-	return errors.New("caodeploy does not support deleting buckets")
+	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
+		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteBucket(ctx, bucketName)
+	})
+	return err
 }
 
 func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucketName string) error {
@@ -684,27 +784,43 @@ func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, er
 }
 
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
-	return "", errors.New("caodeploy does not support executing queries")
+	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (string, error) {
+		return commondeploy.ClusterHelper{Agent: agent}.ExecuteQuery(ctx, query)
+	})
 }
 
 func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {
-	return nil, errors.New("caodeploy does not support getting collections")
+	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) ([]deployment.ScopeInfo, error) {
+		return commondeploy.ClusterHelper{Agent: agent}.ListCollections(ctx, bucketName)
+	})
 }
 
 func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	return errors.New("caodeploy does not support creating scopes")
+	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
+		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateScope(ctx, bucketName, scopeName)
+	})
+	return err
 }
 
 func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	return errors.New("caodeploy does not support creating collections")
+	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
+		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateCollection(ctx, bucketName, scopeName, collectionName)
+	})
+	return err
 }
 
 func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	return errors.New("caodeploy does not support deleting scopes")
+	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
+		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteScope(ctx, bucketName, scopeName)
+	})
+	return err
 }
 
 func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	return errors.New("caodeploy does not support deleting collections")
+	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
+		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteCollection(ctx, bucketName, scopeName, collectionName)
+	})
+	return err
 }
 
 func (d *Deployer) BlockNodeTraffic(ctx context.Context, clusterID string, nodeIDs []string, trafficType deployment.BlockNodeTrafficType, rejectType string) error {
