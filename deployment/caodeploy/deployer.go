@@ -109,8 +109,9 @@ func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName st
 			Password: password,
 		},
 		SeedConfig: gocbcorex.SeedConfig{
-			HTTPAddrs: []string{httpEndpoint},
-			MemdAddrs: []string{memdEndpoint},
+			HTTPAddrs:   []string{httpEndpoint},
+			MemdAddrs:   []string{memdEndpoint},
+			NetworkType: "external",
 		},
 	})
 	if err != nil {
