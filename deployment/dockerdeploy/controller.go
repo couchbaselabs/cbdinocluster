@@ -1290,6 +1290,12 @@ func (c *Controller) SetTrafficControl(
 			return errors.Wrap(err, "failed to create INPUT iptables rule to allow inter-node traffic")
 		}
 
+		// allow loopback traffic
+		err = iptableAllow("INPUT", "127.0.0.0/8")
+		if err != nil {
+			return errors.Wrap(err, "failed to create INPUT iptables rule to allow loopback traffic")
+		}
+
 		// block everyone else
 		err = iptableBlockAll("INPUT")
 		if err != nil {
