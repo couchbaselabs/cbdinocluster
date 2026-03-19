@@ -996,7 +996,7 @@ func (c *Controller) waitCouchbaseClusterAvailable(
 		}
 
 		return true, nil
-	}, 10*time.Minute)
+	}, 20*time.Minute)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for couchbase cluster")
 	}
