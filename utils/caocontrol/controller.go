@@ -415,6 +415,93 @@ func (c *Controller) CreateNamespace(ctx context.Context, namespace string, labe
 	return nil
 }
 
+func (c *Controller) forceDeleteNamespaceResources(ctx context.Context, namespace string) error {
+	c.logger.Info("force deleting all resources in namespace", zap.String("namespace", namespace))
+
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	discCli, err := discovery.NewDiscoveryClientForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create discovery client")
+	}
+
+	_, apiResourceLists, err := discCli.ServerGroupsAndResources()
+	if err != nil {
+		c.logger.Warn("failed to fully discover server resources, proceeding with partial list",
+			zap.Error(err))
+	}
+
+	gracePeriod := int64(0)
+	propagation := metav1.DeletePropagationBackground
+	forceDeleteOpts := metav1.DeleteOptions{
+		GracePeriodSeconds: &gracePeriod,
+		PropagationPolicy:  &propagation,
+	}
+
+	for _, apiResourceList := range apiResourceLists {
+		gv, err := schema.ParseGroupVersion(apiResourceList.GroupVersion)
+		if err != nil {
+			continue
+		}
+
+		for _, apiResource := range apiResourceList.APIResources {
+			if !apiResource.Namespaced || strings.Contains(apiResource.Name, "/") {
+				continue
+			}
+
+			hasVerb := func(verb string) bool {
+				for _, v := range apiResource.Verbs {
+					if v == verb {
+						return true
+					}
+				}
+				return false
+			}
+
+			if !hasVerb("list") || !hasVerb("deletecollection") {
+				continue
+			}
+
+			gvr := schema.GroupVersionResource{
+				Group:    gv.Group,
+				Version:  gv.Version,
+				Resource: apiResource.Name,
+			}
+
+			// Strip finalizers from any resources that have them, so they don't get stuck.
+			if hasVerb("update") {
+				resList, err := dyna.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+				if err != nil {
+					continue
+				}
+
+				for _, item := range resList.Items {
+					if len(item.GetFinalizers()) > 0 {
+						c.logger.Debug("removing finalizers",
+							zap.String("resource", gvr.String()),
+							zap.String("name", item.GetName()))
+						item.SetFinalizers(nil)
+						_, _ = dyna.Resource(gvr).Namespace(namespace).Update(ctx, &item, metav1.UpdateOptions{})
+					}
+				}
+			}
+
+			// Force delete all resources of this type in one shot.
+			err = dyna.Resource(gvr).Namespace(namespace).DeleteCollection(ctx, forceDeleteOpts, metav1.ListOptions{})
+			if err != nil {
+				c.logger.Debug("failed to delete collection, skipping",
+					zap.String("resource", gvr.String()),
+					zap.Error(err))
+			}
+		}
+	}
+
+	return nil
+}
+
 func (c *Controller) DeleteNamespaces(ctx context.Context, namespaceNames []string) error {
 	kubes, err := kubernetes.NewForConfig(c.restConfig)
 	if err != nil {
@@ -422,6 +509,15 @@ func (c *Controller) DeleteNamespaces(ctx context.Context, namespaceNames []stri
 	}
 
 	for _, namespace := range namespaceNames {
+		c.logger.Info("force cleaning namespace before deletion", zap.String("namespace", namespace))
+
+		err = c.forceDeleteNamespaceResources(ctx, namespace)
+		if err != nil {
+			c.logger.Warn("failed to force delete namespace resources, attempting namespace deletion anyway",
+				zap.String("namespace", namespace),
+				zap.Error(err))
+		}
+
 		c.logger.Info("deleting namespace", zap.String("namespace", namespace))
 
 		err = kubes.CoreV1().Namespaces().Delete(ctx, namespace, metav1.DeleteOptions{})
