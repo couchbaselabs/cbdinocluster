@@ -243,7 +243,7 @@ func (d *Deployer) generateClusterSpec(
 			return nil, nil, errors.Wrap(err, "failed to generate cao server services list")
 		}
 
-		serversRes = append(serversRes, map[string]interface{}{
+		serverEntry := map[string]interface{}{
 			"size":     nodeGrp.Count,
 			"name":     fmt.Sprintf("group_%d", nodeGrpIdx),
 			"services": caoServices,
@@ -256,7 +256,18 @@ func (d *Deployer) generateClusterSpec(
 					},
 				},
 			},
-		})
+		}
+
+		if isOpenShift {
+			serverEntry["resources"] = map[string]interface{}{
+				"requests": map[string]interface{}{
+					"cpu":    "2",
+					"memory": "4Gi",
+				},
+			}
+		}
+
+		serversRes = append(serversRes, serverEntry)
 	}
 
 	cngSpec := make(map[string]interface{})
