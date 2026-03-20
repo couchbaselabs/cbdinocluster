@@ -441,6 +441,20 @@ func (c *Controller) forceDeleteNamespaceResources(ctx context.Context, namespac
 		PropagationPolicy:  &propagation,
 	}
 
+	// These group-version-resources trigger server-side deprecation warnings and
+	// don't need manual cleanup (they are either auto-managed or legacy resources).
+	isDeprecatedGVR := func(gv schema.GroupVersion, resource string) bool {
+		// v1 Endpoints is deprecated in v1.33+; managed automatically by the control plane.
+		if gv.Group == "" && resource == "endpoints" {
+			return true
+		}
+		// apps.openshift.io DeploymentConfig is deprecated in v4.14+.
+		if gv.Group == "apps.openshift.io" && resource == "deploymentconfigs" {
+			return true
+		}
+		return false
+	}
+
 	for _, apiResourceList := range apiResourceLists {
 		gv, err := schema.ParseGroupVersion(apiResourceList.GroupVersion)
 		if err != nil {
@@ -449,6 +463,10 @@ func (c *Controller) forceDeleteNamespaceResources(ctx context.Context, namespac
 
 		for _, apiResource := range apiResourceList.APIResources {
 			if !apiResource.Namespaced || strings.Contains(apiResource.Name, "/") {
+				continue
+			}
+
+			if isDeprecatedGVR(gv, apiResource.Name) {
 				continue
 			}
 
