@@ -416,22 +416,11 @@ func (c *Controller) CreateNamespace(ctx context.Context, namespace string, labe
 }
 
 func (c *Controller) forceDeleteNamespaceResources(ctx context.Context, namespace string) error {
-	c.logger.Info("force deleting all resources in namespace", zap.String("namespace", namespace))
+	c.logger.Info("force deleting critical resources in namespace", zap.String("namespace", namespace))
 
 	dyna, err := dynamic.NewForConfig(c.restConfig)
 	if err != nil {
 		return errors.Wrap(err, "failed to create dynamic client")
-	}
-
-	discCli, err := discovery.NewDiscoveryClientForConfig(c.restConfig)
-	if err != nil {
-		return errors.Wrap(err, "failed to create discovery client")
-	}
-
-	_, apiResourceLists, err := discCli.ServerGroupsAndResources()
-	if err != nil {
-		c.logger.Warn("failed to fully discover server resources, proceeding with partial list",
-			zap.Error(err))
 	}
 
 	gracePeriod := int64(0)
@@ -441,79 +430,39 @@ func (c *Controller) forceDeleteNamespaceResources(ctx context.Context, namespac
 		PropagationPolicy:  &propagation,
 	}
 
-	// These group-version-resources trigger server-side deprecation warnings and
-	// don't need manual cleanup (they are either auto-managed or legacy resources).
-	isDeprecatedGVR := func(gv schema.GroupVersion, resource string) bool {
-		// v1 Endpoints is deprecated in v1.33+; managed automatically by the control plane.
-		if gv.Group == "" && resource == "endpoints" {
-			return true
-		}
-		// apps.openshift.io DeploymentConfig is deprecated in v4.14+.
-		if gv.Group == "apps.openshift.io" && resource == "deploymentconfigs" {
-			return true
-		}
-		return false
+	// Only force-delete couchbaseclusters and pods, as these are the resources
+	// that tend to get stuck and block namespace deletion.
+	gvrsToForceDelete := []schema.GroupVersionResource{
+		{Group: "couchbase.com", Version: "v2", Resource: "couchbaseclusters"},
+		{Group: "", Version: "v1", Resource: "pods"},
 	}
 
-	for _, apiResourceList := range apiResourceLists {
-		gv, err := schema.ParseGroupVersion(apiResourceList.GroupVersion)
+	for _, gvr := range gvrsToForceDelete {
+		// Strip finalizers from any resources that have them, so they don't get stuck.
+		resList, err := dyna.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
+			c.logger.Debug("failed to list resources, skipping",
+				zap.String("resource", gvr.String()),
+				zap.Error(err))
 			continue
 		}
 
-		for _, apiResource := range apiResourceList.APIResources {
-			if !apiResource.Namespaced || strings.Contains(apiResource.Name, "/") {
-				continue
-			}
-
-			if isDeprecatedGVR(gv, apiResource.Name) {
-				continue
-			}
-
-			hasVerb := func(verb string) bool {
-				for _, v := range apiResource.Verbs {
-					if v == verb {
-						return true
-					}
-				}
-				return false
-			}
-
-			if !hasVerb("list") || !hasVerb("deletecollection") {
-				continue
-			}
-
-			gvr := schema.GroupVersionResource{
-				Group:    gv.Group,
-				Version:  gv.Version,
-				Resource: apiResource.Name,
-			}
-
-			// Strip finalizers from any resources that have them, so they don't get stuck.
-			if hasVerb("update") {
-				resList, err := dyna.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
-				if err != nil {
-					continue
-				}
-
-				for _, item := range resList.Items {
-					if len(item.GetFinalizers()) > 0 {
-						c.logger.Debug("removing finalizers",
-							zap.String("resource", gvr.String()),
-							zap.String("name", item.GetName()))
-						item.SetFinalizers(nil)
-						_, _ = dyna.Resource(gvr).Namespace(namespace).Update(ctx, &item, metav1.UpdateOptions{})
-					}
-				}
-			}
-
-			// Force delete all resources of this type in one shot.
-			err = dyna.Resource(gvr).Namespace(namespace).DeleteCollection(ctx, forceDeleteOpts, metav1.ListOptions{})
-			if err != nil {
-				c.logger.Debug("failed to delete collection, skipping",
+		for _, item := range resList.Items {
+			if len(item.GetFinalizers()) > 0 {
+				c.logger.Debug("removing finalizers",
 					zap.String("resource", gvr.String()),
-					zap.Error(err))
+					zap.String("name", item.GetName()))
+				item.SetFinalizers(nil)
+				_, _ = dyna.Resource(gvr).Namespace(namespace).Update(ctx, &item, metav1.UpdateOptions{})
 			}
+		}
+
+		// Force delete all resources of this type in one shot.
+		err = dyna.Resource(gvr).Namespace(namespace).DeleteCollection(ctx, forceDeleteOpts, metav1.ListOptions{})
+		if err != nil {
+			c.logger.Debug("failed to delete collection, skipping",
+				zap.String("resource", gvr.String()),
+				zap.Error(err))
 		}
 	}
 
