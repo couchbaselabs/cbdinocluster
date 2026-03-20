@@ -14,6 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.212.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.51.1
 	github.com/couchbase/gocbcorex v0.0.0-20260318194135-129762eb8845
+	github.com/couchbaselabs/gocbconnstr/v2 v2.0.0-20230515165046-68b522a21131
 	github.com/denisbrodbeck/machineid v1.0.1
 	github.com/docker/docker v28.1.1+incompatible
 	github.com/google/go-github/v53 v53.2.0

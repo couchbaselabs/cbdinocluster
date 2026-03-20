@@ -33,6 +33,17 @@ var DEFAULT_SERVICES []clusterdef.Service = []clusterdef.Service{
 	clusterdef.SearchService,
 }
 
+func withAgent[T any](d *Deployer, ctx context.Context, clusterID string, fn func(agent *gocbcorex.Agent) (T, error)) (T, error) {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		var zero T
+		return zero, errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	return fn(agent)
+}
+
 type Deployer struct {
 	logger        *zap.Logger
 	dockerCli     *client.Client
@@ -498,17 +509,6 @@ func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName st
 	return agent, nil
 }
 
-func withAgent[T any](d *Deployer, ctx context.Context, clusterID string, fn func(agent *gocbcorex.Agent) (T, error)) (T, error) {
-	agent, err := d.getAgent(ctx, clusterID, "")
-	if err != nil {
-		var zero T
-		return zero, errors.Wrap(err, "failed to get cluster agent")
-	}
-	defer agent.Close()
-
-	return fn(agent)
-}
-
 func (d *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
 	controller, err := d.getController(ctx, clusterID)
 	if err != nil {
@@ -594,7 +594,7 @@ func (d *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 
 func (d *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
 	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) ([]deployment.BucketInfo, error) {
-		return commondeploy.ClusterHelper{Agent: agent}.ListBuckets(ctx)
+		return commondeploy.AgentHelper{Agent: agent}.ListBuckets(ctx)
 	})
 }
 
@@ -629,14 +629,14 @@ func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucke
 
 func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
 	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateBucket(ctx, opts)
+		return struct{}{}, commondeploy.AgentHelper{Agent: agent}.CreateBucket(ctx, opts)
 	})
 	return err
 }
 
 func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
 	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteBucket(ctx, bucketName)
+		return struct{}{}, commondeploy.AgentHelper{Agent: agent}.DeleteBucket(ctx, bucketName)
 	})
 	return err
 }
@@ -701,40 +701,40 @@ func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, er
 
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
 	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (string, error) {
-		return commondeploy.ClusterHelper{Agent: agent}.ExecuteQuery(ctx, query)
+		return commondeploy.AgentHelper{Agent: agent}.ExecuteQuery(ctx, query)
 	})
 }
 
 func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {
 	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) ([]deployment.ScopeInfo, error) {
-		return commondeploy.ClusterHelper{Agent: agent}.ListCollections(ctx, bucketName)
+		return commondeploy.AgentHelper{Agent: agent}.ListCollections(ctx, bucketName)
 	})
 }
 
 func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
 	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateScope(ctx, bucketName, scopeName)
+		return struct{}{}, commondeploy.AgentHelper{Agent: agent}.CreateScope(ctx, bucketName, scopeName)
 	})
 	return err
 }
 
 func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
 	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateCollection(ctx, bucketName, scopeName, collectionName)
+		return struct{}{}, commondeploy.AgentHelper{Agent: agent}.CreateCollection(ctx, bucketName, scopeName, collectionName)
 	})
 	return err
 }
 
 func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
 	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteScope(ctx, bucketName, scopeName)
+		return struct{}{}, commondeploy.AgentHelper{Agent: agent}.DeleteScope(ctx, bucketName, scopeName)
 	})
 	return err
 }
 
 func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
 	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteCollection(ctx, bucketName, scopeName, collectionName)
+		return struct{}{}, commondeploy.AgentHelper{Agent: agent}.DeleteCollection(ctx, bucketName, scopeName, collectionName)
 	})
 	return err
 }

@@ -12,11 +12,11 @@ import (
 	"github.com/pkg/errors"
 )
 
-type ClusterHelper struct {
+type AgentHelper struct {
 	Agent *gocbcorex.Agent
 }
 
-func (h ClusterHelper) ListBuckets(ctx context.Context) ([]deployment.BucketInfo, error) {
+func (h AgentHelper) ListBuckets(ctx context.Context) ([]deployment.BucketInfo, error) {
 	resp, err := h.Agent.GetAllBuckets(ctx, &cbmgmtx.GetAllBucketsOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list buckets")
@@ -32,7 +32,7 @@ func (h ClusterHelper) ListBuckets(ctx context.Context) ([]deployment.BucketInfo
 	return buckets, nil
 }
 
-func (h ClusterHelper) CreateBucket(ctx context.Context, opts *deployment.CreateBucketOptions) error {
+func (h AgentHelper) CreateBucket(ctx context.Context, opts *deployment.CreateBucketOptions) error {
 	ramQuotaMb := 256
 	if opts.RamQuotaMB > 0 {
 		ramQuotaMb = opts.RamQuotaMB
@@ -74,7 +74,7 @@ func (h ClusterHelper) CreateBucket(ctx context.Context, opts *deployment.Create
 	return nil
 }
 
-func (h ClusterHelper) DeleteBucket(ctx context.Context, bucketName string) error {
+func (h AgentHelper) DeleteBucket(ctx context.Context, bucketName string) error {
 	err := h.Agent.DeleteBucket(ctx, &cbmgmtx.DeleteBucketOptions{
 		BucketName: bucketName,
 	})
@@ -93,33 +93,7 @@ func (h ClusterHelper) DeleteBucket(ctx context.Context, bucketName string) erro
 	return nil
 }
 
-func (h ClusterHelper) ExecuteQuery(ctx context.Context, query string) (string, error) {
-	results, err := h.Agent.Query(ctx, &gocbcorex.QueryOptions{
-		Statement: query,
-	})
-	if err != nil {
-		return "", errors.Wrap(err, "failed to execute query")
-	}
-
-	rows := make([]json.RawMessage, 0)
-	for results.HasMoreRows() {
-		row, err := results.ReadRow()
-		if err != nil {
-			return "", errors.Wrap(err, "failed to read row")
-		}
-
-		rows = append(rows, row)
-	}
-
-	rowsBytes, err := json.Marshal(rows)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to serialize rows")
-	}
-
-	return string(rowsBytes), nil
-}
-
-func (h ClusterHelper) ListCollections(ctx context.Context, bucketName string) ([]deployment.ScopeInfo, error) {
+func (h AgentHelper) ListCollections(ctx context.Context, bucketName string) ([]deployment.ScopeInfo, error) {
 	manifest, err := h.Agent.GetCollectionManifest(ctx, &cbmgmtx.GetCollectionManifestOptions{
 		BucketName: bucketName,
 	})
@@ -144,7 +118,7 @@ func (h ClusterHelper) ListCollections(ctx context.Context, bucketName string) (
 	return scopes, nil
 }
 
-func (h ClusterHelper) CreateScope(ctx context.Context, bucketName, scopeName string) error {
+func (h AgentHelper) CreateScope(ctx context.Context, bucketName, scopeName string) error {
 	_, err := h.Agent.CreateScope(ctx, &cbmgmtx.CreateScopeOptions{
 		BucketName: bucketName,
 		ScopeName:  scopeName,
@@ -156,7 +130,7 @@ func (h ClusterHelper) CreateScope(ctx context.Context, bucketName, scopeName st
 	return nil
 }
 
-func (h ClusterHelper) CreateCollection(ctx context.Context, bucketName, scopeName, collectionName string) error {
+func (h AgentHelper) CreateCollection(ctx context.Context, bucketName, scopeName, collectionName string) error {
 	_, err := h.Agent.CreateCollection(ctx, &cbmgmtx.CreateCollectionOptions{
 		BucketName:     bucketName,
 		ScopeName:      scopeName,
@@ -169,7 +143,7 @@ func (h ClusterHelper) CreateCollection(ctx context.Context, bucketName, scopeNa
 	return nil
 }
 
-func (h ClusterHelper) DeleteScope(ctx context.Context, bucketName, scopeName string) error {
+func (h AgentHelper) DeleteScope(ctx context.Context, bucketName, scopeName string) error {
 	_, err := h.Agent.DeleteScope(ctx, &cbmgmtx.DeleteScopeOptions{
 		BucketName: bucketName,
 		ScopeName:  scopeName,
@@ -181,7 +155,7 @@ func (h ClusterHelper) DeleteScope(ctx context.Context, bucketName, scopeName st
 	return nil
 }
 
-func (h ClusterHelper) DeleteCollection(ctx context.Context, bucketName, scopeName, collectionName string) error {
+func (h AgentHelper) DeleteCollection(ctx context.Context, bucketName, scopeName, collectionName string) error {
 	_, err := h.Agent.DeleteCollection(ctx, &cbmgmtx.DeleteCollectionOptions{
 		BucketName:     bucketName,
 		ScopeName:      scopeName,
@@ -192,4 +166,30 @@ func (h ClusterHelper) DeleteCollection(ctx context.Context, bucketName, scopeNa
 	}
 
 	return nil
+}
+
+func (h AgentHelper) ExecuteQuery(ctx context.Context, query string) (string, error) {
+	results, err := h.Agent.Query(ctx, &gocbcorex.QueryOptions{
+		Statement: query,
+	})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to execute query")
+	}
+
+	rows := make([]json.RawMessage, 0)
+	for results.HasMoreRows() {
+		row, err := results.ReadRow()
+		if err != nil {
+			return "", errors.Wrap(err, "failed to read row")
+		}
+
+		rows = append(rows, row)
+	}
+
+	rowsBytes, err := json.Marshal(rows)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to serialize rows")
+	}
+
+	return string(rowsBytes), nil
 }

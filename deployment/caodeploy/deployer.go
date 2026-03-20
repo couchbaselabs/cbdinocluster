@@ -6,11 +6,14 @@ import (
 	"time"
 
 	"github.com/couchbase/gocbcorex"
+	"github.com/couchbase/gocbcorex/cbhttpx"
+	"github.com/couchbase/gocbcorex/cbmgmtx"
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/deployment/commondeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/cbdcuuid"
+	"github.com/couchbaselabs/gocbconnstr/v2"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -22,6 +25,27 @@ const (
 	UiServiceName  = CouchbaseClusterName + "-ui"
 	CngServiceName = CouchbaseClusterName + "-cloud-native-gateway-service"
 )
+
+func withAgent[T any](d *Deployer, ctx context.Context, clusterID string, fn func(agent *gocbcorex.Agent) (T, error)) (T, error) {
+	agent, err := d.getAgent(ctx, clusterID, "")
+	if err != nil {
+		var zero T
+		return zero, errors.Wrap(err, "failed to get cluster agent")
+	}
+	defer agent.Close()
+
+	return fn(agent)
+}
+
+func withMgmtx[T any](d *Deployer, ctx context.Context, clusterID string, fn func(helper commondeploy.MgmtxHelper) (T, error)) (T, error) {
+	mgmt, err := d.getMgmtx(ctx, clusterID)
+	if err != nil {
+		var zero T
+		return zero, errors.Wrap(err, "failed to get mgmt client")
+	}
+
+	return fn(commondeploy.MgmtxHelper{Mgmt: mgmt})
+}
 
 type Deployer struct {
 	logger *zap.Logger
@@ -42,63 +66,57 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	}, nil
 }
 
-func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName string) (*gocbcorex.Agent, error) {
+func (d *Deployer) getAdminAuth(ctx context.Context, clusterID string) (string, string, error) {
 	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get cluster namespace")
+		return "", "", errors.Wrap(err, "failed to get cluster namespace")
 	}
 
 	secret, err := d.client.GetSecret(ctx, namespaceName, "cbdc2-admin-auth")
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get admin auth secret")
+		return "", "", errors.Wrap(err, "failed to get admin auth secret")
 	}
 
 	username := string(secret.Data[corev1.BasicAuthUsernameKey])
 	password := string(secret.Data[corev1.BasicAuthPasswordKey])
 
-	service, err := d.client.GetService(ctx, namespaceName, CouchbaseClusterName+"-ui")
+	return username, password, nil
+}
+
+func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName string) (*gocbcorex.Agent, error) {
+	username, password, err := d.getAdminAuth(ctx, clusterID)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get cluster ui service")
+		return nil, errors.Wrap(err, "failed to get admin auth")
 	}
 
-	nodes, err := d.client.GetNodes(ctx)
+	connectInfo, err := d.GetConnectInfo(ctx, clusterID)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get k8s nodes")
+		return nil, errors.Wrap(err, "failed to get connect info")
 	}
 
-	var externalIP string
-	for _, node := range nodes.Items {
-		for _, address := range node.Status.Addresses {
-			externalIP = address.Address
-			break
-		}
-		if externalIP != "" {
-			break
-		}
-	}
-	if externalIP == "" {
-		return nil, errors.New("could not identify node IP to use")
+	if connectInfo.ConnStr == "" {
+		return nil, errors.New("no data endpoint available")
 	}
 
-	var httpPort int32
-	var memdPort int32
-	for _, port := range service.Spec.Ports {
-		switch port.Name {
-		case "couchbase-ui":
-			httpPort = port.NodePort
-		case "data":
-			memdPort = port.NodePort
-		}
-	}
-	if httpPort == 0 {
-		return nil, errors.New("could not identify mgmt port")
-	}
-	if memdPort == 0 {
-		return nil, errors.New("could not identify data port")
+	baseSpec, err := gocbconnstr.Parse(connectInfo.ConnStr)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to parse connstr")
 	}
 
-	httpEndpoint := fmt.Sprintf("%s:%d", externalIP, httpPort)
-	memdEndpoint := fmt.Sprintf("%s:%d", externalIP, memdPort)
+	resolvedSpec, err := gocbconnstr.Resolve(baseSpec)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to resolve connstr")
+	}
+
+	var httpAddrs []string
+	for _, host := range resolvedSpec.HttpHosts {
+		httpAddrs = append(httpAddrs, fmt.Sprintf("%s:%d", host.Host, host.Port))
+	}
+
+	var memdAddrs []string
+	for _, host := range resolvedSpec.MemdHosts {
+		memdAddrs = append(memdAddrs, fmt.Sprintf("%s:%d", host.Host, host.Port))
+	}
 
 	agent, err := gocbcorex.CreateAgent(ctx, gocbcorex.AgentOptions{
 		Logger:     d.logger.Named("agent"),
@@ -109,8 +127,8 @@ func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName st
 			Password: password,
 		},
 		SeedConfig: gocbcorex.SeedConfig{
-			HTTPAddrs:   []string{httpEndpoint},
-			MemdAddrs:   []string{memdEndpoint},
+			HTTPAddrs:   httpAddrs,
+			MemdAddrs:   memdAddrs,
 			NetworkType: "external",
 		},
 	})
@@ -119,6 +137,35 @@ func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName st
 	}
 
 	return agent, nil
+}
+
+func (d *Deployer) getMgmtx(ctx context.Context, clusterID string) (*cbmgmtx.Management, error) {
+	username, password, err := d.getAdminAuth(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get admin auth")
+	}
+
+	connectInfo, err := d.GetConnectInfo(ctx, clusterID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get connect info")
+	}
+
+	if connectInfo.Mgmt == "" && connectInfo.MgmtTls == "" {
+		return nil, errors.New("no management endpoint available")
+	}
+
+	endpoint := connectInfo.Mgmt
+	if endpoint == "" {
+		endpoint = connectInfo.MgmtTls
+	}
+
+	return &cbmgmtx.Management{
+		Endpoint: endpoint,
+		Auth: &cbhttpx.BasicAuth{
+			Username: username,
+			Password: password,
+		},
+	}, nil
 }
 
 func (d *Deployer) formatExpiry(expiry time.Time) string {
@@ -378,6 +425,15 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		}
 	}
 
+	if isOpenShift {
+		// In OpenShift, the only way to access the cluster is through a route, so we
+		// set it up by default every time the cluster is allocated.
+		err = d.EnableIngresses(ctx, clusterID.String())
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to enable ingresses")
+		}
+	}
+
 	return ClusterInfo{
 		ClusterID: clusterID.String(),
 		Expiry:    time.Time{},
@@ -587,6 +643,22 @@ func (d *Deployer) DisableIngresses(ctx context.Context, clusterID string) error
 }
 
 func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
+	isOpenShift, err := d.client.IsOpenShift(ctx)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to detect whether we are using openshift")
+	}
+
+	if isOpenShift {
+		// In OpenShift, it's not possible to directly address the cluster externally, so we just
+		// use the ingress connectivity information unambiguously.
+		ingressConnInfo, err := d.GetIngressConnectInfo(ctx, clusterID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get ingress connect info")
+		}
+
+		return ingressConnInfo, nil
+	}
+
 	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
 		return nil, err
@@ -732,33 +804,22 @@ func (d *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 	return errors.New("caodeploy does not support deleting users")
 }
 
-func withAgent[T any](d *Deployer, ctx context.Context, clusterID string, fn func(agent *gocbcorex.Agent) (T, error)) (T, error) {
-	agent, err := d.getAgent(ctx, clusterID, "")
-	if err != nil {
-		var zero T
-		return zero, errors.Wrap(err, "failed to get cluster agent")
-	}
-	defer agent.Close()
-
-	return fn(agent)
-}
-
 func (d *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deployment.BucketInfo, error) {
-	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) ([]deployment.BucketInfo, error) {
-		return commondeploy.ClusterHelper{Agent: agent}.ListBuckets(ctx)
+	return withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) ([]deployment.BucketInfo, error) {
+		return h.ListBuckets(ctx)
 	})
 }
 
 func (d *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *deployment.CreateBucketOptions) error {
-	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateBucket(ctx, opts)
+	_, err := withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) (struct{}, error) {
+		return struct{}{}, h.CreateBucket(ctx, opts)
 	})
 	return err
 }
 
 func (d *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {
-	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteBucket(ctx, bucketName)
+	_, err := withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) (struct{}, error) {
+		return struct{}{}, h.DeleteBucket(ctx, bucketName)
 	})
 	return err
 }
@@ -796,40 +857,40 @@ func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, er
 
 func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
 	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (string, error) {
-		return commondeploy.ClusterHelper{Agent: agent}.ExecuteQuery(ctx, query)
+		return commondeploy.AgentHelper{Agent: agent}.ExecuteQuery(ctx, query)
 	})
 }
 
 func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {
-	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) ([]deployment.ScopeInfo, error) {
-		return commondeploy.ClusterHelper{Agent: agent}.ListCollections(ctx, bucketName)
+	return withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) ([]deployment.ScopeInfo, error) {
+		return h.ListCollections(ctx, bucketName)
 	})
 }
 
 func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateScope(ctx, bucketName, scopeName)
+	_, err := withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) (struct{}, error) {
+		return struct{}{}, h.CreateScope(ctx, bucketName, scopeName)
 	})
 	return err
 }
 
 func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.CreateCollection(ctx, bucketName, scopeName, collectionName)
+	_, err := withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) (struct{}, error) {
+		return struct{}{}, h.CreateCollection(ctx, bucketName, scopeName, collectionName)
 	})
 	return err
 }
 
 func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteScope(ctx, bucketName, scopeName)
+	_, err := withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) (struct{}, error) {
+		return struct{}{}, h.DeleteScope(ctx, bucketName, scopeName)
 	})
 	return err
 }
 
 func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	_, err := withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (struct{}, error) {
-		return struct{}{}, commondeploy.ClusterHelper{Agent: agent}.DeleteCollection(ctx, bucketName, scopeName, collectionName)
+	_, err := withMgmtx(d, ctx, clusterID, func(h commondeploy.MgmtxHelper) (struct{}, error) {
+		return struct{}{}, h.DeleteCollection(ctx, bucketName, scopeName, collectionName)
 	})
 	return err
 }
