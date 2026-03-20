@@ -501,46 +501,56 @@ func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string) error 
 		return err
 	}
 
-	d.logger.Info("creating ui route")
-
-	// this must be a short name or we hit dns name length limits
-	err = d.client.CreateRoute(ctx, namespace, "ui", map[string]interface{}{
-		"tls": map[string]interface{}{
-			"termination": "edge",
-		},
-		"to": map[string]interface{}{
-			"kind": "Service",
-			"name": UiServiceName,
-		},
-		"port": map[string]interface{}{
-			"targetPort": 8091,
-		},
-	})
+	_, err = d.client.GetRouteHost(ctx, namespace, "ui")
 	if err != nil {
-		return errors.Wrap(err, "failed to create ui route")
+		d.logger.Info("creating ui route")
+
+		// this must be a short name or we hit dns name length limits
+		err = d.client.CreateRoute(ctx, namespace, "ui", map[string]interface{}{
+			"tls": map[string]interface{}{
+				"termination": "edge",
+			},
+			"to": map[string]interface{}{
+				"kind": "Service",
+				"name": UiServiceName,
+			},
+			"port": map[string]interface{}{
+				"targetPort": 8091,
+			},
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to create ui route")
+		}
+	} else {
+		d.logger.Info("ui route already exists, skipping creation")
 	}
 
 	_, err = d.client.GetService(ctx, namespace, CngServiceName)
 	if err != nil {
 		d.logger.Info("no cng service detected")
 	} else {
-		d.logger.Info("cng service detected, creating cng route")
-
-		// this must be a short name or we hit dns name length limits
-		err = d.client.CreateRoute(ctx, namespace, "cng", map[string]interface{}{
-			"tls": map[string]interface{}{
-				"termination": "passthrough",
-			},
-			"to": map[string]interface{}{
-				"kind": "Service",
-				"name": CngServiceName,
-			},
-			"port": map[string]interface{}{
-				"targetPort": 18098,
-			},
-		})
+		_, err = d.client.GetRouteHost(ctx, namespace, "cng")
 		if err != nil {
-			return errors.Wrap(err, "failed to create cng route")
+			d.logger.Info("cng service detected, creating cng route")
+
+			// this must be a short name or we hit dns name length limits
+			err = d.client.CreateRoute(ctx, namespace, "cng", map[string]interface{}{
+				"tls": map[string]interface{}{
+					"termination": "passthrough",
+				},
+				"to": map[string]interface{}{
+					"kind": "Service",
+					"name": CngServiceName,
+				},
+				"port": map[string]interface{}{
+					"targetPort": 18098,
+				},
+			})
+			if err != nil {
+				return errors.Wrap(err, "failed to create cng route")
+			}
+		} else {
+			d.logger.Info("cng route already exists, skipping creation")
 		}
 	}
 
