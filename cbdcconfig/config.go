@@ -67,10 +67,11 @@ type Config_Docker struct {
 }
 
 type Config_K8s struct {
-	Enabled    StringBool `yaml:"enabled"`
-	CaoTools   string     `yaml:"cao-tools"`
-	KubeConfig string     `yaml:"kubeconfig"`
-	Context    string     `yaml:"context"`
+	Enabled       StringBool `yaml:"enabled"`
+	CaoTools      string     `yaml:"cao-tools"`
+	KubeConfig    string     `yaml:"kubeconfig"`
+	Context       string     `yaml:"context"`
+	SharedGateway string     `yaml:"shared-gateway"`
 }
 
 type Config_GitHub struct {

@@ -48,21 +48,24 @@ func withMgmtx[T any](d *Deployer, ctx context.Context, clusterID string, fn fun
 }
 
 type Deployer struct {
-	logger *zap.Logger
-	client *caocontrol.Controller
+	logger        *zap.Logger
+	client        *caocontrol.Controller
+	sharedGateway string
 }
 
 var _ deployment.Deployer = (*Deployer)(nil)
 
 type NewDeployerOptions struct {
-	Logger *zap.Logger
-	Client *caocontrol.Controller
+	Logger        *zap.Logger
+	Client        *caocontrol.Controller
+	SharedGateway string
 }
 
 func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	return &Deployer{
-		logger: opts.Logger,
-		client: opts.Client,
+		logger:        opts.Logger,
+		client:        opts.Client,
+		sharedGateway: opts.SharedGateway,
 	}, nil
 }
 
@@ -553,6 +556,104 @@ func (d *Deployer) RemoveAll(ctx context.Context) error {
 	return nil
 }
 
+func (d *Deployer) getSharedGatewayBaseDomain(ctx context.Context) (string, error) {
+	baseDomain, err := d.client.GetIstioGatewayAnnotation(ctx, d.sharedGateway, "cbdc.couchbase.com/base-domain")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get shared gateway base domain")
+	}
+	if baseDomain == "" {
+		return "", errors.New("shared gateway is missing cbdc.couchbase.com/base-domain annotation")
+	}
+	return baseDomain, nil
+}
+
+func (d *Deployer) enableIngressesViaVirtualService(ctx context.Context, clusterID string, namespace string) error {
+	baseDomain, err := d.getSharedGatewayBaseDomain(ctx)
+	if err != nil {
+		return err
+	}
+
+	cngHost := fmt.Sprintf("cng-%s.%s", clusterID, baseDomain)
+
+	_, err = d.client.GetService(ctx, namespace, CngServiceName)
+	if err != nil {
+		d.logger.Info("no cng service detected, skipping cng virtual service")
+	} else {
+		d.logger.Info("creating cng virtual service", zap.String("host", cngHost))
+
+		err = d.client.CreateVirtualService(ctx, namespace, "cng", map[string]interface{}{
+			"hosts":    []interface{}{cngHost},
+			"gateways": []interface{}{d.sharedGateway},
+			"http": []interface{}{
+				map[string]interface{}{
+					"route": []interface{}{
+						map[string]interface{}{
+							"destination": map[string]interface{}{
+								"host": CngServiceName,
+								"port": map[string]interface{}{
+									"number": 443,
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to create cng virtual service")
+		}
+
+		// CNG expects TLS connections, but the gateway terminates TLS.
+		// Create a DestinationRule to originate TLS to CNG.
+		d.logger.Info("creating cng destination rule for TLS origination")
+
+		err = d.client.CreateDestinationRule(ctx, namespace, "cng-tls", map[string]interface{}{
+			"host": CngServiceName,
+			"trafficPolicy": map[string]interface{}{
+				"connectionPool": map[string]interface{}{
+					"http": map[string]interface{}{
+						"useClientProtocol": true,
+					},
+				},
+				"tls": map[string]interface{}{
+					"mode":               "SIMPLE",
+					"insecureSkipVerify": true,
+				},
+			},
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to create cng destination rule")
+		}
+	}
+
+	uiHost := fmt.Sprintf("ui-%s.%s", clusterID, baseDomain)
+	d.logger.Info("creating ui virtual service", zap.String("host", uiHost))
+
+	err = d.client.CreateVirtualService(ctx, namespace, "ui", map[string]interface{}{
+		"hosts":    []interface{}{uiHost},
+		"gateways": []interface{}{d.sharedGateway},
+		"http": []interface{}{
+			map[string]interface{}{
+				"route": []interface{}{
+					map[string]interface{}{
+						"destination": map[string]interface{}{
+							"host": UiServiceName,
+							"port": map[string]interface{}{
+								"number": 8091,
+							},
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create ui virtual service")
+	}
+
+	return nil
+}
+
 func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string) error {
 	isOpenShift, err := d.client.IsOpenShift(ctx)
 	if err != nil {
@@ -566,6 +667,10 @@ func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string) error 
 	namespace, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
 		return err
+	}
+
+	if d.sharedGateway != "" {
+		return d.enableIngressesViaVirtualService(ctx, clusterID, namespace)
 	}
 
 	_, err = d.client.GetRouteHost(ctx, namespace, "ui")
@@ -628,6 +733,37 @@ func (d *Deployer) DisableIngresses(ctx context.Context, clusterID string) error
 	namespace, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
 		return err
+	}
+
+	if d.sharedGateway != "" {
+		allDeletesFailed := true
+
+		err = d.client.DeleteVirtualService(ctx, namespace, "cng")
+		if err != nil {
+			d.logger.Debug("failed to delete cng virtual service", zap.Error(err))
+		} else {
+			allDeletesFailed = false
+		}
+
+		err = d.client.DeleteVirtualService(ctx, namespace, "ui")
+		if err != nil {
+			d.logger.Debug("failed to delete ui virtual service", zap.Error(err))
+		} else {
+			allDeletesFailed = false
+		}
+
+		err = d.client.DeleteDestinationRule(ctx, namespace, "cng-tls")
+		if err != nil {
+			d.logger.Debug("failed to delete cng destination rule", zap.Error(err))
+		} else {
+			allDeletesFailed = false
+		}
+
+		if allDeletesFailed {
+			return errors.New("virtual service deletions failed")
+		}
+
+		return nil
 	}
 
 	allDeletesFailed := true
@@ -742,6 +878,24 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 }
 
 func (d *Deployer) GetIngressConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
+	if d.sharedGateway != "" {
+		baseDomain, err := d.getSharedGatewayBaseDomain(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		cngHost := fmt.Sprintf("cng-%s.%s", clusterID, baseDomain)
+		uiHost := fmt.Sprintf("ui-%s.%s", clusterID, baseDomain)
+
+		return &deployment.ConnectInfo{
+			ConnStr:    "",
+			ConnStrTls: "",
+			ConnStrCb2: fmt.Sprintf("couchbase2://%s:443", cngHost),
+			Mgmt:       "",
+			MgmtTls:    fmt.Sprintf("https://%s:443", uiHost),
+		}, nil
+	}
+
 	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
 		return nil, err

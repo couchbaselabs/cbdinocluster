@@ -1163,6 +1163,148 @@ func (c *Controller) GetRouteHost(ctx context.Context, namespace string, name st
 	return host, nil
 }
 
+func (c *Controller) ListIstioGateways(ctx context.Context, namespace string) ([]unstructured.Unstructured, error) {
+	c.logger.Debug("listing istio gateways",
+		zap.String("namespace", namespace))
+
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	gateways, err := dyna.Resource(schema.GroupVersionResource{
+		Group:    "networking.istio.io",
+		Version:  "v1beta1",
+		Resource: "gateways",
+	}).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list istio gateways")
+	}
+
+	return gateways.Items, nil
+}
+
+func (c *Controller) GetIstioGatewayAnnotation(ctx context.Context, namespacedName string, annotation string) (string, error) {
+	c.logger.Debug("getting istio gateway annotation",
+		zap.String("namespacedName", namespacedName),
+		zap.String("annotation", annotation))
+
+	parts := strings.SplitN(namespacedName, "/", 2)
+	if len(parts) != 2 {
+		return "", errors.New("namespacedName must be in the format namespace/name")
+	}
+	namespace := parts[0]
+	name := parts[1]
+
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	gateway, err := dyna.Resource(schema.GroupVersionResource{
+		Group:    "networking.istio.io",
+		Version:  "v1beta1",
+		Resource: "gateways",
+	}).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get istio gateway")
+	}
+
+	annotations := gateway.GetAnnotations()
+	if annotations == nil {
+		return "", nil
+	}
+
+	return annotations[annotation], nil
+}
+
+func (c *Controller) CreateVirtualService(ctx context.Context, namespace string, name string, spec interface{}) error {
+	c.logger.Info("creating virtual service",
+		zap.String("namespace", namespace),
+		zap.String("name", name))
+
+	err := c.createUnstructuredResource(ctx, namespace, &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "networking.istio.io/v1beta1",
+			"kind":       "VirtualService",
+			"metadata": map[string]interface{}{
+				"name": name,
+			},
+			"spec": spec,
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create virtual service")
+	}
+
+	return nil
+}
+
+func (c *Controller) DeleteVirtualService(ctx context.Context, namespace string, name string) error {
+	c.logger.Info("deleting virtual service",
+		zap.String("namespace", namespace),
+		zap.String("name", name))
+
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	err = dyna.Resource(schema.GroupVersionResource{
+		Group:    "networking.istio.io",
+		Version:  "v1beta1",
+		Resource: "virtualservices",
+	}).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to delete virtual service")
+	}
+
+	return nil
+}
+
+func (c *Controller) CreateDestinationRule(ctx context.Context, namespace string, name string, spec interface{}) error {
+	c.logger.Info("creating destination rule",
+		zap.String("namespace", namespace),
+		zap.String("name", name))
+
+	err := c.createUnstructuredResource(ctx, namespace, &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"apiVersion": "networking.istio.io/v1beta1",
+			"kind":       "DestinationRule",
+			"metadata": map[string]interface{}{
+				"name": name,
+			},
+			"spec": spec,
+		},
+	})
+	if err != nil {
+		return errors.Wrap(err, "failed to create destination rule")
+	}
+
+	return nil
+}
+
+func (c *Controller) DeleteDestinationRule(ctx context.Context, namespace string, name string) error {
+	c.logger.Info("deleting destination rule",
+		zap.String("namespace", namespace),
+		zap.String("name", name))
+
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	err = dyna.Resource(schema.GroupVersionResource{
+		Group:    "networking.istio.io",
+		Version:  "v1beta1",
+		Resource: "destinationrules",
+	}).Namespace(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to delete destination rule")
+	}
+
+	return nil
+}
 func (c *Controller) GetNodes(
 	ctx context.Context,
 ) (*corev1.NodeList, error) {

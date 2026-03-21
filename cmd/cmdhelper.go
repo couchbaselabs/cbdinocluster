@@ -178,8 +178,9 @@ func (h *CmdHelper) getCaoDeployer(ctx context.Context) (*caodeploy.Deployer, er
 	}
 
 	deployer, err := caodeploy.NewDeployer(&caodeploy.NewDeployerOptions{
-		Logger: logger,
-		Client: caoCtrl,
+		Logger:        logger,
+		Client:        caoCtrl,
+		SharedGateway: config.K8s.SharedGateway,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to initializer deployer")

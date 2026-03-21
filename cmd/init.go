@@ -558,6 +558,7 @@ var initCmd = &cobra.Command{
 			fmt.Printf("  CaoTools: %s\n", curConfig.K8s.CaoTools)
 			fmt.Printf("  KubeConfig: %s\n", curConfig.K8s.KubeConfig)
 			fmt.Printf("  Context: %s\n", curConfig.K8s.Context)
+			fmt.Printf("  SharedGateway: %s\n", curConfig.K8s.SharedGateway)
 		}
 		{
 			fmt.Printf("-- K8s Configuration\n")
@@ -572,6 +573,7 @@ var initCmd = &cobra.Command{
 			k8sCaoTools := curConfig.K8s.CaoTools
 			k8sKubeConfig := curConfig.K8s.KubeConfig
 			k8sKubeContext := curConfig.K8s.Context
+			k8sSharedGateway := curConfig.K8s.SharedGateway
 
 			for {
 				if flagDisableK8s {
@@ -759,6 +761,32 @@ var initCmd = &cobra.Command{
 					}
 				}
 
+				// Check for a shared Istio Gateway in cbdc-shared namespace
+				fmt.Printf("Checking for shared Istio gateway in cbdc-shared namespace...\n")
+				gateways, err := caoCtrl.ListIstioGateways(ctx, "cbdc-shared")
+				if err != nil {
+					fmt.Printf("No shared gateway found in cbdc-shared namespace, will use OpenShift Routes for ingress\n")
+				} else if len(gateways) == 0 {
+					fmt.Printf("No shared gateway found in cbdc-shared namespace, will use OpenShift Routes for ingress\n")
+				} else {
+					gw := gateways[0]
+					gwName := gw.GetName()
+					namespacedName := fmt.Sprintf("cbdc-shared/%s", gwName)
+
+					annotations := gw.GetAnnotations()
+					baseDomain := ""
+					if annotations != nil {
+						baseDomain = annotations["cbdc.couchbase.com/base-domain"]
+					}
+
+					if baseDomain == "" {
+						fmt.Printf("WARNING: Shared gateway %s found but missing cbdc.couchbase.com/base-domain annotation\n", namespacedName)
+					} else {
+						fmt.Printf("Found shared gateway: %s (base-domain: %s)\n", namespacedName, baseDomain)
+						k8sSharedGateway = namespacedName
+					}
+				}
+
 				break
 			}
 
@@ -766,6 +794,7 @@ var initCmd = &cobra.Command{
 			curConfig.K8s.CaoTools = k8sCaoTools
 			curConfig.K8s.KubeConfig = k8sKubeConfig
 			curConfig.K8s.Context = k8sKubeContext
+			curConfig.K8s.SharedGateway = k8sSharedGateway
 			saveConfig()
 		}
 
