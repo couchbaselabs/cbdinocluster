@@ -1350,14 +1350,21 @@ func (c *Controller) WaitServiceHasEndpoints(
 	}
 
 	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
-		endpoint, err := kubes.CoreV1().Endpoints(namespace).Get(ctx, name, metav1.GetOptions{})
+		sliceList, err := kubes.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", name),
+		})
 		if err != nil {
-			return false, errors.Wrap(err, "failed to get endpoints resource")
+			return false, errors.Wrap(err, "failed to list endpoint slices")
 		}
 
 		numEndpoints := 0
-		for _, subset := range endpoint.Subsets {
-			numEndpoints += len(subset.Addresses)
+		for _, slice := range sliceList.Items {
+			for _, endpoint := range slice.Endpoints {
+				isReady := endpoint.Conditions.Ready == nil || *endpoint.Conditions.Ready
+				if isReady {
+					numEndpoints++
+				}
+			}
 		}
 
 		if numEndpoints == 0 {
