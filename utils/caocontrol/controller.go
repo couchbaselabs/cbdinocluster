@@ -916,6 +916,7 @@ func (c *Controller) waitCouchbaseClusterAvailable(
 	c.logger.Info("waiting for couchbase cluster to be available",
 		zap.Int("expectedSize", expectedSize))
 
+	lastFailure := time.Now()
 	err := waitForFunc(ctx, func(ctx context.Context) (bool, error) {
 		cluster, err := c.GetCouchbaseCluster(ctx, namespace, name)
 		if err != nil {
@@ -927,17 +928,11 @@ func (c *Controller) waitCouchbaseClusterAvailable(
 			return false, errors.Wrap(err, "failed to parse status data")
 		}
 
-		clusterAvailable := false
-
-		// check if the cluster is available
-		for _, cond := range status.Conditions {
-			if cond.Type == "Available" && cond.Status == "True" {
-				clusterAvailable = true
-			}
+		positiveConditions := []string{
+			"Available",
+			"Balanced",
 		}
-
-		// mark it unavailable if we are in the middle of scaling
-		blockingScaleCondTypes := []string{
+		negativeConditions := []string{
 			"Scaling",
 			"ScalingUp",
 			"ScalingDown",
@@ -948,10 +943,44 @@ func (c *Controller) waitCouchbaseClusterAvailable(
 			"Rebalancing",
 			"BucketMigrating",
 		}
+
+		clusterAvailable := true
+
+		// mark it unavailable if we are missing any required positive conditions
+		getCondition := func(condType string) *appsv1.DeploymentCondition {
+			for _, cond := range status.Conditions {
+				if string(cond.Type) == condType {
+					return &cond
+				}
+			}
+			return nil
+		}
+		for _, condName := range positiveConditions {
+			cond := getCondition(condName)
+			if cond == nil || cond.Status != "True" {
+				clusterAvailable = false
+				break
+			}
+		}
+
+		// mark it unavailable if we have any negative conditions
 		for _, cond := range status.Conditions {
-			if slices.Contains(blockingScaleCondTypes, string(cond.Type)) && cond.Status == "True" {
+			if slices.Contains(negativeConditions, string(cond.Type)) && cond.Status == "True" {
 				clusterAvailable = false
 			}
+		}
+
+		// check if any unknown conditions are applied to the cluster
+		allConditions := append(append([]string{}, positiveConditions...), negativeConditions...)
+		var unknownConditions []string
+		for _, cond := range status.Conditions {
+			if !slices.Contains(allConditions, string(cond.Type)) {
+				unknownConditions = append(unknownConditions, string(cond.Type))
+			}
+		}
+		if len(unknownConditions) > 0 {
+			c.logger.Warn("cluster considered unavailable due to unknown conditions", zap.Strings("conditions", unknownConditions))
+			clusterAvailable = false
 		}
 
 		if expectedSize > 0 && status.Size != expectedSize {
@@ -959,6 +988,11 @@ func (c *Controller) waitCouchbaseClusterAvailable(
 		}
 
 		if !clusterAvailable {
+			lastFailure = time.Now()
+			return false, nil
+		}
+
+		if time.Since(lastFailure) < 15*time.Second {
 			return false, nil
 		}
 
