@@ -3,6 +3,7 @@ package caodeploy
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/couchbase/gocbcorex"
@@ -442,7 +443,9 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 	if isOpenShift {
 		// In OpenShift, the only way to access the cluster is through a route, so we
 		// set it up by default every time the cluster is allocated.
-		err = d.EnableIngresses(ctx, clusterID.String())
+		ingressMode := def.Cao.Ingress
+
+		err = d.EnableIngresses(ctx, clusterID.String(), ingressMode)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to enable ingresses")
 		}
@@ -654,7 +657,7 @@ func (d *Deployer) enableIngressesViaVirtualService(ctx context.Context, cluster
 	return nil
 }
 
-func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string) error {
+func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string, ingressMode string) error {
 	isOpenShift, err := d.client.IsOpenShift(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to detect whether we are using openshift")
@@ -664,12 +667,20 @@ func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string) error 
 		return errors.New("ingresses are currently only supported with openshift")
 	}
 
+	if ingressMode == "" {
+		ingressMode = "route"
+	}
+
+	if ingressMode == "gateway" && d.sharedGateway == "" {
+		return errors.New("ingress mode 'gateway' requires a shared gateway to be configured at init time")
+	}
+
 	namespace, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
 		return err
 	}
 
-	if d.sharedGateway != "" {
+	if ingressMode == "gateway" {
 		return d.enableIngressesViaVirtualService(ctx, clusterID, namespace)
 	}
 
@@ -735,39 +746,31 @@ func (d *Deployer) DisableIngresses(ctx context.Context, clusterID string) error
 		return err
 	}
 
-	if d.sharedGateway != "" {
-		allDeletesFailed := true
-
-		err = d.client.DeleteVirtualService(ctx, namespace, "cng")
-		if err != nil {
-			d.logger.Debug("failed to delete cng virtual service", zap.Error(err))
-		} else {
-			allDeletesFailed = false
-		}
-
-		err = d.client.DeleteVirtualService(ctx, namespace, "ui")
-		if err != nil {
-			d.logger.Debug("failed to delete ui virtual service", zap.Error(err))
-		} else {
-			allDeletesFailed = false
-		}
-
-		err = d.client.DeleteDestinationRule(ctx, namespace, "cng-tls")
-		if err != nil {
-			d.logger.Debug("failed to delete cng destination rule", zap.Error(err))
-		} else {
-			allDeletesFailed = false
-		}
-
-		if allDeletesFailed {
-			return errors.New("virtual service deletions failed")
-		}
-
-		return nil
-	}
-
 	allDeletesFailed := true
 
+	// Try deleting virtual service resources (gateway mode)
+	err = d.client.DeleteVirtualService(ctx, namespace, "cng")
+	if err != nil {
+		d.logger.Debug("failed to delete cng virtual service", zap.Error(err))
+	} else {
+		allDeletesFailed = false
+	}
+
+	err = d.client.DeleteVirtualService(ctx, namespace, "ui")
+	if err != nil {
+		d.logger.Debug("failed to delete ui virtual service", zap.Error(err))
+	} else {
+		allDeletesFailed = false
+	}
+
+	err = d.client.DeleteDestinationRule(ctx, namespace, "cng-tls")
+	if err != nil {
+		d.logger.Debug("failed to delete cng destination rule", zap.Error(err))
+	} else {
+		allDeletesFailed = false
+	}
+
+	// Try deleting route resources (route mode)
 	err = d.client.DeleteRoute(ctx, namespace, "ui")
 	if err != nil {
 		d.logger.Debug("failed to delete ui route", zap.Error(err))
@@ -783,7 +786,7 @@ func (d *Deployer) DisableIngresses(ctx context.Context, clusterID string) error
 	}
 
 	if allDeletesFailed {
-		return errors.New("route deletions failed")
+		return errors.New("ingress deletions failed")
 	}
 
 	return nil
@@ -878,24 +881,6 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 }
 
 func (d *Deployer) GetIngressConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
-	if d.sharedGateway != "" {
-		baseDomain, err := d.getSharedGatewayBaseDomain(ctx)
-		if err != nil {
-			return nil, err
-		}
-
-		cngHost := fmt.Sprintf("cng-%s.%s", clusterID, baseDomain)
-		uiHost := fmt.Sprintf("ui-%s.%s", clusterID, baseDomain)
-
-		return &deployment.ConnectInfo{
-			ConnStr:    "",
-			ConnStrTls: "",
-			ConnStrCb2: fmt.Sprintf("couchbase2://%s:443", cngHost),
-			Mgmt:       "",
-			MgmtTls:    fmt.Sprintf("https://%s:443", uiHost),
-		}, nil
-	}
-
 	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
 		return nil, err
@@ -904,14 +889,40 @@ func (d *Deployer) GetIngressConnectInfo(ctx context.Context, clusterID string) 
 	var mgmtTlsAddr string
 	var connstrCb2 string
 
-	uiHost, err := d.client.GetRouteHost(ctx, namespaceName, "ui")
-	if err == nil {
-		mgmtTlsAddr = fmt.Sprintf("https://%s:443", uiHost)
+	// Try route mode first (default)
+	if mgmtTlsAddr == "" {
+		uiHost, err := d.client.GetRouteHost(ctx, namespaceName, "ui")
+		log.Printf("uiHost: %s %+v", uiHost, err)
+		if err == nil {
+			mgmtTlsAddr = fmt.Sprintf("https://%s:443", uiHost)
+		}
 	}
 
-	cngHost, err := d.client.GetRouteHost(ctx, namespaceName, "cng")
-	if err == nil {
-		connstrCb2 = fmt.Sprintf("couchbase2://%s:443", cngHost)
+	if connstrCb2 == "" {
+		cngHost, err := d.client.GetRouteHost(ctx, namespaceName, "cng")
+		log.Printf("cngHost: %s %+v", cngHost, err)
+		if err == nil {
+			connstrCb2 = fmt.Sprintf("couchbase2://%s:443", cngHost)
+		}
+	}
+
+	// if shared gateway is configured, check that too
+	if d.sharedGateway != "" {
+		baseDomain, err := d.getSharedGatewayBaseDomain(ctx)
+
+		if mgmtTlsAddr == "" {
+			err = d.client.GetVirtualService(ctx, namespaceName, "ui")
+			if err == nil {
+				mgmtTlsAddr = fmt.Sprintf("https://ui-%s.%s:443", clusterID, baseDomain)
+			}
+		}
+
+		if connstrCb2 == "" {
+			err = d.client.GetVirtualService(ctx, namespaceName, "cng")
+			if err == nil {
+				connstrCb2 = fmt.Sprintf("couchbase2://cng-%s.%s:443", clusterID, baseDomain)
+			}
+		}
 	}
 
 	return &deployment.ConnectInfo{

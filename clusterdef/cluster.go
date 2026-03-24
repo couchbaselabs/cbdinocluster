@@ -76,6 +76,8 @@ type CaoCluster struct {
 
 	GatewayLogLevel     string `yaml:"gateway-log-level,omitempty"`
 	GatewayOtlpEndpoint string `yaml:"gateway-otlp-endpoint,omitempty"`
+
+	Ingress string `yaml:"ingress,omitempty"`
 }
 
 type CloudCluster struct {

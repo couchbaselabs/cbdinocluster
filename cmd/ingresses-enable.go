@@ -15,6 +15,8 @@ var ingressesEnableCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
+		ingressMode, _ := cmd.Flags().GetString("ingress")
+
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		caoDeployer, ok := deployer.(*caodeploy.Deployer)
@@ -22,7 +24,7 @@ var ingressesEnableCmd = &cobra.Command{
 			logger.Fatal("ingresses are only supported for cao deployer")
 		}
 
-		err := caoDeployer.EnableIngresses(ctx, cluster.GetID())
+		err := caoDeployer.EnableIngresses(ctx, cluster.GetID(), ingressMode)
 		if err != nil {
 			logger.Fatal("failed to enable ingresses", zap.Error(err))
 		}
@@ -31,4 +33,5 @@ var ingressesEnableCmd = &cobra.Command{
 
 func init() {
 	ingressesCmd.AddCommand(ingressesEnableCmd)
+	ingressesEnableCmd.Flags().String("ingress", "", "Ingress mode to use (route or gateway)")
 }

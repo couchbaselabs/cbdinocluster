@@ -1274,6 +1274,24 @@ func (c *Controller) CreateVirtualService(ctx context.Context, namespace string,
 	return nil
 }
 
+func (c *Controller) GetVirtualService(ctx context.Context, namespace string, name string) error {
+	dyna, err := dynamic.NewForConfig(c.restConfig)
+	if err != nil {
+		return errors.Wrap(err, "failed to create dynamic client")
+	}
+
+	_, err = dyna.Resource(schema.GroupVersionResource{
+		Group:    "networking.istio.io",
+		Version:  "v1beta1",
+		Resource: "virtualservices",
+	}).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return errors.Wrap(err, "failed to get virtual service")
+	}
+
+	return nil
+}
+
 func (c *Controller) DeleteVirtualService(ctx context.Context, namespace string, name string) error {
 	c.logger.Info("deleting virtual service",
 		zap.String("namespace", namespace),
