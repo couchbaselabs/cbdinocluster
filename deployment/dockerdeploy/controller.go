@@ -752,6 +752,7 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 		nginxConf += "}\n"
 
 		nginxConf += "server {\n"
+		nginxConf += "    merge_slashes off;\n" // Proxy invalid requests verbatim
 		if withSsl {
 			nginxConf += fmt.Sprintf("    listen %d ssl;\n", listenPort)
 			nginxConf += "    ssl_certificate /etc/nginx/ssl/cert.pem;\n"
@@ -765,7 +766,7 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 		if withSsl {
 			protocol = "https"
 		}
-		nginxConf += fmt.Sprintf("        proxy_pass %s://%s/;\n", protocol, upstreamName)
+		nginxConf += fmt.Sprintf("        proxy_pass %s://%s;\n", protocol, upstreamName)
 		nginxConf += "        proxy_set_header Host $http_host;\n"
 		nginxConf += "        proxy_set_header X-Real-IP $remote_addr;\n"
 		nginxConf += "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
