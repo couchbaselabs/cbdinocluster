@@ -352,8 +352,8 @@ func (p *Deployer) buildDeploySpecs(
 			diskSize = 50
 		} else if cloudProvider == "azure" {
 			instanceType = "Standard_D4s_v5"
-			cpu = 8
-			memory = 32
+			cpu = 4
+			memory = 16
 			diskType = "P6"
 			diskSize = 64
 			diskIops = 240
