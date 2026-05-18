@@ -9,6 +9,11 @@ import (
 	"go.uber.org/zap"
 )
 
+type GetClientCertOutput struct {
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
+}
+
 var certificatesGetClientCertCmd = &cobra.Command{
 	Use:   "get-client-cert <username>",
 	Short: "Fetches a client certificate for a specific user",
@@ -19,6 +24,7 @@ var certificatesGetClientCertCmd = &cobra.Command{
 
 		username := args[0]
 		expiresInStr, _ := cmd.Flags().GetString("expires-in")
+		outputJson, _ := cmd.Flags().GetBool("json")
 
 		rootCa, err := dinocerts.GetRootCertAuthority()
 		if err != nil {
@@ -42,7 +48,14 @@ var certificatesGetClientCertCmd = &cobra.Command{
 			logger.Fatal("failed to generate client certificate", zap.Error(err))
 		}
 
-		fmt.Printf("%s\n%s\n", cert, key)
+		if !outputJson {
+			fmt.Printf("%s\n%s\n", cert, key)
+		} else {
+			helper.OutputJson(GetClientCertOutput{
+				Cert: string(cert),
+				Key:  string(key),
+			})
+		}
 	},
 }
 

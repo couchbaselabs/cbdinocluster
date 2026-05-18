@@ -8,6 +8,10 @@ import (
 	"go.uber.org/zap"
 )
 
+type GetDinoCaOutput struct {
+	Cert string `json:"cert"`
+}
+
 var certificatesGetDinoCaCmd = &cobra.Command{
 	Use:   "get-dino-ca",
 	Short: "Fetches the DinoCert CA certificate",
@@ -15,12 +19,20 @@ var certificatesGetDinoCaCmd = &cobra.Command{
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 
+		outputJson, _ := cmd.Flags().GetBool("json")
+
 		rootCa, err := dinocerts.GetRootCertAuthority()
 		if err != nil {
 			logger.Fatal("failed to get dino certificate", zap.Error(err))
 		}
 
-		fmt.Printf("%s\n", rootCa.CertPem)
+		if !outputJson {
+			fmt.Printf("%s\n", rootCa.CertPem)
+		} else {
+			helper.OutputJson(GetDinoCaOutput{
+				Cert: string(rootCa.CertPem),
+			})
+		}
 	},
 }
 
