@@ -7,6 +7,10 @@ import (
 	"go.uber.org/zap"
 )
 
+type GetGatewayCaOutput struct {
+	Cert string `json:"cert"`
+}
+
 var certificatesGetGatewayCaCmd = &cobra.Command{
 	Use:   "get-gateway-ca <cluster-id>",
 	Short: "Fetches the Gateway CA certificate",
@@ -16,6 +20,8 @@ var certificatesGetGatewayCaCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
+		outputJson, _ := cmd.Flags().GetBool("json")
+
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		cert, err := deployer.GetGatewayCertificate(ctx, cluster.GetID())
@@ -23,7 +29,13 @@ var certificatesGetGatewayCaCmd = &cobra.Command{
 			logger.Fatal("failed to get gateway certificate", zap.Error(err))
 		}
 
-		fmt.Printf("%s\n", cert)
+		if !outputJson {
+			fmt.Printf("%s\n", cert)
+		} else {
+			helper.OutputJson(GetGatewayCaOutput{
+				Cert: cert,
+			})
+		}
 	},
 }
 

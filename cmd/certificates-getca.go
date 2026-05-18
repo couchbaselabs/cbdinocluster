@@ -7,6 +7,10 @@ import (
 	"go.uber.org/zap"
 )
 
+type GetCaOutput struct {
+	Cert string `json:"cert"`
+}
+
 var certificatesGetCaCmd = &cobra.Command{
 	Use:   "get-ca <cluster-id>",
 	Short: "Fetches the CA certificate",
@@ -16,6 +20,8 @@ var certificatesGetCaCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
+		outputJson, _ := cmd.Flags().GetBool("json")
+
 		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
 
 		cert, err := deployer.GetCertificate(ctx, cluster.GetID())
@@ -23,7 +29,13 @@ var certificatesGetCaCmd = &cobra.Command{
 			logger.Fatal("failed to get certificate", zap.Error(err))
 		}
 
-		fmt.Printf("%s\n", cert)
+		if !outputJson {
+			fmt.Printf("%s\n", cert)
+		} else {
+			helper.OutputJson(GetCaOutput{
+				Cert: cert,
+			})
+		}
 	},
 }
 

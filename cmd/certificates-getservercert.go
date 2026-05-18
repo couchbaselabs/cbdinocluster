@@ -9,6 +9,11 @@ import (
 	"go.uber.org/zap"
 )
 
+type GetServerCertOutput struct {
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
+}
+
 var certificatesGetServerCert = &cobra.Command{
 	Use:   "get-server-cert",
 	Short: "Fetches a server cert configured using the flags",
@@ -16,6 +21,8 @@ var certificatesGetServerCert = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
+
+		outputJson, _ := cmd.Flags().GetBool("json")
 
 		rootCa, err := dinocerts.GetRootCertAuthority()
 		if err != nil {
@@ -40,7 +47,14 @@ var certificatesGetServerCert = &cobra.Command{
 			logger.Fatal("failed to generate server certificate", zap.Error(err))
 		}
 
-		fmt.Printf("%s\n%s\n", cert, key)
+		if !outputJson {
+			fmt.Printf("%s\n%s\n", cert, key)
+		} else {
+			helper.OutputJson(GetServerCertOutput{
+				Cert: string(cert),
+				Key:  string(key),
+			})
+		}
 	},
 }
 
