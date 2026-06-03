@@ -3,7 +3,7 @@ package cbdcconfig_test
 import (
 	"context"
 	"os"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
@@ -12,19 +12,21 @@ import (
 
 func TestConfigPathDefault(t *testing.T) {
 	cbdcconfig.SetConfigPathOverride("")
+	t.Cleanup(func() { cbdcconfig.SetConfigPathOverride("") })
 	t.Setenv(cbdcconfig.EnvConfigPath, "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
 	got, err := cbdcconfig.ConfigPath()
 	require.NoError(t, err)
-	require.Equal(t, path.Join(home, ".cbdinocluster"), got)
+	require.Equal(t, filepath.Join(home, ".cbdinocluster"), got)
 }
 
 func TestConfigPathFromEnv(t *testing.T) {
 	cbdcconfig.SetConfigPathOverride("")
+	t.Cleanup(func() { cbdcconfig.SetConfigPathOverride("") })
 	t.Setenv("HOME", t.TempDir())
-	envPath := path.Join(t.TempDir(), "from-env.yaml")
+	envPath := filepath.Join(t.TempDir(), "from-env.yaml")
 	t.Setenv(cbdcconfig.EnvConfigPath, envPath)
 
 	got, err := cbdcconfig.ConfigPath()
@@ -34,8 +36,8 @@ func TestConfigPathFromEnv(t *testing.T) {
 
 func TestConfigPathOverrideBeatsEnv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv(cbdcconfig.EnvConfigPath, path.Join(t.TempDir(), "from-env.yaml"))
-	overridePath := path.Join(t.TempDir(), "from-flag.yaml")
+	t.Setenv(cbdcconfig.EnvConfigPath, filepath.Join(t.TempDir(), "from-env.yaml"))
+	overridePath := filepath.Join(t.TempDir(), "from-flag.yaml")
 	cbdcconfig.SetConfigPathOverride(overridePath)
 	t.Cleanup(func() { cbdcconfig.SetConfigPathOverride("") })
 
@@ -54,7 +56,9 @@ func TestLoadSaveRoundTripWithOverride(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv(cbdcconfig.EnvConfigPath, "")
 
-	overridePath := path.Join(t.TempDir(), "isolated.yaml")
+	// Point at a path whose parent directory does not exist yet, mirroring the
+	// per-job CI directory use case. Save must create it.
+	overridePath := filepath.Join(t.TempDir(), "nested", "dir", "isolated.yaml")
 	cbdcconfig.SetConfigPathOverride(overridePath)
 	t.Cleanup(func() { cbdcconfig.SetConfigPathOverride("") })
 
@@ -66,7 +70,7 @@ func TestLoadSaveRoundTripWithOverride(t *testing.T) {
 	// The file landed at the override path...
 	require.FileExists(t, overridePath)
 	// ...and NOT at the default location.
-	require.NoFileExists(t, path.Join(home, ".cbdinocluster"))
+	require.NoFileExists(t, filepath.Join(home, ".cbdinocluster"))
 
 	loaded, err := cbdcconfig.Load(ctx)
 	require.NoError(t, err)
@@ -74,7 +78,7 @@ func TestLoadSaveRoundTripWithOverride(t *testing.T) {
 
 	// Sanity: a stray default-location file is never consulted while the
 	// override is active.
-	require.NoError(t, os.WriteFile(path.Join(home, ".cbdinocluster"), []byte("version: 6\ndocker:\n  network: default-net\n"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".cbdinocluster"), []byte("version: 6\ndocker:\n  network: default-net\n"), 0600))
 	loaded, err = cbdcconfig.Load(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "isolated-net", loaded.Docker.Network)

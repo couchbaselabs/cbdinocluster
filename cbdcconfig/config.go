@@ -3,7 +3,7 @@ package cbdcconfig
 import (
 	"context"
 	"os"
-	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/pkg/errors"
@@ -151,7 +151,7 @@ func DefaultConfigPath() (string, error) {
 		return "", errors.Wrap(err, "failed to find user home path")
 	}
 
-	configPath := path.Join(homePath, ".cbdinocluster")
+	configPath := filepath.Join(homePath, ".cbdinocluster")
 	return configPath, nil
 }
 
@@ -245,6 +245,13 @@ func Save(ctx context.Context, config *Config) error {
 	configBytes, err := yaml.Marshal(config)
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal config file")
+	}
+
+	// The override (--config / CBDINOCLUSTER_CONFIG) may point at a path whose
+	// parent directory does not exist yet (e.g. a per-job CI directory). The
+	// default ~/.cbdinocluster lives directly in $HOME, so this is a no-op there.
+	if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
+		return errors.Wrap(err, "failed to create config directory")
 	}
 
 	err = os.WriteFile(configPath, configBytes, 0600)
