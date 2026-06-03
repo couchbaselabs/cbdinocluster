@@ -102,6 +102,24 @@ cbdinocluster connstr $(cbdinocluster ps --json | jq -r '.[0].id')
 
 ### Advanced Usage
 
+#### Overriding the config file location
+
+By default the configuration lives at `~/.cbdinocluster`. You can point
+cbdinocluster at a different file with either the `--config` flag or the
+`CBDINOCLUSTER_CONFIG` environment variable:
+
+```
+cbdinocluster --config /path/to/config.yaml ps
+CBDINOCLUSTER_CONFIG=/path/to/config.yaml cbdinocluster ps
+```
+
+Precedence is `--config` > `CBDINOCLUSTER_CONFIG` > `~/.cbdinocluster`.
+
+This is useful when several jobs share a single home directory — for example
+CI agents running multiple SDK pipelines — and each needs its own
+configuration (a distinct Docker network, deployer, or credentials) without
+clobbering the others' `~/.cbdinocluster`.
+
 #### Resetting Colima
 
 In the case that your colima docker instance becomes corrupted, or stops working

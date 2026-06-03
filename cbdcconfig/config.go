@@ -127,6 +127,24 @@ type Config_DNS struct {
 	Hostname string     `yaml:"hostname"`
 }
 
+// EnvConfigPath is the environment variable that, when set, overrides the
+// location of the config file. The --config command-line flag takes
+// precedence over it.
+const EnvConfigPath = "CBDINOCLUSTER_CONFIG"
+
+// configPathOverride is set by the command-line layer (see cmd.rootCmd's
+// --config flag) and takes precedence over EnvConfigPath and the default.
+var configPathOverride string
+
+// SetConfigPathOverride pins the config file location for the remainder of
+// the process, overriding both EnvConfigPath and DefaultConfigPath. An empty
+// value clears the override. This lets the CLI plumb a --config flag down to
+// Load/Save without threading the path through every call site.
+func SetConfigPathOverride(path string) {
+	configPathOverride = path
+}
+
+// DefaultConfigPath returns the default config file location, ~/.cbdinocluster.
 func DefaultConfigPath() (string, error) {
 	homePath, err := os.UserHomeDir()
 	if err != nil {
@@ -135,6 +153,23 @@ func DefaultConfigPath() (string, error) {
 
 	configPath := path.Join(homePath, ".cbdinocluster")
 	return configPath, nil
+}
+
+// ConfigPath resolves the config file location, applying this precedence:
+//  1. an explicit override set via SetConfigPathOverride (the --config flag),
+//  2. the CBDINOCLUSTER_CONFIG environment variable,
+//  3. the default (~/.cbdinocluster).
+//
+// The override lets multiple jobs sharing a single home directory (e.g. CI
+// agents) keep independent configs without clobbering each other.
+func ConfigPath() (string, error) {
+	if configPathOverride != "" {
+		return configPathOverride, nil
+	}
+	if envPath := os.Getenv(EnvConfigPath); envPath != "" {
+		return envPath, nil
+	}
+	return DefaultConfigPath()
 }
 
 func Upgrade(config *Config) *Config {
@@ -173,9 +208,9 @@ func Upgrade(config *Config) *Config {
 }
 
 func Load(ctx context.Context) (*Config, error) {
-	configPath, err := DefaultConfigPath()
+	configPath, err := ConfigPath()
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to find default config path")
+		return nil, errors.Wrap(err, "failed to find config path")
 	}
 
 	configBytes, err := os.ReadFile(configPath)
@@ -202,9 +237,9 @@ func Load(ctx context.Context) (*Config, error) {
 }
 
 func Save(ctx context.Context, config *Config) error {
-	configPath, err := DefaultConfigPath()
+	configPath, err := ConfigPath()
 	if err != nil {
-		return errors.Wrap(err, "failed to find default config path")
+		return errors.Wrap(err, "failed to find config path")
 	}
 
 	configBytes, err := yaml.Marshal(config)
