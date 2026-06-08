@@ -321,12 +321,20 @@ func (d *Deployer) generateClusterSpec(
 		serversRes = append(serversRes, serverEntry)
 	}
 
+	cngEnabled := def.Cao.GatewayVersion != ""
+
 	cngSpec := make(map[string]interface{})
 	if gatewayImagePath != "" {
 		cngSpec["image"] = gatewayImagePath
 	}
 	if gatewayLogLevel != "" {
 		cngSpec["logLevel"] = gatewayLogLevel
+	}
+	if cngEnabled {
+		// Serve our Dino-signed cert instead of the operator's self-signed one.
+		cngSpec["tls"] = map[string]interface{}{
+			"serverSecretName": CngTlsSecretName,
+		}
 	}
 
 	if len(cngSpec) == 0 {
@@ -410,6 +418,13 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to create admin auth")
 	}
 
+	if def.Cao.GatewayVersion != "" {
+		err = d.provisionGatewayTLSSecret(ctx, clusterID.String(), namespace)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to provision gateway tls secret")
+		}
+	}
+
 	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate cluster spec")
@@ -481,6 +496,13 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
 	if err != nil {
 		return err
+	}
+
+	if def.Cao.GatewayVersion != "" {
+		err = d.provisionGatewayTLSSecret(ctx, clusterID, namespaceName)
+		if err != nil {
+			return errors.Wrap(err, "failed to provision gateway tls secret")
+		}
 	}
 
 	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
@@ -1009,22 +1031,14 @@ func (d *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 }
 
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {
-	namespaceName, err := d.getClusterNamespace(ctx, clusterID)
+	// The gateway CA is deterministic, so regenerate it instead of reading the
+	// secret back from the cluster.
+	gatewayCa, _, err := getGatewayDinoCA(clusterID)
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(err, "failed to get gateway CA")
 	}
 
-	secret, err := d.client.GetSecret(ctx, namespaceName, "couchbase-cloud-native-gateway-self-signed-secret-cluster")
-	if err != nil {
-		return "", errors.Wrap(err, "failed to get secret")
-	}
-
-	secretData := secret.Data["tls.crt"]
-	if len(secretData) == 0 {
-		return "", errors.New("secret data was unexpectedly empty")
-	}
-
-	return string(secretData), nil
+	return string(gatewayCa.CertPem), nil
 }
 
 func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, error) {
