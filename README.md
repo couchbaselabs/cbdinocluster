@@ -82,6 +82,15 @@ Useful for testing magma buckets, advanced search indexes (1536mb for KV, 1024mb
 ./cbdinocluster buckets add {{CLUSTER_ID}} default --ram-quota-mb=100 --flush-enabled=true
 ```
 
+Use `--bucket-type` to select the bucket type. Valid values are `couchbase`
+(the default) and `ephemeral`. `memcached` is also accepted, but it is a legacy
+type that Couchbase Server 8.0 and later reject ("memcached buckets are no
+longer supported"); it can only be created on older clusters.
+
+```
+./cbdinocluster buckets add {{CLUSTER_ID}} cache --bucket-type=ephemeral --ram-quota-mb=100
+```
+
 #### Create a collection in the default scope on the bucket named `default`
 
 ```

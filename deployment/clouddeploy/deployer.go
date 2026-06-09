@@ -2021,6 +2021,11 @@ func (p *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		numReplicas = opts.NumReplicas
 	}
 
+	capellaBucketType, storageBackend, err := capellaBucketParams(opts.BucketType)
+	if err != nil {
+		return err
+	}
+
 	err = p.mgr.Client.CreateBucket(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateBucketRequest{
 		BucketConflictResolution: "seqno",
 		DurabilityLevel:          "none",
@@ -2028,14 +2033,37 @@ func (p *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		MemoryAllocationInMB:     ramQuotaMb,
 		Name:                     opts.Name,
 		Replicas:                 numReplicas,
-		StorageBackend:           "couchstore",
-		Type:                     "couchbase",
+		StorageBackend:           storageBackend,
+		Type:                     capellaBucketType,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create bucket")
 	}
 
 	return nil
+}
+
+// capellaBucketParams maps a deployment bucket type onto the Capella bucket
+// "type" and storage backend values. Memcached buckets are not offered by
+// Capella, so they are rejected explicitly rather than sent as an invalid
+// request. An empty bucket type defaults to couchbase.
+func capellaBucketParams(bucketType deployment.BucketType) (capellaType string, storageBackend string, err error) {
+	if bucketType == "" {
+		bucketType = deployment.BucketTypeCouchbase
+	}
+
+	switch bucketType {
+	case deployment.BucketTypeCouchbase:
+		return "couchbase", "couchstore", nil
+	case deployment.BucketTypeEphemeral:
+		// Ephemeral buckets are memory-only and reject a disk storage
+		// backend, so leave it empty (omitted from the request).
+		return "ephemeral", "", nil
+	case deployment.BucketTypeMemcached:
+		return "", "", errors.New("memcached buckets are not supported by the cloud deployer")
+	default:
+		return "", "", errors.Errorf("unsupported bucket type %q", bucketType)
+	}
 }
 
 func (p *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketName string) error {

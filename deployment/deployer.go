@@ -64,6 +64,7 @@ type BucketInfo struct {
 
 type CreateBucketOptions struct {
 	Name         string
+	BucketType   BucketType
 	RamQuotaMB   int
 	FlushEnabled bool
 	NumReplicas  int

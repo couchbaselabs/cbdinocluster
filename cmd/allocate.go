@@ -57,6 +57,23 @@ var allocateCmd = &cobra.Command{
 			def.Cloud.CloudProvider = cloudProvider
 		}
 
+		// Validate and assemble the bucket options up-front so that an invalid
+		// bucket type fails fast, before the cluster is allocated.
+		bucketOpts := make(map[string]*deployment.CreateBucketOptions, len(def.Buckets))
+		for bucketName, bucketDef := range def.Buckets {
+			opts, err := newCreateBucketOptions(
+				bucketName,
+				bucketDef.Settings.BucketType,
+				bucketDef.Settings.RamQuotaMB,
+				bucketDef.Settings.FlushEnabled,
+				bucketDef.Settings.NumReplicas,
+			)
+			if err != nil {
+				logger.Fatal("invalid bucket type", zap.String("bucket", bucketName), zap.Error(err))
+			}
+			bucketOpts[bucketName] = opts
+		}
+
 		logger.Info("deploying definition", zap.Any("def", def))
 
 		if dryRun {
@@ -77,12 +94,7 @@ var allocateCmd = &cobra.Command{
 
 		if len(def.Buckets) > 0 {
 			for bucketName, bucketDef := range def.Buckets {
-				err := deployer.CreateBucket(ctx, cluster.GetID(), &deployment.CreateBucketOptions{
-					Name:         bucketName,
-					RamQuotaMB:   bucketDef.Settings.RamQuotaMB,
-					FlushEnabled: bucketDef.Settings.FlushEnabled,
-					NumReplicas:  bucketDef.Settings.NumReplicas,
-				})
+				err = deployer.CreateBucket(ctx, cluster.GetID(), bucketOpts[bucketName])
 				if err != nil {
 					logger.Fatal("failed to create bucket", zap.String("bucket", bucketName), zap.Error(err))
 				}

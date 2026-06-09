@@ -1624,7 +1624,7 @@ type CreateBucketRequest struct {
 	MemoryAllocationInMB     int    `json:"memoryAllocationInMb"`
 	Name                     string `json:"name"`
 	Replicas                 int    `json:"replicas"`
-	StorageBackend           string `json:"storageBackend"`
+	StorageBackend           string `json:"storageBackend,omitempty"`
 	// timeToLive
 	Type string `json:"type"`
 }

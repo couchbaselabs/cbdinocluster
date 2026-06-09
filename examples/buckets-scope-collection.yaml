@@ -4,6 +4,9 @@ nodes:
 buckets:
   app-data:
     settings:
+      # bucket-type may be couchbase (default) or ephemeral. memcached is a
+      # legacy type that Couchbase Server 8.0+ rejects (older clusters only).
+      bucket-type: couchbase
       ram-quota-mb: 512
       flush-enabled: true
       num-replicas: 1
