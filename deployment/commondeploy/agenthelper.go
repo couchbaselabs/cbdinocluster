@@ -33,29 +33,12 @@ func (h AgentHelper) ListBuckets(ctx context.Context) ([]deployment.BucketInfo, 
 }
 
 func (h AgentHelper) CreateBucket(ctx context.Context, opts *deployment.CreateBucketOptions) error {
-	ramQuotaMb := 256
-	if opts.RamQuotaMB > 0 {
-		ramQuotaMb = opts.RamQuotaMB
+	createOpts, err := buildMgmtxCreateBucketOptions(opts)
+	if err != nil {
+		return err
 	}
 
-	err := h.Agent.CreateBucket(ctx, &cbmgmtx.CreateBucketOptions{
-		BucketName: opts.Name,
-		BucketSettings: cbmgmtx.BucketSettings{
-			BucketType:             "membase",
-			StorageBackend:         "couchstore",
-			ReplicaIndex:           false,
-			ConflictResolutionType: "seqno",
-			MutableBucketSettings: cbmgmtx.MutableBucketSettings{
-				EvictionPolicy:     "valueOnly",
-				ReplicaNumber:      uint32(opts.NumReplicas),
-				DurabilityMinLevel: "none",
-				CompressionMode:    "",
-				MaxTTL:             0,
-				RAMQuotaMB:         uint64(ramQuotaMb),
-				FlushEnabled:       opts.FlushEnabled,
-			},
-		},
-	})
+	err = h.Agent.CreateBucket(ctx, createOpts)
 	if err != nil {
 		if strings.Contains(err.Error(), "already exists") {
 			return fmt.Errorf("%w: %s", deployment.ErrBucketAlreadyExists, err.Error())

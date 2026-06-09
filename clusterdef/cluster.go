@@ -23,9 +23,10 @@ type Bucket struct {
 }
 
 type Settings struct {
-	RamQuotaMB   int  `yaml:"ram-quota-mb,omitempty"`
-	FlushEnabled bool `yaml:"flush-enabled,omitempty"`
-	NumReplicas  int  `yaml:"num-replicas,omitempty"`
+	BucketType   string `yaml:"bucket-type,omitempty"`
+	RamQuotaMB   int    `yaml:"ram-quota-mb,omitempty"`
+	FlushEnabled bool   `yaml:"flush-enabled,omitempty"`
+	NumReplicas  int    `yaml:"num-replicas,omitempty"`
 }
 
 type Scopes map[string]Collections
