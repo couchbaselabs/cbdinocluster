@@ -459,18 +459,36 @@ func (d *Deployer) DestroyAllResources(ctx context.Context) error {
 	return d.removeNodes(ctx, nodes)
 }
 
+func (d *Deployer) getNodeManager(ctx context.Context, clusterInfo *clusterInfo) (*clustercontrol.NodeManager, []string, error) {
+	if len(clusterInfo.Nodes) == 0 {
+		return nil, nil, errors.New("cannot get node manager for a cluster with no nodes")
+	}
+
+	for _, node := range clusterInfo.Nodes {
+		if !node.IsClusterNode() {
+			continue
+		}
+		nodeCtrl := &clustercontrol.NodeManager{
+			Logger:   d.logger,
+			Endpoint: fmt.Sprintf("http://%s:8091", node.IPAddress),
+		}
+		nodeOtps, err := nodeCtrl.Controller().ListNodeOTPs(ctx)
+		if err == nil {
+			return nodeCtrl, nodeOtps, nil
+		}
+		d.logger.Debug("failed to connect to node manager, trying next node if available", zap.String("node", node.NodeID), zap.Error(err))
+	}
+	return nil, nil, errors.New("no responsive cluster nodes found")
+}
+
 func (d *Deployer) getController(ctx context.Context, clusterID string) (*clustercontrol.NodeManager, error) {
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get cluster info")
 	}
 
-	nodeCtrl := &clustercontrol.NodeManager{
-		Logger:   d.logger,
-		Endpoint: fmt.Sprintf("http://%s:8091", clusterInfo.Nodes[0].IPAddress),
-	}
-
-	return nodeCtrl, nil
+	nodeCtrl, _, err := d.getNodeManager(ctx, clusterInfo)
+	return nodeCtrl, err
 }
 
 func (d *Deployer) getAgent(ctx context.Context, clusterID string, bucketName string) (*gocbcorex.Agent, error) {
@@ -884,18 +902,9 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 		return nil, errors.Wrap(err, "failed to get cluster info")
 	}
 
-	if len(clusterInfo.Nodes) == 0 {
-		return nil, errors.New("cannot collection logs from a cluster with no nodes")
-	}
-
-	nodeCtrl := clustercontrol.NodeManager{
-		Logger:   d.logger,
-		Endpoint: fmt.Sprintf("http://%s:8091", clusterInfo.Nodes[0].IPAddress),
-	}
-
-	nodeOtps, err := nodeCtrl.Controller().ListNodeOTPs(ctx)
+	nodeCtrl, nodeOtps, err := d.getNodeManager(ctx, clusterInfo)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list nodes")
+		return nil, errors.Wrap(err, "failed to get node manager")
 	}
 
 	d.logger.Info("beginning log collection", zap.Strings("nodes", nodeOtps))
