@@ -768,7 +768,11 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		}
 	} else if cloudProvider == "azure" {
 		deploymentProvider = "azure"
-		clusterProvider = "hostedAzure"
+		if def.Columnar {
+			clusterProvider = "azure"
+		} else {
+			clusterProvider = "hostedAzure"
+		}
 	} else {
 		return nil, errors.New("invalid cloud provider for setup info")
 	}
