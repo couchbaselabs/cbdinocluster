@@ -642,8 +642,10 @@ func (d *Deployer) addRemoveNodes(
 			Image:              image,
 			ImageServerVersion: nodeGrp.Version,
 			IsColumnar:         clusterInfo.IsColumnar(),
+			DnsSuffix:          clusterInfo.DnsName,
 			Expiry:             time.Until(clusterInfo.Expiry),
 			EnvVars:            nodeGrp.Docker.EnvVars,
+			UseDinoCerts:       clusterInfo.UsingDinoCerts,
 		}
 
 		d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
