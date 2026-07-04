@@ -330,7 +330,7 @@ func (m *NodeManager) checkClusterIsBalanced(
 		}
 
 		if isOrchestrator && !terseClusterInfo.IsBalanced {
-			m.Logger.Info("cluster still needs rebalance after rebalance operation")
+			m.Logger.Info("cluster still unbalanced after rebalance")
 			return false, nil
 		}
 
@@ -429,57 +429,56 @@ func (m *NodeManager) RebalanceWithRetry(
 
 	m.Logger.Info("validating post-rebalance state")
 
-	clusterIsBalanced, err := ctrlNodeMgr.checkClusterIsBalanced(ctx, allNodeAddresses, ejectedNodeOtps)
-	if err != nil {
-		return errors.Wrap(err, "failed to validate cluster state after rebalance")
-	}
+	startTime := time.Now()
+	for {
+		if time.Since(startTime) >= 15*time.Second {
+			allowedTimeLeft := time.Until(lastAllowedRetryTime)
+			m.Logger.Info("cluster still not balanced, assuming failure and retrying", zap.Duration("time_left", allowedTimeLeft))
 
-	if !clusterIsBalanced {
-		// if the cluster is not balanced immediately after the rebalance, we wait 15 seconds
-		// and check again to see if the state was just stale. If it still needs a rebalance,
-		// we trigger another rebalance to try and resolve the issue.
-		m.Logger.Info("cluster not balanced after rebalance, waiting 15 seconds to re-validate")
+			var newOtpsToRemove []string
+			if len(ejectedNodeOtps) > 0 {
+				// Filter out any ejectedNodeOtps that are no longer actually in the cluster.
+				allActiveOtps, err := ctrlNodeMgr.Controller().ListNodeOTPs(ctx)
+				if err != nil {
+					return errors.Wrap(err, "failed to list node otps during retry filtering")
+				}
 
-		select {
-		case <-time.After(15 * time.Second):
-			// continue
-		case <-ctx.Done():
-			return ctx.Err()
+				for _, ejectedOtp := range ejectedNodeOtps {
+					found := false
+					for _, activeOtp := range allActiveOtps {
+						if activeOtp == ejectedOtp {
+							found = true
+							break
+						}
+					}
+					if !found {
+						m.Logger.Info("node to remove not found in actual cluster, skipping", zap.String("node", ejectedOtp))
+						continue
+					}
+					newOtpsToRemove = append(newOtpsToRemove, ejectedOtp)
+				}
+			}
+
+			return ctrlNodeMgr.RebalanceWithRetry(ctx, allNodeAddresses, newOtpsToRemove, lastAllowedRetryTime)
 		}
 
-		clusterIsBalanced, err = ctrlNodeMgr.checkClusterIsBalanced(ctx, allNodeAddresses, ejectedNodeOtps)
+		clusterIsBalanced, err := ctrlNodeMgr.checkClusterIsBalanced(ctx, allNodeAddresses, ejectedNodeOtps)
 		if err != nil {
 			return errors.Wrap(err, "failed to validate cluster state after rebalance")
 		}
 
 		if !clusterIsBalanced {
-			allowedTimeLeft := time.Until(lastAllowedRetryTime)
-			m.Logger.Info("cluster still not balanced, assuming failure and retrying", zap.Duration("time_left", allowedTimeLeft))
-
-			// Filter out any ejectedNodeOtps that are no longer actually in the cluster.
-			allActiveOtps, err := ctrlNodeMgr.Controller().ListNodeOTPs(ctx)
-			if err != nil {
-				return errors.Wrap(err, "failed to list node otps during retry filtering")
+			// m.Logger.Info("cluster not balanced after rebalance, waiting 1 second to re-validate")
+			select {
+			case <-time.After(1 * time.Second):
+				// continue
+			case <-ctx.Done():
+				return ctx.Err()
 			}
-
-			var newOtpsToRemove []string
-			for _, ejectedOtp := range ejectedNodeOtps {
-				found := false
-				for _, activeOtp := range allActiveOtps {
-					if activeOtp == ejectedOtp {
-						found = true
-						break
-					}
-				}
-				if !found {
-					m.Logger.Info("node to remove not found in actual cluster, skipping", zap.String("node", ejectedOtp))
-					continue
-				}
-				newOtpsToRemove = append(newOtpsToRemove, ejectedOtp)
-			}
-
-			return ctrlNodeMgr.RebalanceWithRetry(ctx, allNodeAddresses, newOtpsToRemove, lastAllowedRetryTime)
+			continue
 		}
+
+		break
 	}
 
 	return nil
