@@ -3,6 +3,7 @@ package clustercontrol
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -87,18 +88,15 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 			}
 		}
 
-		m.Logger.Info("initiating rebalance")
-
-		err = firstNodeMgr.Rebalance(ctx, nil)
-		if err != nil {
-			return errors.Wrap(err, "failed to start rebalance")
+		var allNodeAddresses []string
+		for _, node := range opts.Nodes {
+			allNodeAddresses = append(allNodeAddresses, node.Address)
 		}
 
-		m.Logger.Info("waiting for rebalance completion")
-
-		err = firstNodeMgr.WaitForNoRunningTasks(ctx)
+		lastAllowedRetryTime := time.Now().Add(15 * time.Minute)
+		err = firstNodeMgr.RebalanceWithRetry(ctx, allNodeAddresses, nil, lastAllowedRetryTime)
 		if err != nil {
-			return errors.Wrap(err, "failed to wait for tasks to complete")
+			return errors.Wrap(err, "failed to complete cluster setup rebalance")
 		}
 	}
 

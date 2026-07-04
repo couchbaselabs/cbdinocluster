@@ -2,6 +2,8 @@ package clustercontrol
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -277,4 +279,208 @@ func (m *NodeManager) WaitForLogCollection(ctx context.Context) (map[string]stri
 
 		return paths, nil
 	}
+}
+
+func formatEndpoint(addr string) string {
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	if !strings.Contains(addr, ":") {
+		return fmt.Sprintf("http://%s:8091", addr)
+	}
+	return fmt.Sprintf("http://%s", addr)
+}
+
+func (m *NodeManager) checkClusterIsBalanced(
+	ctx context.Context,
+	allNodeAddresses []string,
+	ejectedNodeOtps []string,
+) (bool, error) {
+	numOrchestrators := 0
+	for _, addr := range allNodeAddresses {
+		endpoint := formatEndpoint(addr)
+		nodeCtrl := &NodeManager{
+			Logger:   m.Logger,
+			Endpoint: endpoint,
+		}
+
+		localInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
+		if err != nil {
+			// failed to contact the node, which is expected if the node was successfully ejected/shut down,
+			// or if it's transiently offline.
+			m.Logger.Info("failed to get local info during validation, skipping",
+				zap.String("address", addr))
+			continue
+		}
+
+		terseClusterInfo, err := nodeCtrl.Controller().GetTerseClusterInfo(ctx)
+		if err != nil {
+			m.Logger.Info("failed to get terse cluster info during validation, skipping",
+				zap.String("address", addr))
+			continue
+		}
+
+		if localInfo.OTPNode == "" {
+			continue
+		}
+
+		isOrchestrator := terseClusterInfo.Orchestrator == localInfo.OTPNode
+		if isOrchestrator {
+			numOrchestrators++
+		}
+
+		if isOrchestrator && !terseClusterInfo.IsBalanced {
+			m.Logger.Info("cluster still needs rebalance after rebalance operation")
+			return false, nil
+		}
+
+		if localInfo.Status != "" && localInfo.Status != "healthy" {
+			m.Logger.Info("node unhealthy after rebalance", zap.String("node", localInfo.OTPNode))
+			return false, nil
+		}
+
+		// If this node is still in the cluster but was supposed to be ejected
+		for _, ejectedOtp := range ejectedNodeOtps {
+			if ejectedOtp == localInfo.OTPNode {
+				m.Logger.Info("node unexpectedly still present after rebalance", zap.String("node", localInfo.OTPNode))
+				return false, nil
+			}
+		}
+	}
+
+	if numOrchestrators != 1 {
+		m.Logger.Info("unexpected number of orchestrators after rebalance",
+			zap.Int("num_orchestrators", numOrchestrators))
+		return false, nil
+	}
+
+	return true, nil
+}
+
+func (m *NodeManager) RebalanceWithRetry(
+	ctx context.Context,
+	allNodeAddresses []string,
+	ejectedNodeOtps []string,
+	lastAllowedRetryTime time.Time,
+) error {
+	if time.Now().After(lastAllowedRetryTime) {
+		return errors.New("exhausted retry time for rebalance operation")
+	}
+
+	var ctrlNodeAddr string
+	for _, addr := range allNodeAddresses {
+		endpoint := formatEndpoint(addr)
+		nodeCtrl := &NodeManager{
+			Logger:   m.Logger,
+			Endpoint: endpoint,
+		}
+
+		localInfo, err := nodeCtrl.Controller().GetLocalInfo(ctx)
+		if err != nil {
+			m.Logger.Info("failed to get local info for node selection, skipping",
+				zap.String("address", addr),
+				zap.Error(err))
+			continue
+		}
+
+		if localInfo.OTPNode == "" {
+			continue
+		}
+
+		// Check if this node is to be ejected
+		isEjected := false
+		for _, ejectedOtp := range ejectedNodeOtps {
+			if ejectedOtp == localInfo.OTPNode {
+				isEjected = true
+				break
+			}
+		}
+
+		if !isEjected {
+			ctrlNodeAddr = addr
+			break
+		}
+	}
+
+	if ctrlNodeAddr == "" {
+		return errors.New("failed to find a healthy control node that is not being ejected")
+	}
+
+	m.Logger.Debug("selected control node for rebalance operation",
+		zap.String("address", ctrlNodeAddr))
+
+	ctrlEndpoint := formatEndpoint(ctrlNodeAddr)
+	ctrlNodeMgr := &NodeManager{
+		Logger:   m.Logger,
+		Endpoint: ctrlEndpoint,
+	}
+
+	m.Logger.Info("initiating rebalance")
+	err := ctrlNodeMgr.Rebalance(ctx, ejectedNodeOtps)
+	if err != nil {
+		return errors.Wrap(err, "failed to start rebalance")
+	}
+
+	m.Logger.Info("waiting for rebalance completion")
+	err = ctrlNodeMgr.WaitForNoRunningTasks(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for tasks to complete")
+	}
+
+	m.Logger.Info("validating post-rebalance state")
+
+	clusterIsBalanced, err := ctrlNodeMgr.checkClusterIsBalanced(ctx, allNodeAddresses, ejectedNodeOtps)
+	if err != nil {
+		return errors.Wrap(err, "failed to validate cluster state after rebalance")
+	}
+
+	if !clusterIsBalanced {
+		// if the cluster is not balanced immediately after the rebalance, we wait 15 seconds
+		// and check again to see if the state was just stale. If it still needs a rebalance,
+		// we trigger another rebalance to try and resolve the issue.
+		m.Logger.Info("cluster not balanced after rebalance, waiting 15 seconds to re-validate")
+
+		select {
+		case <-time.After(15 * time.Second):
+			// continue
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		clusterIsBalanced, err = ctrlNodeMgr.checkClusterIsBalanced(ctx, allNodeAddresses, ejectedNodeOtps)
+		if err != nil {
+			return errors.Wrap(err, "failed to validate cluster state after rebalance")
+		}
+
+		if !clusterIsBalanced {
+			allowedTimeLeft := time.Until(lastAllowedRetryTime)
+			m.Logger.Info("cluster still not balanced, assuming failure and retrying", zap.Duration("time_left", allowedTimeLeft))
+
+			// Filter out any ejectedNodeOtps that are no longer actually in the cluster.
+			allActiveOtps, err := ctrlNodeMgr.Controller().ListNodeOTPs(ctx)
+			if err != nil {
+				return errors.Wrap(err, "failed to list node otps during retry filtering")
+			}
+
+			var newOtpsToRemove []string
+			for _, ejectedOtp := range ejectedNodeOtps {
+				found := false
+				for _, activeOtp := range allActiveOtps {
+					if activeOtp == ejectedOtp {
+						found = true
+						break
+					}
+				}
+				if !found {
+					m.Logger.Info("node to remove not found in actual cluster, skipping", zap.String("node", ejectedOtp))
+					continue
+				}
+				newOtpsToRemove = append(newOtpsToRemove, ejectedOtp)
+			}
+
+			return ctrlNodeMgr.RebalanceWithRetry(ctx, allNodeAddresses, newOtpsToRemove, lastAllowedRetryTime)
+		}
+	}
+
+	return nil
 }
