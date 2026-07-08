@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path"
@@ -90,20 +91,51 @@ func NewController(opts *ControllerOptions) (*Controller, error) {
 	}, nil
 }
 
-func waitForFunc(ctx context.Context, fn func(ctx context.Context) (bool, error), maxWait time.Duration) error {
+// Added to handle periodic network flakiness.
+// Deliberately conservative: it's aiming to catch timeouts and connections dropped
+// mid-way, and similar possibly-transient issues.
+// It does NOT match HTTP status errors, TLS/cert errors, or hopefully other errors
+// that indicate a server response and a definitive problem that won't be solved by
+// a retry.
+func isTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+const maxConsecutiveNetworkErrors = 3
+
+func waitForFunc(ctx context.Context, logger *zap.Logger, fn func(ctx context.Context) (bool, error), maxWait time.Duration) error {
 	expiryTime := time.Now().Add(maxWait)
 
 	subCtx, cancel := context.WithDeadline(ctx, expiryTime)
 	defer cancel()
 
+	consecutiveNetworkErrors := 0
+
 	for {
 		success, err := fn(subCtx)
 		if err != nil {
-			return err
-		}
+			if isTransientNetworkError(err) && consecutiveNetworkErrors < maxConsecutiveNetworkErrors {
+				consecutiveNetworkErrors++
+				logger.Warn("transient network error polling condition, retrying",
+					zap.Error(err), zap.Int("attempt", consecutiveNetworkErrors))
+			} else {
+				return err
+			}
+		} else {
+			consecutiveNetworkErrors = 0
 
-		if success {
-			return nil
+			if success {
+				return nil
+			}
 		}
 
 		time.Sleep(500 * time.Millisecond)
@@ -261,7 +293,7 @@ func (c *Controller) InstallDefaultCrd(ctx context.Context) error {
 
 	c.logger.Info("waiting for couchbase crds to apply")
 
-	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+	err = waitForFunc(ctx, c.logger, func(ctx context.Context) (bool, error) {
 		for _, crdName := range installedCrds {
 			crd, err := clientSet.ApiextensionsV1().CustomResourceDefinitions().Get(ctx, crdName, metav1.GetOptions{})
 			if err != nil {
@@ -495,7 +527,7 @@ func (c *Controller) DeleteNamespaces(ctx context.Context, namespaceNames []stri
 
 	c.logger.Info("waiting for namespaces to disappear")
 
-	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+	err = waitForFunc(ctx, c.logger, func(ctx context.Context) (bool, error) {
 		namespaces, err := kubes.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, errors.Wrap(err, "failed to get namespaces")
@@ -623,7 +655,7 @@ func (c *Controller) InstallGlobalAdmissionController(ctx context.Context, names
 
 	c.logger.Info("waiting for admission controller to start")
 
-	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+	err = waitForFunc(ctx, c.logger, func(ctx context.Context) (bool, error) {
 		admDeployment, err := kubes.AppsV1().Deployments(namespace).Get(ctx, DefaultAdmissionControllerName, metav1.GetOptions{})
 		if err != nil {
 			return false, errors.Wrap(err, "failed to get admission controller info")
@@ -677,7 +709,7 @@ func (c *Controller) UninstallGlobalAdmissionController(ctx context.Context, nam
 
 	c.logger.Info("waiting for admission controller to be deleted")
 
-	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+	err = waitForFunc(ctx, c.logger, func(ctx context.Context) (bool, error) {
 		deployments, err := kubes.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false, errors.Wrap(err, "failed to get admission controller info")
@@ -755,7 +787,7 @@ func (c *Controller) InstallOperator(ctx context.Context, namespace string, vers
 
 	c.logger.Info("waiting for operator to start")
 
-	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+	err = waitForFunc(ctx, c.logger, func(ctx context.Context) (bool, error) {
 		deployment, err := kubes.AppsV1().Deployments(namespace).Get(ctx, DefaultOperatorName, metav1.GetOptions{})
 		if err != nil {
 			return false, errors.Wrap(err, "failed to get admission controller info")
@@ -917,7 +949,7 @@ func (c *Controller) waitCouchbaseClusterAvailable(
 		zap.Int("expectedSize", expectedSize))
 
 	lastFailure := time.Now()
-	err := waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+	err := waitForFunc(ctx, c.logger, func(ctx context.Context) (bool, error) {
 		cluster, err := c.GetCouchbaseCluster(ctx, namespace, name)
 		if err != nil {
 			return false, errors.Wrap(err, "failed to get couchbase cluster info")
@@ -1401,7 +1433,7 @@ func (c *Controller) WaitServiceHasEndpoints(
 		return errors.Wrap(err, "failed to create kubernetes client")
 	}
 
-	err = waitForFunc(ctx, func(ctx context.Context) (bool, error) {
+	err = waitForFunc(ctx, c.logger, func(ctx context.Context) (bool, error) {
 		sliceList, err := kubes.DiscoveryV1().EndpointSlices(namespace).List(ctx, metav1.ListOptions{
 			LabelSelector: fmt.Sprintf("kubernetes.io/service-name=%s", name),
 		})
