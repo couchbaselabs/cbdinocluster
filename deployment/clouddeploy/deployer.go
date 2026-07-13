@@ -2151,6 +2151,11 @@ func (d *Deployer) startLogCollection(ctx context.Context, cloudClusterId string
 }
 
 func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
+	if strings.TrimSpace(d.uploadServerLogsHostName) == "" {
+		return nil, fmt.Errorf("cannot collect server logs: no upload-server-logs host name is configured; " +
+			"set it via `cbdinocluster init` (--upload-server-logs-host-name) or Capella.UploadServerLogsHostName in your config")
+	}
+
 	cluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return []string{}, err
