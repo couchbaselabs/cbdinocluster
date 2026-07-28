@@ -900,9 +900,18 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			AvailabilityZone: "single",
 		}
 		if def.NodeGroups[0].Cloud.ServerImage != "" {
+			serverImage := def.NodeGroups[0].Cloud.ServerImage
+
+			releaseId, err := getReleaseIdFromColumnarServerImage(serverImage)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to get release id from columnar server image")
+			}
+			p.logger.Debug("resolved columnar release id", zap.String("releaseId", releaseId))
+
 			createReq.Override = &capellacontrol.CreateOverrideRequest{
-				Image: def.NodeGroups[0].Cloud.ServerImage,
-				Token: p.overrideToken,
+				Image:     serverImage,
+				Token:     p.overrideToken,
+				ReleaseId: releaseId,
 			}
 			if def.NodeGroups[0].Cloud.ImageAgentHash != "" {
 				createReq.Override.Agent = &capellacontrol.CreateOverrideAgentRequest{
