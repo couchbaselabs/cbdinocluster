@@ -662,8 +662,7 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		Specs:    specs,
 		Timezone: "PT",
 	}
-	// Pass the agent hash through so Capella deploys the requested agent build instead
-	// of defaulting to the latest one for the server version.
+
 	if def.NodeGroups[0].Cloud.ImageAgentHash != "" {
 		createReq.Override.Agent = &capellacontrol.CreateOverrideAgentRequest{
 			Hash: def.NodeGroups[0].Cloud.ImageAgentHash,
