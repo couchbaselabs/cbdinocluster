@@ -1703,11 +1703,9 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 	} else {
 		var projectsToRemove []*capellacontrol.ProjectInfo
 		for _, project := range projects.Data {
-			if !strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
-				continue
+			if strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
+				projectsToRemove = append(projectsToRemove, project.Data)
 			}
-
-			projectsToRemove = append(projectsToRemove, project.Data)
 		}
 
 		var projectNamesToRemove []string
