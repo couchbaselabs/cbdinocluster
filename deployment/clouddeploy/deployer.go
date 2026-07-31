@@ -1253,7 +1253,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 
 		p.logger.Debug("waiting for cluster deletion to finish")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.Columnar.ID, "", true)
+		err = p.mgr.WaitForColumnarDeletion(ctx, p.tenantID, clusterInfo.Columnar.ID, clusterInfo.Columnar.Config.Id)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster destruction")
 		}
@@ -1678,7 +1678,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		for _, columnar := range columnarsToRemove {
 			p.logger.Info("waiting for cluster columnar to complete", zap.String("cluster-id", columnar.ID))
 
-			err := p.mgr.WaitForClusterState(ctx, p.tenantID, columnar.ID, "", true)
+			err := p.mgr.WaitForColumnarDeletion(ctx, p.tenantID, columnar.ID, columnar.Config.Id)
 			if err != nil {
 				errs = multierr.Append(errs, errors.Wrap(err, "failed to wait for cluster to complete"))
 			}
