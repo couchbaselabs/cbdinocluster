@@ -90,6 +90,41 @@ func (m *Manager) WaitForClusterState(
 	return nil
 }
 
+func (m *Manager) WaitForColumnarDeletion(
+	ctx context.Context,
+	tenantID, instanceID, cloudClusterID string,
+) error {
+	if err := m.WaitForClusterState(ctx, tenantID, instanceID, "", true); err != nil {
+		return err
+	}
+
+	req := &PaginatedRequest{
+		Page:          1,
+		PerPage:       100,
+		SortBy:        "name",
+		SortDirection: "asc",
+	}
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		events, err := m.Client.GetClusterDeletionEvents(ctx, tenantID, cloudClusterID, req)
+		if err != nil {
+			return errors.Wrap(err, "failed to fetch cluster deletion events")
+		}
+		if len(events.Data) > 0 {
+			return nil
+		}
+
+		m.Logger.Info("waiting for underlying cluster deletion to complete...",
+			zap.String("cluster-id", cloudClusterID))
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (m *Manager) WaitForPrivateEndpointsEnabled(
 	ctx context.Context,
 	columnar bool,

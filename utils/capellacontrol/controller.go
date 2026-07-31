@@ -880,6 +880,30 @@ func (c *Controller) DeleteColumnar(
 	return nil
 }
 
+type ClusterEventsResponse struct {
+	Data []json.RawMessage `json:"data"`
+}
+
+func (c *Controller) GetClusterDeletionEvents(
+	ctx context.Context,
+	tenantID, clusterID string,
+	req *PaginatedRequest,
+) (*ClusterEventsResponse, error) {
+	resp := &ClusterEventsResponse{}
+
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
+	path := fmt.Sprintf("/v2/organizations/%s/events?%s&cluster=%s&eventType=cluster_deletion_completed", tenantID, form.Encode(), clusterID)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	if err != nil {
+		return nil, err
+	}
+
+	return resp, nil
+}
+
 type UpdateClusterMetaRequest struct {
 	Description string `json:"description"`
 	Name        string `json:"name"`
