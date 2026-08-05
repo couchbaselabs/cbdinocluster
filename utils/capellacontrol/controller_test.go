@@ -10,6 +10,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// TestMultipleControllers runs against the live v2 API. It needs a real Capella
+// account because the behaviour under test is server side: a second login
+// invalidates the session of the first. This is why operational cluster work uses
+// the v4 API instead.
 func TestMultipleControllers(t *testing.T) {
 	ctx := context.Background()
 	logger, _ := zap.NewDevelopment()
@@ -17,6 +21,10 @@ func TestMultipleControllers(t *testing.T) {
 	capellaUser := os.Getenv("CAPELLA_USER")
 	capellaPass := os.Getenv("CAPELLA_PASS")
 	capellaOid := os.Getenv("CAPELLA_OID")
+
+	if capellaUser == "" || capellaPass == "" || capellaOid == "" {
+		t.Skip("skipping as CAPELLA_USER, CAPELLA_PASS and CAPELLA_OID are not all set")
+	}
 
 	ctrl1, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
 		Logger:   logger,
