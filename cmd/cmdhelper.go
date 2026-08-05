@@ -23,6 +23,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/deployment/localdeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
 	"github.com/docker/docker/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -205,6 +206,37 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	capellaInternalSupportToken := config.Capella.InternalSupportToken
 	uploadServerLogsHostName := config.Capella.UploadServerLogsHostName
 
+	// The environment fills in what the config file does not carry, so a CI run can
+	// supply the API key without writing a config file.
+	capellaApiSecret := config.Capella.ApiSecret
+	if capellaApiSecret == "" {
+		capellaApiSecret = os.Getenv("CAPELLA_API_SECRET")
+	}
+	if capellaApiSecret == "" {
+		return nil, errors.New("a capella api secret is required; run `cbdinocluster init` " +
+			"or set CAPELLA_API_SECRET")
+	}
+
+	v4Endpoint := config.Capella.V4Endpoint
+	if v4Endpoint == "" {
+		v4Endpoint = os.Getenv("CAPELLA_V4_ENDPOINT")
+	}
+	if v4Endpoint == "" {
+		v4Endpoint = cbdcconfig.DEFAULT_CAPELLA_V4_ENDPOINT
+	}
+
+	v4Client, err := capellav4.NewClient(&capellav4.ClientOptions{
+		Logger:    logger,
+		Endpoint:  v4Endpoint,
+		SecretKey: capellaApiSecret,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create capella v4 client")
+	}
+
+	// The v2 controller is created eagerly but does not authenticate until a
+	// request is made, so a run that only touches v4 never establishes a
+	// session and never invalidates anyone else's.
 	client, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
 		Logger:   logger,
 		Endpoint: capellaEndpoint,
@@ -225,6 +257,8 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	prov, err := clouddeploy.NewDeployer(&clouddeploy.NewDeployerOptions{
 		Logger:                   logger,
 		Client:                   client,
+		V4Client:                 v4Client,
+		HasLegacyCredentials:     capellaUser != "" && capellaPass != "",
 		TenantID:                 capellaOid,
 		OverrideToken:            capellaOverrideToken,
 		InternalSupportToken:     capellaInternalSupportToken,
@@ -261,9 +295,14 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 		out["cao"] = caoDeployer
 	}
 
-	cloudDeployer, _ := h.getCloudDeployer(ctx)
+	cloudDeployer, err := h.getCloudDeployer(ctx)
 	if cloudDeployer != nil {
 		out["cloud"] = cloudDeployer
+	} else if err != nil {
+		// Capella is enabled but unusable, which would otherwise show up only as
+		// a confusing "deployer not found" later on.
+		logger.Warn("capella is enabled but the cloud deployer could not be created",
+			zap.Error(err))
 	}
 
 	logger.Info("identified available deployers",
