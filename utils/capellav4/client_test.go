@@ -245,6 +245,24 @@ func TestCreateClusterSendsServerVersionWhenSet(t *testing.T) {
 	assert.Equal(t, "10.0.1.0/24", provider["cidr"])
 }
 
+func TestListAnalyticsPrivateEndpointsNormalizesIDs(t *testing.T) {
+	// The analytics API reports endpoint IDs as endpointId rather than id, so
+	// the client must map them onto the shared PrivateEndpointInfo shape.
+	var gotPath string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"endpoints":[{"endpointId":"vpce-123","status":"pendingAcceptance"}]}`))
+	}))
+
+	endpoints, err := client.ListAnalyticsPrivateEndpoints(context.Background(), "org", "proj", "clus")
+	require.NoError(t, err)
+
+	assert.Equal(t, "/v4/organizations/org/projects/proj/analyticsClusters/clus/privateEndpointService/endpoints", gotPath)
+	require.Len(t, endpoints, 1)
+	assert.Equal(t, "vpce-123", endpoints[0].ID)
+	assert.Equal(t, PrivateEndpointPendingAcceptance, endpoints[0].Status)
+}
+
 func TestUserHasPrivilege(t *testing.T) {
 	tests := []struct {
 		name      string

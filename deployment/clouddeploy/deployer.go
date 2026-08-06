@@ -1314,15 +1314,11 @@ func (p *Deployer) EnablePrivateEndpoints(ctx context.Context, clusterID string)
 		}
 		err = p.v4mgr.WaitForPrivateEndpointServiceEnabled(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 	} else {
-		if err := p.requireLegacy("columnar private endpoints"); err != nil {
-			return err
-		}
-
-		err = p.client.EnablePrivateEndpointsColumnar(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
+		err = p.v4.EnableAnalyticsPrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to enable private endpoints")
 		}
-		err = p.mgr.WaitForPrivateEndpointsEnabled(ctx, true, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
+		err = p.v4mgr.WaitForAnalyticsPrivateEndpointServiceEnabled(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 	}
 
 	if err != nil {
@@ -1340,10 +1336,7 @@ func (p *Deployer) DisablePrivateEndpoints(ctx context.Context, clusterID string
 	if clusterInfo.Columnar == nil {
 		return p.v4.DisablePrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 	}
-	if err := p.requireLegacy("columnar private endpoints"); err != nil {
-		return err
-	}
-	return p.client.DisablePrivateEndpointsColumnar(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
+	return p.v4.DisableAnalyticsPrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 }
 
 type PrivateEndpointDetails struct {
@@ -1379,22 +1372,18 @@ func (p *Deployer) GetPrivateEndpointDetails(ctx context.Context, clusterID stri
 			PrivateDNS:  endpoints.PrivateEndpointDNS,
 		}, nil
 	} else {
-		if err := p.requireLegacy("columnar private endpoints"); err != nil {
-			return nil, err
-		}
-
-		details, err := p.client.GetPrivateEndpointDetailsColumnar(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
+		service, err := p.v4.GetAnalyticsPrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to fetch private endpoint link details")
 		}
 
-		if !details.Data.Enabled {
+		if !service.Enabled {
 			return nil, errors.New("private endpoints are not enabled")
 		}
 
 		return &PrivateEndpointDetails{
-			ServiceName: details.Data.ServiceName,
-			PrivateDNS:  details.Data.PrivateDNS,
+			ServiceName: service.ServiceName,
+			PrivateDNS:  service.PrivateDNS,
 		}, nil
 	}
 
@@ -1480,26 +1469,23 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 }
 
 func (p *Deployer) acceptColumnarPrivateEndpointLink(ctx context.Context, clusterInfo *clusterInfo, endpointID string) error {
-	if err := p.requireLegacy("columnar private endpoints"); err != nil {
-		return err
-	}
-
 	cloudProjectID := clusterInfo.ProjectID
 	columnarID := clusterInfo.Columnar.ID
+	providerName := clusterInfo.Columnar.CloudProviderName()
 
-	peLinks, err := p.mgr.Client.ListPrivateEndpointLinksColumnar(ctx, p.tenantID, cloudProjectID, columnarID)
+	endpoints, err := p.v4.ListAnalyticsPrivateEndpoints(ctx, p.tenantID, cloudProjectID, columnarID)
 	if err != nil {
 		return errors.Wrap(err, "failed to list private endpoint links")
 	}
 
 	fullEndpointId := ""
-	if clusterInfo.Columnar.CloudProviderName() == capellav4.ProviderGcp {
+	if providerName == capellav4.ProviderGcp {
 		fullEndpointId = endpointID
 	}
 
-	for _, peLink := range peLinks.Data {
-		if strings.Contains(peLink.EndpointID, endpointID) {
-			fullEndpointId = peLink.EndpointID
+	for _, endpoint := range endpoints {
+		if strings.Contains(endpoint.ID, endpointID) {
+			fullEndpointId = endpoint.ID
 			break
 		}
 	}
@@ -1508,19 +1494,19 @@ func (p *Deployer) acceptColumnarPrivateEndpointLink(ctx context.Context, cluste
 		return fmt.Errorf("failed to identify endpoint '%s'", endpointID)
 	}
 
-	_, err = p.mgr.WaitForPrivateEndpointLink(ctx, true, p.tenantID, cloudProjectID, columnarID, fullEndpointId)
-	if err != nil {
-		return errors.Wrap(err, "failed to wait for private endpoint link")
+	if providerName != capellav4.ProviderGcp {
+		_, err = p.v4mgr.WaitForAnalyticsPrivateEndpoint(ctx, p.tenantID, cloudProjectID, columnarID, fullEndpointId)
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for private endpoint link")
+		}
 	}
 
-	err = p.client.AcceptPrivateEndpointLinkColumnar(ctx, p.tenantID, cloudProjectID, columnarID, &capellacontrol.PrivateEndpointAcceptLinkRequest{
-		EndpointID: fullEndpointId,
-	})
+	err = p.v4.AcceptAnalyticsPrivateEndpoint(ctx, p.tenantID, cloudProjectID, columnarID, fullEndpointId)
 	if err != nil {
 		return errors.Wrap(err, "failed to accept private endpoint link")
 	}
 
-	err = p.mgr.WaitForPrivateEndpointLinkState(ctx, true, p.tenantID, cloudProjectID, columnarID, fullEndpointId, "linked")
+	err = p.v4mgr.WaitForAnalyticsPrivateEndpointState(ctx, p.tenantID, cloudProjectID, columnarID, fullEndpointId, capellav4.PrivateEndpointLinked)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for private endpoint link to establish")
 	}

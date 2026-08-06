@@ -116,23 +116,68 @@ func (m *Manager) WaitForDataApiEnabled(ctx context.Context, orgID, projectID, c
 // WaitForPrivateEndpointServiceEnabled polls until the private endpoint service
 // is ready to accept endpoint requests.
 func (m *Manager) WaitForPrivateEndpointServiceEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
-	for {
+	return m.waitForPrivateEndpointServiceEnabled(ctx, func(ctx context.Context) (string, error) {
 		info, err := m.Client.GetPrivateEndpointService(ctx, orgID, projectID, clusterID)
+		if err != nil {
+			return "", err
+		}
+		return info.Status, nil
+	})
+}
+
+// WaitForAnalyticsPrivateEndpointServiceEnabled is the analytics cluster form of
+// WaitForPrivateEndpointServiceEnabled.
+func (m *Manager) WaitForAnalyticsPrivateEndpointServiceEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
+	return m.waitForPrivateEndpointServiceEnabled(ctx, func(ctx context.Context) (string, error) {
+		info, err := m.Client.GetAnalyticsPrivateEndpointService(ctx, orgID, projectID, clusterID)
+		if err != nil {
+			return "", err
+		}
+		return info.Status, nil
+	})
+}
+
+func (m *Manager) waitForPrivateEndpointServiceEnabled(
+	ctx context.Context,
+	fetchStatus func(ctx context.Context) (string, error),
+) error {
+	for {
+		status, err := fetchStatus(ctx)
 		if err != nil {
 			return errors.Wrap(err, "failed to fetch private endpoint service")
 		}
 
 		m.Logger.Info("waiting for private endpoints to enable...",
-			zap.String("current", info.Status),
+			zap.String("current", status),
 			zap.String("desired", PrivateEndpointServiceEnabled))
 
-		if info.Status == PrivateEndpointServiceEnabled {
+		if status == PrivateEndpointServiceEnabled {
 			return nil
 		}
 
 		if err := m.sleep(ctx, clusterPollInterval); err != nil {
 			return err
 		}
+	}
+}
+
+// privateEndpointLister abstracts over the provisioned and analytics endpoint
+// listings, which return the same information under different response shapes.
+type privateEndpointLister func(ctx context.Context) ([]*PrivateEndpointInfo, error)
+
+func (m *Manager) listClusterPrivateEndpoints(orgID, projectID, clusterID string) privateEndpointLister {
+	return func(ctx context.Context) ([]*PrivateEndpointInfo, error) {
+		resp, err := m.Client.ListPrivateEndpoints(ctx, orgID, projectID, clusterID)
+		if err != nil {
+			return nil, err
+		}
+		return resp.Endpoints, nil
+	}
+}
+
+func (m *Manager) listAnalyticsPrivateEndpoints(orgID, projectID, clusterID string) privateEndpointLister {
+	return func(ctx context.Context) ([]*PrivateEndpointInfo, error) {
+		return m.Client.ListAnalyticsPrivateEndpoints(ctx, orgID, projectID, clusterID)
 	}
 }
 
@@ -144,13 +189,31 @@ func (m *Manager) WaitForPrivateEndpoint(
 	orgID, projectID, clusterID string,
 	endpointID string,
 ) (*PrivateEndpointInfo, error) {
+	return m.waitForPrivateEndpoint(ctx, m.listClusterPrivateEndpoints(orgID, projectID, clusterID), endpointID)
+}
+
+// WaitForAnalyticsPrivateEndpoint is the analytics cluster form of
+// WaitForPrivateEndpoint.
+func (m *Manager) WaitForAnalyticsPrivateEndpoint(
+	ctx context.Context,
+	orgID, projectID, clusterID string,
+	endpointID string,
+) (*PrivateEndpointInfo, error) {
+	return m.waitForPrivateEndpoint(ctx, m.listAnalyticsPrivateEndpoints(orgID, projectID, clusterID), endpointID)
+}
+
+func (m *Manager) waitForPrivateEndpoint(
+	ctx context.Context,
+	list privateEndpointLister,
+	endpointID string,
+) (*PrivateEndpointInfo, error) {
 	for {
-		resp, err := m.Client.ListPrivateEndpoints(ctx, orgID, projectID, clusterID)
+		endpoints, err := list(ctx)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to list private endpoints")
 		}
 
-		for _, endpoint := range resp.Endpoints {
+		for _, endpoint := range endpoints {
 			if endpoint.ID == endpointID {
 				m.Logger.Info("found!", zap.String("endpoint-id", endpointID))
 				return endpoint, nil
@@ -173,14 +236,34 @@ func (m *Manager) WaitForPrivateEndpointState(
 	endpointID string,
 	desiredState string,
 ) error {
+	return m.waitForPrivateEndpointState(ctx, m.listClusterPrivateEndpoints(orgID, projectID, clusterID), endpointID, desiredState)
+}
+
+// WaitForAnalyticsPrivateEndpointState is the analytics cluster form of
+// WaitForPrivateEndpointState.
+func (m *Manager) WaitForAnalyticsPrivateEndpointState(
+	ctx context.Context,
+	orgID, projectID, clusterID string,
+	endpointID string,
+	desiredState string,
+) error {
+	return m.waitForPrivateEndpointState(ctx, m.listAnalyticsPrivateEndpoints(orgID, projectID, clusterID), endpointID, desiredState)
+}
+
+func (m *Manager) waitForPrivateEndpointState(
+	ctx context.Context,
+	list privateEndpointLister,
+	endpointID string,
+	desiredState string,
+) error {
 	for {
-		resp, err := m.Client.ListPrivateEndpoints(ctx, orgID, projectID, clusterID)
+		endpoints, err := list(ctx)
 		if err != nil {
 			return errors.Wrap(err, "failed to list private endpoints")
 		}
 
 		currentState := ""
-		for _, endpoint := range resp.Endpoints {
+		for _, endpoint := range endpoints {
 			if endpoint.ID == endpointID {
 				currentState = endpoint.Status
 			}

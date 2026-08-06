@@ -3,6 +3,7 @@ package capellav4
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -52,4 +53,75 @@ func (c *Client) ListAnalyticsClusters(ctx context.Context, orgID, projectID str
 func (c *Client) ListAllAnalyticsClusters(ctx context.Context, orgID string) ([]*AnalyticsClusterInfo, error) {
 	path := fmt.Sprintf("/v4/organizations/%s/analyticsClusters", orgID)
 	return listAll[*AnalyticsClusterInfo](ctx, c, path, nil)
+}
+
+// AnalyticsPrivateEndpointServiceInfo describes the private endpoint service of
+// an analytics cluster. Unlike the provisioned cluster API, which reports the
+// private DNS name with the endpoint list, the analytics API reports it on the
+// service itself.
+type AnalyticsPrivateEndpointServiceInfo struct {
+	Enabled     bool   `json:"enabled"`
+	Status      string `json:"status"`
+	ServiceName string `json:"serviceName"`
+	PrivateDNS  string `json:"privateDns"`
+}
+
+func (c *Client) GetAnalyticsPrivateEndpointService(ctx context.Context, orgID, projectID, clusterID string) (*AnalyticsPrivateEndpointServiceInfo, error) {
+	resp := &AnalyticsPrivateEndpointServiceInfo{}
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/analyticsClusters/%s/privateEndpointService",
+		orgID, projectID, clusterID)
+	if err := c.doRead(ctx, http.MethodGet, path, nil, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
+func (c *Client) EnableAnalyticsPrivateEndpointService(ctx context.Context, orgID, projectID, clusterID string) error {
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/analyticsClusters/%s/privateEndpointService",
+		orgID, projectID, clusterID)
+	return c.doWrite(ctx, http.MethodPost, path, nil, nil)
+}
+
+func (c *Client) DisableAnalyticsPrivateEndpointService(ctx context.Context, orgID, projectID, clusterID string) error {
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/analyticsClusters/%s/privateEndpointService",
+		orgID, projectID, clusterID)
+	return c.doWrite(ctx, http.MethodDelete, path, nil, nil)
+}
+
+// The analytics API reports the endpoint ID as endpointId rather than id, so the
+// endpoints are normalized to the shared PrivateEndpointInfo shape. The status
+// values match the provisioned cluster ones.
+type analyticsPrivateEndpointInfo struct {
+	EndpointID string `json:"endpointId"`
+	Status     string `json:"status"`
+}
+
+type listAnalyticsPrivateEndpointsResponse struct {
+	Endpoints []*analyticsPrivateEndpointInfo `json:"endpoints"`
+}
+
+func (c *Client) ListAnalyticsPrivateEndpoints(ctx context.Context, orgID, projectID, clusterID string) ([]*PrivateEndpointInfo, error) {
+	resp := &listAnalyticsPrivateEndpointsResponse{}
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/analyticsClusters/%s/privateEndpointService/endpoints",
+		orgID, projectID, clusterID)
+	if err := c.doRead(ctx, http.MethodGet, path, nil, resp); err != nil {
+		return nil, err
+	}
+
+	endpoints := make([]*PrivateEndpointInfo, 0, len(resp.Endpoints))
+	for _, endpoint := range resp.Endpoints {
+		endpoints = append(endpoints, &PrivateEndpointInfo{
+			ID:     endpoint.EndpointID,
+			Status: endpoint.Status,
+		})
+	}
+	return endpoints, nil
+}
+
+// AcceptAnalyticsPrivateEndpoint associates a pending endpoint request with the
+// service, which is what makes the endpoint usable.
+func (c *Client) AcceptAnalyticsPrivateEndpoint(ctx context.Context, orgID, projectID, clusterID, endpointID string) error {
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/analyticsClusters/%s/privateEndpointService/endpoints/%s/associate",
+		orgID, projectID, clusterID, endpointID)
+	return c.doWrite(ctx, http.MethodPost, path, nil, nil)
 }
