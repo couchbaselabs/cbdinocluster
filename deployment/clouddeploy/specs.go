@@ -54,7 +54,7 @@ func buildServiceGroups(
 		// a definition that names an instance type cannot be translated.
 		if nodeGroup.Cloud.InstanceType != "" {
 			return nil, errors.Errorf(
-				"cloud instance-type `%s` is not supported for capella clusters, use cloud cpu and memory instead",
+				"cloud instance-type `%s` is only supported together with cloud server-image, use cloud cpu and memory instead",
 				nodeGroup.Cloud.InstanceType)
 		}
 

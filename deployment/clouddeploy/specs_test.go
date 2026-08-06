@@ -123,7 +123,8 @@ func TestBuildServiceGroupsMultipleGroups(t *testing.T) {
 }
 
 // The v4 API sizes nodes by cpu and ram, so an instance type cannot be honoured.
-// The error must say what to use instead.
+// The error must name the legacy path that still reads it and say what to use
+// instead.
 func TestBuildServiceGroupsRejectsInstanceType(t *testing.T) {
 	_, err := buildServiceGroups(capellav4.ProviderAws, []*clusterdef.NodeGroup{
 		{
@@ -133,6 +134,7 @@ func TestBuildServiceGroupsRejectsInstanceType(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "m5.24xlarge")
+	assert.Contains(t, err.Error(), "server-image")
 	assert.Contains(t, err.Error(), "cpu and memory")
 }
 
