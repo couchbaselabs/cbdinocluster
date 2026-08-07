@@ -91,6 +91,69 @@ func (m *Manager) WaitForClusterState(
 	}
 }
 
+// WaitForAnalyticsClusterState is the analytics cluster form of
+// WaitForClusterState.
+//
+// This lists the project because the v4 API has no single analytics cluster
+// fetch that reports the current state.
+func (m *Manager) WaitForAnalyticsClusterState(
+	ctx context.Context,
+	orgID, projectID, clusterID string,
+	desiredState string,
+) error {
+	for {
+		clusters, err := m.Client.ListAnalyticsClusters(ctx, orgID, projectID)
+		if err != nil {
+			return errors.Wrap(err, "failed to list analytics clusters")
+		}
+
+		currentState := ""
+		found := false
+		for _, cluster := range clusters {
+			if cluster.ID == clusterID {
+				currentState = cluster.CurrentState
+				found = true
+			}
+		}
+
+		if !found {
+			if desiredState == StateDeleted {
+				return nil
+			}
+			return fmt.Errorf("analytics cluster disappeared during wait for '%s' state", desiredState)
+		}
+
+		if desiredState == StateDeleted {
+			m.Logger.Info("waiting for cluster deletion...",
+				zap.String("current", currentState))
+
+			if err := m.sleep(ctx, clusterPollInterval); err != nil {
+				return err
+			}
+			continue
+		}
+
+		// Capella reports terminal failures as deployment_failed,
+		// destroy_failed, scale_failed and similar, so match on the suffix
+		// rather than listing every variant.
+		if strings.Contains(currentState, "failed") && currentState != desiredState {
+			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", currentState)
+		}
+
+		m.Logger.Info("waiting for cluster status...",
+			zap.String("current", currentState),
+			zap.String("desired", desiredState))
+
+		if currentState == desiredState {
+			return nil
+		}
+
+		if err := m.sleep(ctx, clusterPollInterval); err != nil {
+			return err
+		}
+	}
+}
+
 // WaitForDataApiEnabled polls until the Data API finishes enabling.
 func (m *Manager) WaitForDataApiEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
 	for {

@@ -1121,14 +1121,21 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 		return errors.Wrap(err, "failed to upgrade server version")
 	}
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "upgrading", columnar)
+	waitForState := func(desiredState string) error {
+		if columnar {
+			return d.v4mgr.WaitForAnalyticsClusterState(ctx, d.tenantID, clusterInfo.ProjectID, instanceId, desiredState)
+		}
+		return d.v4mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.ProjectID, instanceId, desiredState)
+	}
+
+	err = waitForState(capellav4.StateUpgrading)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster upgrade to begin")
 	}
 
 	d.logger.Debug("waiting for cluster to be healthy")
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "healthy", columnar)
+	err = waitForState(capellav4.StateHealthy)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster to be healthy")
 	}
