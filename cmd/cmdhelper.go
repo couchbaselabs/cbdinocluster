@@ -206,8 +206,6 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	capellaInternalSupportToken := config.Capella.InternalSupportToken
 	uploadServerLogsHostName := config.Capella.UploadServerLogsHostName
 
-	// The environment fills in what the config file does not carry, so a CI run can
-	// supply the API key without writing a config file.
 	capellaApiSecret := config.Capella.ApiSecret
 	if capellaApiSecret == "" {
 		capellaApiSecret = os.Getenv("CAPELLA_API_SECRET")
@@ -234,9 +232,8 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 		return nil, errors.Wrap(err, "failed to create capella v4 client")
 	}
 
-	// The v2 controller is created eagerly but does not authenticate until a
-	// request is made, so a run that only touches v4 never establishes a
-	// session and never invalidates anyone else's.
+	// The v2 controller authenticates lazily, so a v4 only run never creates a
+	// session.
 	client, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
 		Logger:   logger,
 		Endpoint: capellaEndpoint,
@@ -299,8 +296,6 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 	if cloudDeployer != nil {
 		out["cloud"] = cloudDeployer
 	} else if err != nil {
-		// Capella is enabled but unusable, which would otherwise show up only as
-		// a confusing "deployer not found" later on.
 		logger.Warn("capella is enabled but the cloud deployer could not be created",
 			zap.Error(err))
 	}

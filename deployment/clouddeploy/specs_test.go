@@ -90,7 +90,6 @@ func TestBuildServiceGroupsOverrides(t *testing.T) {
 	}, groups[0])
 }
 
-// An Ultra disk is the one Azure type that reads an explicit size and IOPS.
 func TestBuildServiceGroupsAzureUltraDisk(t *testing.T) {
 	groups, err := buildServiceGroups(capellav4.ProviderAzure, []*clusterdef.NodeGroup{
 		{
@@ -122,9 +121,6 @@ func TestBuildServiceGroupsMultipleGroups(t *testing.T) {
 	assert.Equal(t, []string{"analytics"}, groups[1].Services)
 }
 
-// The v4 API sizes nodes by cpu and ram, so an instance type cannot be honoured.
-// The error must name the legacy path that still reads it and say what to use
-// instead.
 func TestBuildServiceGroupsRejectsInstanceType(t *testing.T) {
 	_, err := buildServiceGroups(capellav4.ProviderAws, []*clusterdef.NodeGroup{
 		{
@@ -180,9 +176,8 @@ func TestServiceGroupsEqual(t *testing.T) {
 	assert.False(t, serviceGroupsEqual(capellav4.ProviderAws, []capellav4.ServiceGroup{base}, nil))
 }
 
-// Capella reports a size and IOPS for provisioned Azure disks even though a
-// definition cannot set them. Reporting that as a change would rescale the
-// cluster on every modify.
+// Capella reports a size and IOPS for provisioned Azure disks that a definition
+// cannot set.
 func TestServiceGroupsEqualIgnoresAzureReportedDisk(t *testing.T) {
 	wanted, err := buildServiceGroups(capellav4.ProviderAzure, []*clusterdef.NodeGroup{{Count: 3}})
 	require.NoError(t, err)

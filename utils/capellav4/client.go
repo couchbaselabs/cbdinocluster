@@ -1,9 +1,5 @@
 // Package capellav4 is a client for the public Capella Management API v4.
-//
-// Unlike the internal v2 API in utils/capellacontrol, authentication here is a
-// stateless organization API key. There is no session to establish and none to
-// invalidate, so concurrent cbdinocluster runs that share one credential no
-// longer log each other out.
+// Authentication uses a stateless API key, so there is no session to invalidate.
 package capellav4
 
 import (
@@ -22,12 +18,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// DefaultEndpoint is the public v4 API base URL. It is a different host from
-// the internal v2 API, which does not accept API key credentials.
 const DefaultEndpoint = "https://cloudapi.cloud.couchbase.com"
 
-// MaxPerPage is the largest page size the v4 API accepts. Larger values are
-// rejected with HTTP 400 rather than being clamped.
+// MaxPerPage is the largest page size the v4 API accepts, over returns HTTP 400
 const MaxPerPage = 100
 
 const maxReadRetries = 10
@@ -42,10 +35,8 @@ type Client struct {
 type ClientOptions struct {
 	Logger     *zap.Logger
 	HttpClient *http.Client
-	// Endpoint defaults to DefaultEndpoint when empty.
-	Endpoint string
-	// SecretKey is the secret half of an organization API key. The access key
-	// is not part of v4 authentication and is not sent.
+	Endpoint   string
+	// The v4 API authenticates with the secret alone. The access key is not sent.
 	SecretKey string
 }
 
@@ -80,15 +71,12 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 	}, nil
 }
 
-// Error is the v4 API error envelope. It differs from the v2 shape, which used
-// error, errorType and message.
 type Error struct {
 	Code           int    `json:"code"`
 	Hint           string `json:"hint"`
 	HttpStatusCode int    `json:"httpStatusCode"`
 	Message        string `json:"message"`
 
-	// FullText is the raw body, kept for errors that are not valid JSON.
 	FullText string `json:"-"`
 }
 
@@ -99,8 +87,6 @@ func (e *Error) Error() string {
 		e.HttpStatusCode, e.Code, e.Message, e.Hint)
 }
 
-// IsNotFound reports whether err is a v4 error for a missing resource. Callers
-// use this to tell "deleted" apart from "request failed" when polling.
 func IsNotFound(err error) bool {
 	var apiErr *Error
 	if errors.As(err, &apiErr) {
@@ -112,7 +98,6 @@ func IsNotFound(err error) bool {
 func isRetryable(err error) bool {
 	var apiErr *Error
 	if !errors.As(err, &apiErr) {
-		// Transport level failures are always worth another attempt.
 		return true
 	}
 
@@ -194,7 +179,6 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 	return nil
 }
 
-// doRead issues an idempotent request and retries transient failures.
 func (c *Client) doRead(ctx context.Context, method, path string, body, out any) error {
 	for retryNum := 0; ; retryNum++ {
 		err := c.doOnce(ctx, method, path, body, out)
@@ -228,8 +212,7 @@ func (c *Client) doRead(ctx context.Context, method, path string, body, out any)
 	}
 }
 
-// doWrite issues a mutating request exactly once. Retrying a create or a delete
-// risks acting twice on the same resource, so failures propagate immediately.
+// Writes are never retried to prevent e.g. a repeated create which provisions the resource twice.
 func (c *Client) doWrite(ctx context.Context, method, path string, body, out any) error {
 	return c.doOnce(ctx, method, path, body, out)
 }
@@ -252,9 +235,6 @@ type pagedResponse[T any] struct {
 	Cursor cursor `json:"cursor"`
 }
 
-// listAll walks every page of a paginated collection. The v4 API caps perPage
-// at 100, so any collection that can exceed that needs this rather than a
-// single oversized request.
 func listAll[T any](ctx context.Context, c *Client, path string, params url.Values) ([]T, error) {
 	if params == nil {
 		params = url.Values{}
@@ -275,8 +255,7 @@ func listAll[T any](ctx context.Context, c *Client, path string, params url.Valu
 
 		out = append(out, resp.Data...)
 
-		// An empty collection reports last as 0, so treat "no more rows" and
-		// "reached the final page" the same way.
+		// An empty collection reports last as 0.
 		if len(resp.Data) == 0 || page >= resp.Cursor.Pages.Last {
 			return out, nil
 		}

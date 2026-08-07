@@ -10,7 +10,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// Manager adds polling helpers on top of Client.
 type Manager struct {
 	Logger *zap.Logger
 	Client *Client
@@ -33,12 +32,6 @@ func (m *Manager) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// WaitForClusterState polls a single cluster until it reaches desiredState.
-// Passing StateDeleted waits for the cluster to disappear instead.
-//
-// This polls the cluster directly rather than listing, which matters because the
-// v4 API has no organization-wide cluster list and listing would cost one request
-// per project on every poll.
 func (m *Manager) WaitForClusterState(
 	ctx context.Context,
 	orgID, projectID, clusterID string,
@@ -70,9 +63,7 @@ func (m *Manager) WaitForClusterState(
 			continue
 		}
 
-		// Capella reports terminal failures as deployment_failed,
-		// destroy_failed, scale_failed and similar, so match on the suffix
-		// rather than listing every variant.
+		// Terminal failure states share a "failed" suffix, such as deployment_failed.
 		if strings.Contains(currentState, "failed") && currentState != desiredState {
 			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", currentState)
 		}
@@ -91,11 +82,7 @@ func (m *Manager) WaitForClusterState(
 	}
 }
 
-// WaitForAnalyticsClusterState is the analytics cluster form of
-// WaitForClusterState.
-//
-// This lists the project because the v4 API has no single analytics cluster
-// fetch that reports the current state.
+// The v4 API has no single analytics cluster fetch, so the project is listed.
 func (m *Manager) WaitForAnalyticsClusterState(
 	ctx context.Context,
 	orgID, projectID, clusterID string,
@@ -133,9 +120,7 @@ func (m *Manager) WaitForAnalyticsClusterState(
 			continue
 		}
 
-		// Capella reports terminal failures as deployment_failed,
-		// destroy_failed, scale_failed and similar, so match on the suffix
-		// rather than listing every variant.
+		// Terminal failure states share a "failed" suffix, such as deployment_failed.
 		if strings.Contains(currentState, "failed") && currentState != desiredState {
 			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", currentState)
 		}
@@ -154,7 +139,6 @@ func (m *Manager) WaitForAnalyticsClusterState(
 	}
 }
 
-// WaitForDataApiEnabled polls until the Data API finishes enabling.
 func (m *Manager) WaitForDataApiEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
 	for {
 		info, err := m.Client.GetDataApi(ctx, orgID, projectID, clusterID)
@@ -176,8 +160,6 @@ func (m *Manager) WaitForDataApiEnabled(ctx context.Context, orgID, projectID, c
 	}
 }
 
-// WaitForPrivateEndpointServiceEnabled polls until the private endpoint service
-// is ready to accept endpoint requests.
 func (m *Manager) WaitForPrivateEndpointServiceEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
 	return m.waitForPrivateEndpointServiceEnabled(ctx, func(ctx context.Context) (string, error) {
 		info, err := m.Client.GetPrivateEndpointService(ctx, orgID, projectID, clusterID)
@@ -188,8 +170,6 @@ func (m *Manager) WaitForPrivateEndpointServiceEnabled(ctx context.Context, orgI
 	})
 }
 
-// WaitForAnalyticsPrivateEndpointServiceEnabled is the analytics cluster form of
-// WaitForPrivateEndpointServiceEnabled.
 func (m *Manager) WaitForAnalyticsPrivateEndpointServiceEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
 	return m.waitForPrivateEndpointServiceEnabled(ctx, func(ctx context.Context) (string, error) {
 		info, err := m.Client.GetAnalyticsPrivateEndpointService(ctx, orgID, projectID, clusterID)
@@ -224,8 +204,6 @@ func (m *Manager) waitForPrivateEndpointServiceEnabled(
 	}
 }
 
-// privateEndpointLister abstracts over the provisioned and analytics endpoint
-// listings, which return the same information under different response shapes.
 type privateEndpointLister func(ctx context.Context) ([]*PrivateEndpointInfo, error)
 
 func (m *Manager) listClusterPrivateEndpoints(orgID, projectID, clusterID string) privateEndpointLister {
@@ -244,9 +222,7 @@ func (m *Manager) listAnalyticsPrivateEndpoints(orgID, projectID, clusterID stri
 	}
 }
 
-// WaitForPrivateEndpoint polls until an endpoint with the given ID is visible to
-// Capella. The endpoint only appears once the cloud provider has propagated the
-// connection request.
+// The endpoint appears only after the cloud provider propagates the request.
 func (m *Manager) WaitForPrivateEndpoint(
 	ctx context.Context,
 	orgID, projectID, clusterID string,
@@ -255,8 +231,6 @@ func (m *Manager) WaitForPrivateEndpoint(
 	return m.waitForPrivateEndpoint(ctx, m.listClusterPrivateEndpoints(orgID, projectID, clusterID), endpointID)
 }
 
-// WaitForAnalyticsPrivateEndpoint is the analytics cluster form of
-// WaitForPrivateEndpoint.
 func (m *Manager) WaitForAnalyticsPrivateEndpoint(
 	ctx context.Context,
 	orgID, projectID, clusterID string,
@@ -292,7 +266,6 @@ func (m *Manager) waitForPrivateEndpoint(
 	}
 }
 
-// WaitForPrivateEndpointState polls until an endpoint reaches desiredState.
 func (m *Manager) WaitForPrivateEndpointState(
 	ctx context.Context,
 	orgID, projectID, clusterID string,
@@ -302,8 +275,6 @@ func (m *Manager) WaitForPrivateEndpointState(
 	return m.waitForPrivateEndpointState(ctx, m.listClusterPrivateEndpoints(orgID, projectID, clusterID), endpointID, desiredState)
 }
 
-// WaitForAnalyticsPrivateEndpointState is the analytics cluster form of
-// WaitForPrivateEndpointState.
 func (m *Manager) WaitForAnalyticsPrivateEndpointState(
 	ctx context.Context,
 	orgID, projectID, clusterID string,
@@ -332,8 +303,7 @@ func (m *Manager) waitForPrivateEndpointState(
 			}
 		}
 
-		// Capella drops rejected endpoints after a while, so a missing endpoint
-		// satisfies a wait for the rejected state.
+		// Capella drops rejected endpoints, so a missing endpoint is a rejected one.
 		if currentState == "" && desiredState == PrivateEndpointRejected {
 			return nil
 		}

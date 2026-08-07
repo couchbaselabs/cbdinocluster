@@ -1254,8 +1254,6 @@ var initCmd = &cobra.Command{
 						"What Capella API secret should we use?",
 						capellaApiSecret, true)
 				}
-				// The v4 API authenticates with the secret alone. Without it, no
-				// operational cluster command can run.
 				if capellaApiSecret == "" {
 					fmt.Printf("Capella API secret is required.\n")
 					capellaEnabled = false
@@ -1284,9 +1282,6 @@ var initCmd = &cobra.Command{
 					continue
 				}
 
-				// The v2 username and password are optional. They only serve the
-				// features v4 does not expose, and using them invalidates other active
-				// sessions for the same user.
 				if flagCapellaUser != "" {
 					fmt.Printf("Capella user specified via flags:\n  %s\n", flagCapellaUser)
 					capellaUser = flagCapellaUser

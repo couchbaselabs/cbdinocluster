@@ -10,9 +10,6 @@ type getCertificateResponse struct {
 	Certificate string `json:"certificate"`
 }
 
-// GetCertificate returns the cluster trust certificate. The v2 API returned a
-// list of trusted CAs that callers had to filter; v4 returns the single relevant
-// certificate.
 func (c *Client) GetCertificate(ctx context.Context, orgID, projectID, clusterID string) (string, error) {
 	resp := &getCertificateResponse{}
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/certificates", orgID, projectID, clusterID)
@@ -60,14 +57,12 @@ func (c *Client) UpdateDataApi(
 	return c.doWrite(ctx, http.MethodPut, path, req, nil)
 }
 
-// Private endpoint service states.
 const (
 	PrivateEndpointServiceEnabled  = "enabled"
 	PrivateEndpointServiceDisabled = "disabled"
 	PrivateEndpointServiceIdle     = "idle"
 )
 
-// Private endpoint connection states.
 const (
 	PrivateEndpointPending           = "pending"
 	PrivateEndpointPendingAcceptance = "pendingAcceptance"
@@ -77,8 +72,7 @@ const (
 )
 
 type PrivateEndpointServiceInfo struct {
-	Enabled bool `json:"enabled"`
-	// ServiceName is what the cloud provider CLI needs to create the endpoint.
+	Enabled     bool   `json:"enabled"`
 	ServiceName string `json:"serviceName"`
 	Status      string `json:"status"`
 }
@@ -112,7 +106,6 @@ type PrivateEndpointInfo struct {
 }
 
 type ListPrivateEndpointsResponse struct {
-	// PrivateEndpointDNS was reported by the v2 privateendpoint/details call.
 	PrivateEndpointDNS string                 `json:"privateEndpointDNS"`
 	Endpoints          []*PrivateEndpointInfo `json:"endpoints"`
 }
@@ -127,17 +120,12 @@ func (c *Client) ListPrivateEndpoints(ctx context.Context, orgID, projectID, clu
 	return resp, nil
 }
 
-// AcceptPrivateEndpoint associates a pending endpoint request with the service,
-// which is what makes the endpoint usable.
 func (c *Client) AcceptPrivateEndpoint(ctx context.Context, orgID, projectID, clusterID, endpointID string) error {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/privateEndpointService/endpoints/%s/associate",
 		orgID, projectID, clusterID, endpointID)
 	return c.doWrite(ctx, http.MethodPost, path, nil, nil)
 }
 
-// EndpointCommandRequest carries the provider specific fields for generating the
-// endpoint creation command. Only the fields for the cluster's own provider are
-// populated; the rest are omitted.
 type EndpointCommandRequest struct {
 	// AWS.
 	VpcID string `json:"vpcID,omitempty"`
@@ -154,8 +142,6 @@ type EndpointCommandResponse struct {
 	Command string `json:"command"`
 }
 
-// GetPrivateEndpointCommand returns the provider CLI command or script that
-// creates the private endpoint on the caller's side.
 func (c *Client) GetPrivateEndpointCommand(
 	ctx context.Context,
 	orgID, projectID, clusterID string,

@@ -25,14 +25,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// Deployer drives Capella through two APIs.
-//
-// Operational clusters use the public Management API v4 (v4 and v4mgr), whose
-// API key credential is stateless. The internal v2 API (client and mgr) is used
-// only where v4 has no equivalent: custom server image deployment, server
-// version overrides, the internal support endpoints, and columnar specific
-// features. Authenticating against v2 invalidates any other active session for
-// the same user, so v2 must stay off the common path.
+// The internal v2 API is used only where v4 has no equivalent. Authentication
+// there invalidates any other active session for the same user.
 type Deployer struct {
 	logger                   *zap.Logger
 	client                   *capellacontrol.Controller
@@ -53,12 +47,9 @@ type Deployer struct {
 var _ deployment.Deployer = (*Deployer)(nil)
 
 type NewDeployerOptions struct {
-	Logger   *zap.Logger
-	Client   *capellacontrol.Controller
-	V4Client *capellav4.Client
-	// HasLegacyCredentials reports whether v2 username and password are
-	// configured. Without them, operations that only v2 can serve fail early
-	// with an explanation instead of a bare authentication error.
+	Logger                   *zap.Logger
+	Client                   *capellacontrol.Controller
+	V4Client                 *capellav4.Client
 	HasLegacyCredentials     bool
 	TenantID                 string
 	OverrideToken            string
@@ -99,8 +90,6 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	}, nil
 }
 
-// requireLegacy guards the operations that only the internal v2 API can serve.
-// It names the feature so the failure explains why a session is needed.
 func (p *Deployer) requireLegacy(feature string) error {
 	if p.hasLegacyCredentials {
 		return nil
@@ -110,9 +99,7 @@ func (p *Deployer) requireLegacy(feature string) error {
 		"active sessions for the same user", feature)
 }
 
-// requireSupportToken guards the operations that use the internal support
-// endpoints. These authenticate with the support token alone and never create
-// a v2 session, so they do not need the v2 username and password.
+// The support token authenticates by itself and creates no v2 session.
 func (p *Deployer) requireSupportToken(feature string) error {
 	if p.internalSupportToken != "" {
 		return nil
@@ -121,13 +108,8 @@ func (p *Deployer) requireSupportToken(feature string) error {
 		"with `cbdinocluster init` or CAPELLA_INTERNAL_SUPPORT_TOKEN", feature)
 }
 
-// clusterInfo pairs a cbdc2 project with the single cluster it contains.
-//
-// cbdinocluster encodes the cluster ID and expiry in the project name, so the
-// project is the unit of ownership and exactly one cluster is expected inside it.
-//
-// The v4 cluster object carries no project reference, so ProjectID is tracked
-// here rather than read back off the cluster.
+// The v4 cluster object carries no project reference. cbdinocluster encodes the
+// cluster ID in the project name, so the project is the unit of ownership.
 type clusterInfo struct {
 	Meta        *stringclustermeta.MetaData
 	ProjectID   string
@@ -137,15 +119,11 @@ type clusterInfo struct {
 	IsCorrupted bool
 }
 
-// cbdc2Project is a project whose name carries cbdinocluster metadata.
 type cbdc2Project struct {
 	Meta *stringclustermeta.MetaData
 	Info *capellav4.ProjectInfo
 }
 
-// listCbdc2Projects returns only the projects cbdinocluster owns. Projects
-// belonging to other users are skipped, which also keeps the per-project cluster
-// listing below proportional to our own usage rather than the whole organization.
 func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error) {
 	p.logger.Debug("listing cloud projects")
 
@@ -170,9 +148,6 @@ func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error
 	return out, nil
 }
 
-// inspectProject resolves the single cluster inside one cbdc2 project. It returns
-// nil when the project holds no cluster yet, which happens between project
-// creation and cluster creation.
 func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*clusterInfo, error) {
 	base := &clusterInfo{
 		Meta:        project.Meta,
@@ -194,8 +169,6 @@ func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*c
 		return base, nil
 	}
 
-	// Analytics clusters live under a separate collection, so an empty cluster
-	// list does not mean the project is empty.
 	columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, project.Info.ID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list analytics clusters for project")
@@ -240,8 +213,6 @@ func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterIn
 		return nil, err
 	}
 
-	// The cluster ID is encoded in the project name, so the owning project is
-	// identified without listing clusters across the organization.
 	var foundProject *cbdc2Project
 	for _, project := range projects {
 		if project.Meta.ID.String() == clusterID {
@@ -269,12 +240,8 @@ func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterIn
 	return foundCluster, nil
 }
 
-// columnarV2Detail fetches the internal v2 record for a columnar cluster.
-//
 // The v4 analytics API exposes no connection string, certificate or database
-// credentials, so those operations still need v2. This is deliberately lazy: it
-// is only called by columnar specific operations, which keeps operational cluster
-// commands free of a v2 session.
+// credentials, so columnar clusters still need the v2 record.
 func (p *Deployer) columnarV2Detail(ctx context.Context, info *clusterInfo) (*capellacontrol.ColumnarData, error) {
 	if info.Columnar == nil {
 		return nil, errors.New("cluster is not a columnar cluster")
@@ -494,8 +461,6 @@ func (p *Deployer) buildDeploySpecs(
 	return specs, nil
 }
 
-// deployNewCluster provisions a cluster from a specific server image. Only the
-// internal v2 API can override the image, so this whole path needs v2.
 func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster, clusterVersion string, serverImage string) (deployment.ClusterInfo, error) {
 	if err := p.requireLegacy("custom server image deployment"); err != nil {
 		return nil, err
@@ -632,8 +597,6 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	return thisCluster, nil
 }
 
-// resolveCloudLocation picks the cloud provider and region for a new cluster,
-// falling back to the defaults from the cbdinocluster config.
 func (p *Deployer) resolveCloudLocation(def *clusterdef.Cluster) (string, string, error) {
 	cloudProvider := def.Cloud.CloudProvider
 	if cloudProvider == "" {
@@ -691,9 +654,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
 
-	// An empty CIDR or server version makes Capella choose a free block and the
-	// current default version, which is what the v2 deployment options lookup used
-	// to do by hand.
+	// An empty CIDR makes Capella allocate a free block.
 	cloudProviderSpec := capellav4.CloudProvider{
 		Type:   cloudProvider,
 		Region: cloudRegion,
@@ -764,8 +725,6 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.Wrap(err, "failed to wait for deployment")
 		}
 	} else {
-		// The v4 analytics API cannot create a cluster with a specific image, and
-		// exposes no credentials or connection string, so columnar stays on v2.
 		if err := p.requireLegacy("columnar cluster deployment"); err != nil {
 			return nil, err
 		}
@@ -1014,8 +973,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		}
 	}
 
-	// The v4 update body has no server version field, so a version change is only
-	// possible through the v2 image override.
+	// Only the v2 image override can change the server version.
 	if clusterVersion != clusterInfo.Cluster.CouchbaseServer.Version && serverImage != "" {
 		if err := d.requireLegacy("server version change"); err != nil {
 			return err
@@ -1053,8 +1011,6 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	return nil
 }
 
-// UpgradeCluster schedules an image upgrade through the internal support
-// endpoints, which the v4 API does not expose.
 func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
 	if err := d.requireSupportToken("cluster image upgrade"); err != nil {
 		return err
@@ -1178,8 +1134,8 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 			return errors.Wrap(err, "failed to wait for cluster destruction")
 		}
 	} else if clusterInfo.Columnar != nil {
-		// Columnar deletion waits on the underlying cloud cluster, whose ID only
-		// the v2 record carries.
+		// The deletion wait needs the underlying cloud cluster ID, which only the
+		// v2 record carries.
 		detail, err := p.columnarV2Detail(ctx, clusterInfo)
 		if err != nil {
 			return err
@@ -1246,8 +1202,6 @@ func (p *Deployer) ListAllowListEntries(ctx context.Context, clusterID string) (
 	return out, nil
 }
 
-// listAllowedCidrs reads the allow list of either cluster kind. The v4 analytics
-// API serves allowed CIDRs, so columnar does not need v2 here.
 func (p *Deployer) listAllowedCidrs(ctx context.Context, clusterInfo *clusterInfo) ([]*capellav4.AllowedCidrInfo, error) {
 	var entries []*capellav4.AllowedCidrInfo
 	var err error
@@ -1378,8 +1332,8 @@ func (p *Deployer) GetPrivateEndpointDetails(ctx context.Context, clusterID stri
 			return nil, errors.New("private endpoints are not enabled")
 		}
 
-		// The private DNS name is reported with the endpoint list rather than with
-		// the service in v4.
+		// The v4 API reports the private DNS name with the endpoint list, not with
+		// the service.
 		endpoints, err := p.v4.ListPrivateEndpoints(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to fetch private endpoints")
@@ -1532,14 +1486,10 @@ func (p *Deployer) acceptColumnarPrivateEndpointLink(ctx context.Context, cluste
 	return nil
 }
 
-// removalTarget is one cluster queued for deletion by RemoveAll. Deletions are
-// issued for every target before any wait, so that clusters tear down at the same
-// time instead of one after another.
 type removalTarget struct {
 	projectID string
 	clusterID string
-	// underlyingID is the cloud cluster behind a columnar instance, which its
-	// deletion wait needs.
+	// The cloud cluster behind a columnar instance, needed by its deletion wait.
 	underlyingID string
 	isColumnar   bool
 }
@@ -1552,8 +1502,8 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		return errors.Wrap(err, "failed to list projects")
 	}
 
-	// Corrupted projects can hold more than one cluster, so the clusters are read
-	// directly rather than through inspectProject, which collapses them.
+	// A corrupted project can hold more than one cluster, which inspectProject
+	// collapses into one.
 	var targets []removalTarget
 	failedProjects := make(map[string]bool)
 	for _, project := range projects {
@@ -1625,8 +1575,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		}
 	}
 
-	// A project is only removed once everything inside it is gone, since Capella
-	// refuses to delete a project that still holds a cluster.
+	// Capella refuses to delete a project that still holds a cluster.
 	for _, project := range projects {
 		if failedProjects[project.Info.ID] {
 			p.logger.Warn("keeping project as its clusters were not all removed",
@@ -1662,9 +1611,8 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.ConnectionString)
 		dnsSRV = clusterInfo.Cluster.ConnectionString
 
-		// The Data API connection string is on a separate resource in v4. A cluster
-		// without the Data API enabled must still report its normal connection
-		// string, so a failure here is not fatal.
+		// The Data API connection string is a separate resource. A cluster without
+		// the Data API must still report its normal connection string.
 		dataApi, err := p.v4.GetDataApi(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			p.logger.Debug("failed to fetch data api details", zap.Error(err))
@@ -1702,9 +1650,6 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 	curTime := time.Now()
 	var allErr error
 	for _, cluster := range clusters {
-		// A project with nothing in it is left behind by a cluster that was already
-		// removed, or by a create that failed part way. v4 projects report no cluster
-		// count, so emptiness comes from the listing above.
 		if cluster.Cluster == nil && cluster.Columnar == nil && !cluster.IsCorrupted {
 			p.logger.Info("removing empty project",
 				zap.String("project-id", cluster.ProjectID))
@@ -2094,8 +2039,6 @@ func (d *Deployer) startLogCollection(ctx context.Context, cloudClusterId string
 	return err
 }
 
-// CollectLogs gathers server logs through the internal support endpoints, which
-// the v4 API does not expose.
 func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath string) ([]string, error) {
 	if strings.TrimSpace(d.uploadServerLogsHostName) == "" {
 		return nil, fmt.Errorf("cannot collect server logs: no upload-server-logs host name is configured; " +
@@ -2160,8 +2103,6 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 	return downloadedPaths, nil
 }
 
-// RedeployCluster uses an internal support endpoint that the v4 API does not
-// expose.
 func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
 	if err := d.requireSupportToken("cluster redeploy"); err != nil {
 		return err
@@ -2198,8 +2139,6 @@ func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error 
 	return nil
 }
 
-// CreateCapellaLink and the other link operations run analytics links, which the
-// v4 analytics API does not cover.
 func (d *Deployer) CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error {
 	columnarInfo, err := d.getCluster(ctx, columnarID)
 	if err != nil {
@@ -2305,8 +2244,6 @@ func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) 
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }
 
-// getQueryX builds a query client that runs through the v2 query passthrough
-// proxy. The v4 API has no equivalent.
 func (d *Deployer) getQueryX(ctx context.Context, clusterID string) (*cbqueryx.Query, error) {
 	if err := d.requireLegacy("running queries"); err != nil {
 		return nil, err
@@ -2325,9 +2262,6 @@ func (d *Deployer) getQueryX(ctx context.Context, clusterID string) (*cbqueryx.Q
 	return qcli, nil
 }
 
-// bucketTarget resolves the identifiers that the v4 scope and collection
-// endpoints need. Capella derives a bucket ID from its name, so no lookup is
-// required.
 func (d *Deployer) bucketTarget(ctx context.Context, clusterID string, bucketName string) (projectID string, cloudClusterID string, bucketID string, err error) {
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {

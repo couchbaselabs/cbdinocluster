@@ -30,9 +30,6 @@ func (c *Client) ListAllowedCidrs(ctx context.Context, orgID, projectID, cluster
 	return listAll[*AllowedCidrInfo](ctx, c, clusterCidrsPath(orgID, projectID, clusterID), nil)
 }
 
-// ListAnalyticsAllowedCidrs reads the allow list of an analytics cluster. Allowed
-// CIDRs are one of the few analytics features that v4 covers, so this avoids a v2
-// session for columnar allow list commands.
 func (c *Client) ListAnalyticsAllowedCidrs(ctx context.Context, orgID, projectID, clusterID string) ([]*AllowedCidrInfo, error) {
 	return listAll[*AllowedCidrInfo](ctx, c, analyticsCidrsPath(orgID, projectID, clusterID), nil)
 }
@@ -47,9 +44,6 @@ type CreateAllowedCidrResponse struct {
 	ID string `json:"id"`
 }
 
-// CreateAllowedCidr adds one CIDR to the cluster allow list. The v2 API had a
-// bulk endpoint that created and deleted in a single call; v4 requires one
-// request per entry.
 func (c *Client) CreateAllowedCidr(
 	ctx context.Context,
 	orgID, projectID, clusterID string,

@@ -34,8 +34,7 @@ type listBucketsResponse struct {
 	Data []*BucketInfo `json:"data"`
 }
 
-// ListBuckets returns every bucket on the cluster. This collection is not
-// paginated by the v4 API.
+// The v4 API does not paginate this collection.
 func (c *Client) ListBuckets(ctx context.Context, orgID, projectID, clusterID string) ([]*BucketInfo, error) {
 	resp := &listBucketsResponse{}
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets", orgID, projectID, clusterID)
@@ -89,8 +88,7 @@ type LoadSampleBucketResponse struct {
 	Name     string `json:"name"`
 }
 
-// LoadSampleBucket imports one of the Capella sample data sets. Only
-// travel-sample, gamesim-sample and beer-sample are accepted.
+// Only travel-sample, gamesim-sample and beer-sample are accepted.
 func (c *Client) LoadSampleBucket(
 	ctx context.Context,
 	orgID, projectID, clusterID string,
@@ -118,8 +116,7 @@ type listScopesResponse struct {
 	Scopes []ScopeInfo `json:"scopes"`
 }
 
-// ListScopes replaces the v2 collection manifest fetch, which went through the
-// ns_server proxy. bucketID is the base64 form of the bucket name.
+// bucketID is the base64 form of the bucket name.
 func (c *Client) ListScopes(ctx context.Context, orgID, projectID, clusterID, bucketID string) ([]ScopeInfo, error) {
 	resp := &listScopesResponse{}
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets/%s/scopes",

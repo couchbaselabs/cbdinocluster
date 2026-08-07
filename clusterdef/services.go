@@ -118,10 +118,7 @@ func ServicesToCaoServices(services []Service) ([]string, error) {
 	return out, nil
 }
 
-// ServiceToCapellaService maps a service onto the name used by the Capella
-// Management API v4. Capella names services the same way the operator does
-// rather than using the ns_server names. Services that Capella does not offer,
-// such as backup, are rejected.
+// Capella uses the operator service names, not the ns_server names.
 func ServiceToCapellaService(service Service) (string, error) {
 	return ServiceToCaoService(service)
 }

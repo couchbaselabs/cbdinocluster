@@ -108,17 +108,12 @@ type Config_Azure struct {
 type Config_Capella struct {
 	Enabled StringBool `yaml:"enabled"`
 
-	// V4Endpoint and ApiSecret drive the public Management API v4, which is the
-	// default path for operational clusters. An API key is stateless, so
-	// concurrent cbdinocluster runs sharing one credential do not interfere.
 	V4Endpoint string `yaml:"v4-endpoint"`
 	ApiKey     string `yaml:"api-key"`
 	ApiSecret  string `yaml:"api-secret"`
 
-	// Endpoint, Username and Password drive the internal v2 API. It is only
-	// needed for operations v4 does not expose: custom server images, log
-	// collection, cluster redeploy and columnar specific features. Note that
-	// authenticating invalidates any other active session for the same user.
+	// The internal v2 API is only needed where v4 has no equivalent.
+	// Authentication invalidates any other active session for the same user.
 	Endpoint             string `yaml:"endpoint"`
 	Username             string `yaml:"username"`
 	Password             string `yaml:"password"`

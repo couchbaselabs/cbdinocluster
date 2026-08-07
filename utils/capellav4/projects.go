@@ -21,9 +21,6 @@ type ProjectInfo struct {
 	Audit       Audit  `json:"audit"`
 }
 
-// ListProjects returns every project in the organization. The v4 project object
-// carries no cluster count, so callers that need one must count clusters
-// themselves.
 func (c *Client) ListProjects(ctx context.Context, orgID string) ([]*ProjectInfo, error) {
 	path := fmt.Sprintf("/v4/organizations/%s/projects", orgID)
 	return listAll[*ProjectInfo](ctx, c, path, nil)
@@ -56,9 +53,6 @@ type UpdateProjectRequest struct {
 	Description string `json:"description"`
 }
 
-// UpdateProject replaces the project name and description. cbdinocluster stores
-// the cluster ID and expiry time in the project name, so this is how a cluster's
-// expiry is extended.
 func (c *Client) UpdateProject(
 	ctx context.Context,
 	orgID, projectID string,

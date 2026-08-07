@@ -6,7 +6,6 @@ import (
 	"net/http"
 )
 
-// Cluster states reported in ClusterInfo.CurrentState.
 const (
 	StateDeploying   = "deploying"
 	StateHealthy     = "healthy"
@@ -22,8 +21,7 @@ const (
 	StateDraft       = "draft"
 )
 
-// Cloud provider identifiers. The v4 API uses plain names, unlike the v2 API
-// which used hostedAWS, hostedGCP and hostedAzure.
+// The v2 API used hostedAWS, hostedGCP and hostedAzure for these.
 const (
 	ProviderAws   = "aws"
 	ProviderGcp   = "gcp"
@@ -56,12 +54,7 @@ type Compute struct {
 	Ram int `json:"ram"`
 }
 
-// Disk covers all three provider disk variants. The v4 schema models them as a
-// one-of, but they differ only in which fields are present, so omitted fields
-// are enough to select the right variant.
-//
-// AutoExpansion is only honoured for Azure. AWS and GCP accept the field on
-// create but do not report it back, so do not rely on it there.
+// AutoExpansion is honoured for Azure only. AWS and GCP do not report it back.
 type Disk struct {
 	Type          string `json:"type"`
 	Storage       int    `json:"storage,omitempty"`
@@ -106,16 +99,13 @@ type ClusterInfo struct {
 	Audit             Audit           `json:"audit"`
 }
 
-// ListClusters returns the clusters in a single project. The v4 API has no
-// organization-wide cluster listing, so discovering every cluster means calling
-// this once per project.
+// The v4 API has no organization-wide cluster list. To find every cluster, call
+// this once for each project.
 func (c *Client) ListClusters(ctx context.Context, orgID, projectID string) ([]*ClusterInfo, error) {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters", orgID, projectID)
 	return listAll[*ClusterInfo](ctx, c, path, nil)
 }
 
-// GetCluster fetches one cluster. Prefer this over ListClusters when polling for
-// a state change, since it avoids a request per project on every poll.
 func (c *Client) GetCluster(ctx context.Context, orgID, projectID, clusterID string) (*ClusterInfo, error) {
 	resp := &ClusterInfo{}
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s", orgID, projectID, clusterID)
@@ -130,8 +120,8 @@ type CreateClusterRequest struct {
 	Description       string        `json:"description,omitempty"`
 	ConfigurationType string        `json:"configurationType,omitempty"`
 	CloudProvider     CloudProvider `json:"cloudProvider"`
-	// CouchbaseServer is a pointer so that an unset version is omitted from the
-	// request entirely rather than being sent as an empty object.
+	// A pointer, because Capella chooses the default version only when the key
+	// is absent. An empty object is not the same.
 	CouchbaseServer *CouchbaseServer `json:"couchbaseServer,omitempty"`
 	ServiceGroups   []ServiceGroup   `json:"serviceGroups"`
 	Availability    Availability     `json:"availability"`
@@ -143,10 +133,6 @@ type CreateClusterResponse struct {
 	ID string `json:"id"`
 }
 
-// CreateCluster provisions a cluster. Leaving CouchbaseServer.Version and
-// CloudProvider.Cidr empty makes Capella choose the current default server
-// version and allocate a free CIDR block, which is what replaces the v2
-// deployment-options lookup.
 func (c *Client) CreateCluster(
 	ctx context.Context,
 	orgID, projectID string,
@@ -166,8 +152,6 @@ type CreateFreeTierClusterRequest struct {
 	CloudProvider CloudProvider `json:"cloudProvider"`
 }
 
-// CreateFreeTierCluster provisions a free tier cluster. Free tier clusters have
-// a fixed topology, so no service groups or support plan are accepted.
 func (c *Client) CreateFreeTierCluster(
 	ctx context.Context,
 	orgID, projectID string,
@@ -188,8 +172,7 @@ type UpdateClusterRequest struct {
 	ServiceGroups []ServiceGroup `json:"serviceGroups"`
 }
 
-// UpdateCluster rescales a cluster. The v4 update body has no couchbaseServer
-// field, so it cannot change the server version.
+// The v4 update body has no couchbaseServer field. It cannot change the version.
 func (c *Client) UpdateCluster(
 	ctx context.Context,
 	orgID, projectID, clusterID string,

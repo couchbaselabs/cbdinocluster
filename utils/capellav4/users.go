@@ -6,8 +6,7 @@ import (
 	"net/http"
 )
 
-// Database credential privileges. The v4 API also accepts read and write as
-// aliases of these two.
+// The v4 API also accepts read and write as aliases of these privileges.
 const (
 	PrivilegeDataReader = "data_reader"
 	PrivilegeDataWriter = "data_writer"
@@ -27,8 +26,7 @@ type UserResources struct {
 	Buckets []UserBucket `json:"buckets,omitempty"`
 }
 
-// UserAccess grants a set of privileges. An absent Resources grants access to
-// every bucket.
+// An absent Resources grants access to every bucket.
 type UserAccess struct {
 	Privileges []string       `json:"privileges"`
 	Resources  *UserResources `json:"resources,omitempty"`
@@ -41,8 +39,6 @@ type UserInfo struct {
 	Audit  Audit        `json:"audit"`
 }
 
-// HasPrivilege reports whether the credential holds a privilege, accounting for
-// the read and write aliases the API accepts.
 func (u *UserInfo) HasPrivilege(privilege string) bool {
 	var alias string
 	switch privilege {
@@ -69,7 +65,7 @@ func (c *Client) ListUsers(ctx context.Context, orgID, projectID, clusterID stri
 
 type CreateUserRequest struct {
 	Name string `json:"name"`
-	// Password may be empty, in which case Capella generates one and returns it.
+	// An empty password makes Capella generate one and return it.
 	Password string       `json:"password,omitempty"`
 	Access   []UserAccess `json:"access"`
 }

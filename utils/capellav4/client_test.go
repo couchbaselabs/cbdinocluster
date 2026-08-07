@@ -47,7 +47,7 @@ func TestClientSendsBearerSecret(t *testing.T) {
 	_, err := client.CreateProject(context.Background(), "org", &CreateProjectRequest{Name: "n"})
 	require.NoError(t, err)
 
-	// The access key is not part of v4 auth, only the secret is sent.
+	// The v4 API authenticates with the secret alone.
 	assert.Equal(t, "Bearer test-secret", gotAuth)
 }
 
@@ -60,8 +60,7 @@ func TestListAllFollowsEveryPage(t *testing.T) {
 
 		perPage, err := strconv.Atoi(r.URL.Query().Get("perPage"))
 		require.NoError(t, err)
-		// The v4 API rejects anything above 100, so the client must never ask
-		// for more.
+		// The v4 API rejects a perPage above 100.
 		require.LessOrEqual(t, perPage, MaxPerPage)
 
 		page, err := strconv.Atoi(r.URL.Query().Get("page"))
@@ -91,7 +90,7 @@ func TestListAllFollowsEveryPage(t *testing.T) {
 }
 
 func TestListAllStopsOnEmptyCollection(t *testing.T) {
-	// An empty collection reports last as 0, which must not loop forever.
+	// An empty collection reports last as 0.
 	var requests atomic.Int32
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -131,8 +130,7 @@ func TestErrorDecodingNonJsonBody(t *testing.T) {
 	_, err := client.GetCluster(context.Background(), "org", "proj", "clus")
 	require.Error(t, err)
 
-	// A non-JSON body must still yield the right status, since IsNotFound
-	// drives the deletion wait.
+	// The v4 API can answer 404 with a body that is not JSON.
 	assert.True(t, IsNotFound(err))
 
 	var apiErr *Error
@@ -177,8 +175,6 @@ func TestReadDoesNotRetryClientError(t *testing.T) {
 }
 
 func TestWriteIsNeverRetried(t *testing.T) {
-	// Retrying a create risks provisioning twice, so writes must be attempted
-	// exactly once even on a retryable status.
 	var requests atomic.Int32
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
@@ -192,8 +188,7 @@ func TestWriteIsNeverRetried(t *testing.T) {
 }
 
 func TestCreateClusterOmitsUnsetServerVersionAndCidr(t *testing.T) {
-	// Capella picks the default server version and allocates a CIDR only when
-	// these keys are absent entirely, so an empty object would break it.
+	// Capella chooses the defaults only when these keys are absent entirely.
 	var body map[string]any
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
@@ -246,8 +241,7 @@ func TestCreateClusterSendsServerVersionWhenSet(t *testing.T) {
 }
 
 func TestListAnalyticsPrivateEndpointsNormalizesIDs(t *testing.T) {
-	// The analytics API reports endpoint IDs as endpointId rather than id, so
-	// the client must map them onto the shared PrivateEndpointInfo shape.
+	// The analytics API reports endpoint IDs as endpointId, not id.
 	var gotPath string
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path

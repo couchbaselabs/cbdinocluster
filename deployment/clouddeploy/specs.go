@@ -8,8 +8,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// azureUltraDisk is the only Azure disk type that accepts an explicit size and
-// IOPS. The provisioned types (P6, P10 and so on) have both fixed.
+// Ultra is the only Azure disk type that accepts an explicit size and IOPS.
 const azureUltraDisk = "Ultra"
 
 type cloudNodeDefaults struct {
@@ -20,9 +19,6 @@ type cloudNodeDefaults struct {
 	diskIops int
 }
 
-// All three providers default to 4 vCPU and 16 GB, which is what the instance
-// types the v2 API path requested gave (m5.xlarge, n2-standard-4 and
-// Standard_D4s_v5).
 var nodeDefaultsByProvider = map[string]cloudNodeDefaults{
 	capellav4.ProviderAws:   {cpu: 4, ram: 16, diskType: "gp3", diskSize: 50, diskIops: 3000},
 	capellav4.ProviderGcp:   {cpu: 4, ram: 16, diskType: "pd-ssd", diskSize: 50},
@@ -36,9 +32,6 @@ var defaultCloudServices = []clusterdef.Service{
 	clusterdef.SearchService,
 }
 
-// buildServiceGroups translates the node groups of a cluster definition into the
-// service groups that the Capella Management API v4 uses to describe a topology.
-// The same shape is used to create a cluster and to rescale one.
 func buildServiceGroups(
 	cloudProvider string,
 	nodeGrps []*clusterdef.NodeGroup,
@@ -50,8 +43,7 @@ func buildServiceGroups(
 
 	var groups []capellav4.ServiceGroup
 	for _, nodeGroup := range nodeGrps {
-		// The v4 API sizes nodes by cpu and ram and has no instance type field, so
-		// a definition that names an instance type cannot be translated.
+		// The v4 API sizes nodes by cpu and ram. It has no instance type field.
 		if nodeGroup.Cloud.InstanceType != "" {
 			return nil, errors.Errorf(
 				"cloud instance-type `%s` is only supported together with cloud server-image, use cloud cpu and memory instead",
@@ -107,10 +99,8 @@ func buildServiceGroups(
 	return groups, nil
 }
 
-// normalizeDisk removes the disk fields that a provider does not accept. GCP has
-// no IOPS setting, and Azure only reads the size and IOPS of an Ultra disk.
-// Sending the extra fields would be rejected, and keeping them would make a
-// cluster read back from Capella never compare equal to its own definition.
+// GCP has no IOPS setting. Azure reads the size and IOPS of an Ultra disk only.
+// Capella rejects the extra fields.
 func normalizeDisk(cloudProvider string, disk capellav4.Disk) capellav4.Disk {
 	switch cloudProvider {
 	case capellav4.ProviderGcp:
@@ -124,9 +114,8 @@ func normalizeDisk(cloudProvider string, disk capellav4.Disk) capellav4.Disk {
 	return disk
 }
 
-// serviceGroupsEqual reports whether a cluster already has the wanted topology.
-// It only compares what a definition can express, so fields that Capella manages
-// by itself do not cause a needless rescale.
+// Only the fields that a definition can express are compared. Capella manages
+// the others by itself.
 func serviceGroupsEqual(cloudProvider string, current, wanted []capellav4.ServiceGroup) bool {
 	if len(current) != len(wanted) {
 		return false
