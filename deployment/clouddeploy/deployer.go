@@ -110,6 +110,17 @@ func (p *Deployer) requireLegacy(feature string) error {
 		"active sessions for the same user", feature)
 }
 
+// requireSupportToken guards the operations that use the internal support
+// endpoints. These authenticate with the support token alone and never create
+// a v2 session, so they do not need the v2 username and password.
+func (p *Deployer) requireSupportToken(feature string) error {
+	if p.internalSupportToken != "" {
+		return nil
+	}
+	return errors.Errorf("%s needs the capella internal support token; set it "+
+		"with `cbdinocluster init` or CAPELLA_INTERNAL_SUPPORT_TOKEN", feature)
+}
+
 // clusterInfo pairs a cbdc2 project with the single cluster it contains.
 //
 // cbdinocluster encodes the cluster ID and expiry in the project name, so the
@@ -1045,7 +1056,7 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 // UpgradeCluster schedules an image upgrade through the internal support
 // endpoints, which the v4 API does not expose.
 func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
-	if err := d.requireLegacy("cluster image upgrade"); err != nil {
+	if err := d.requireSupportToken("cluster image upgrade"); err != nil {
 		return err
 	}
 
@@ -2091,7 +2102,7 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 			"set it via `cbdinocluster init` (--upload-server-logs-host-name) or Capella.UploadServerLogsHostName in your config")
 	}
 
-	if err := d.requireLegacy("server log collection"); err != nil {
+	if err := d.requireSupportToken("server log collection"); err != nil {
 		return nil, err
 	}
 
@@ -2152,7 +2163,7 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 // RedeployCluster uses an internal support endpoint that the v4 API does not
 // expose.
 func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
-	if err := d.requireLegacy("cluster redeploy"); err != nil {
+	if err := d.requireSupportToken("cluster redeploy"); err != nil {
 		return err
 	}
 
