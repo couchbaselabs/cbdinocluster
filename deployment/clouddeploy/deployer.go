@@ -2,8 +2,9 @@ package clouddeploy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,11 +12,13 @@ import (
 
 	"go.uber.org/multierr"
 
-	"github.com/couchbase/gocbcorex/cbqueryx"
+	"github.com/couchbase/gocbcorex"
 	"github.com/couchbaselabs/cbdinocluster/utils/webhelper"
+	"github.com/couchbaselabs/gocbconnstr/v2"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/commondeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
 	"github.com/couchbaselabs/cbdinocluster/utils/cbdcuuid"
@@ -2244,24 +2247,6 @@ func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) 
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }
 
-func (d *Deployer) getQueryX(ctx context.Context, clusterID string) (*cbqueryx.Query, error) {
-	if err := d.requireLegacy("running queries"); err != nil {
-		return nil, err
-	}
-
-	clusterInfo, err := d.getCluster(ctx, clusterID)
-	if err != nil {
-		return nil, err
-	}
-
-	qcli, err := d.client.GetQueryX(ctx, d.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	return qcli, nil
-}
-
 func (d *Deployer) bucketTarget(ctx context.Context, clusterID string, bucketName string) (projectID string, cloudClusterID string, bucketID string, err error) {
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
@@ -2277,35 +2262,76 @@ func (d *Deployer) bucketTarget(ctx context.Context, clusterID string, bucketNam
 		nil
 }
 
-func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
-	qcli, err := d.getQueryX(ctx, clusterID)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to get query client")
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string, opts *deployment.ExecuteQueryOptions) (string, error) {
+	if opts == nil || opts.Username == "" || opts.Password == "" {
+		return "", errors.New("cloud queries need the username and password of an existing database user")
 	}
 
-	results, err := qcli.Query(ctx, &cbqueryx.QueryOptions{
-		Statement: query,
+	clusterInfo, err := d.getCluster(ctx, clusterID)
+	if err != nil {
+		return "", err
+	}
+	if clusterInfo.Cluster == nil {
+		return "", errors.New("queries are not supported for columnar clusters")
+	}
+
+	cert, err := d.v4.GetCertificate(ctx, d.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to get cluster certificate")
+	}
+
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM([]byte(cert)) {
+		return "", errors.New("failed to parse cluster certificate")
+	}
+
+	baseSpec, err := gocbconnstr.Parse(fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.ConnectionString))
+	if err != nil {
+		return "", errors.Wrap(err, "failed to parse connstr")
+	}
+
+	resolvedSpec, err := gocbconnstr.Resolve(baseSpec)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to resolve connstr")
+	}
+
+	var httpAddrs []string
+	for _, host := range resolvedSpec.HttpHosts {
+		httpAddrs = append(httpAddrs, fmt.Sprintf("%s:%d", host.Host, host.Port))
+	}
+
+	var memdAddrs []string
+	for _, host := range resolvedSpec.MemdHosts {
+		memdAddrs = append(memdAddrs, fmt.Sprintf("%s:%d", host.Host, host.Port))
+	}
+
+	// SRV resolution returns only memd hosts, and the agent bootstraps over
+	// HTTP, so the management addresses come from the same hosts.
+	if len(httpAddrs) == 0 {
+		for _, host := range resolvedSpec.MemdHosts {
+			httpAddrs = append(httpAddrs, fmt.Sprintf("%s:%d", host.Host, 18091))
+		}
+	}
+
+	// The connection times out when the caller's IP is not on the allow list.
+	agent, err := gocbcorex.CreateAgent(ctx, gocbcorex.AgentOptions{
+		Logger:    d.logger.Named("agent"),
+		TLSConfig: &tls.Config{RootCAs: caPool},
+		Authenticator: &gocbcorex.PasswordAuthenticator{
+			Username: opts.Username,
+			Password: opts.Password,
+		},
+		SeedConfig: gocbcorex.SeedConfig{
+			HTTPAddrs: httpAddrs,
+			MemdAddrs: memdAddrs,
+		},
 	})
 	if err != nil {
-		return "", errors.Wrap(err, "failed to execute query")
+		return "", errors.Wrap(err, "failed to create gocbcorex agent")
 	}
+	defer agent.Close()
 
-	rows := make([]json.RawMessage, 0)
-	for results.HasMoreRows() {
-		row, err := results.ReadRow()
-		if err != nil {
-			return "", errors.Wrap(err, "failed to read row")
-		}
-
-		rows = append(rows, row)
-	}
-
-	rowsBytes, err := json.Marshal(rows)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to serialize rows")
-	}
-
-	return string(rowsBytes), nil
+	return commondeploy.AgentHelper{Agent: agent}.ExecuteQuery(ctx, query)
 }
 
 func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {

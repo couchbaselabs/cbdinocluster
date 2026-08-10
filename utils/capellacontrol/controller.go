@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/couchbase/gocbcorex/cbhttpx"
-	"github.com/couchbase/gocbcorex/cbqueryx"
 	"github.com/google/go-querystring/query"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -1477,52 +1475,4 @@ func (c *Controller) DoBasicColumnarQuery(
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/analytics/service", tenantID, projectID, columnarID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
 	return err
-}
-
-type BearerAuth struct {
-	Token string
-}
-
-var _ cbhttpx.Authenticator = (*BearerAuth)(nil)
-
-func (b *BearerAuth) ApplyToRequest(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+b.Token)
-}
-
-func (c *Controller) getGocbcorexAuth(ctx context.Context) (cbhttpx.Authenticator, error) {
-	var xauth cbhttpx.Authenticator
-
-	switch auth := c.auth.(type) {
-	case *BasicCredentials:
-		if auth.jwtToken == "" {
-			c.updateJwtToken(ctx, auth)
-		}
-
-		xauth = &BearerAuth{
-			Token: auth.jwtToken,
-		}
-	default:
-		return nil, fmt.Errorf("unsupported authentication type: %T", c.auth)
-	}
-
-	return xauth, nil
-}
-
-func (c *Controller) GetQueryX(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*cbqueryx.Query, error) {
-	auth, err := c.getGocbcorexAuth(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get authenticator: %w", err)
-	}
-
-	path := fmt.Sprintf("/v2/databases/%s/proxy/_p/query", clusterID)
-	return &cbqueryx.Query{
-		Logger:    c.logger,
-		Transport: http.DefaultTransport,
-		UserAgent: "cbdinocluster",
-		Endpoint:  c.endpoint + path,
-		Auth:      auth,
-	}, nil
 }
