@@ -579,6 +579,13 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return nil, errors.Wrap(err, "failed to wait for cluster deployment")
 	}
 
+	if def.Cloud.DataApi {
+		err = p.enableDataApi(ctx, cloudProjectID, cloudClusterID)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	// we cheat for now...
 	clusters, err := p.ListClusters(ctx)
 	if err != nil {
@@ -732,6 +739,10 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, err
 		}
 
+		if def.Cloud.DataApi {
+			return nil, errors.New("columnar clusters do not support the Data API")
+		}
+
 		if len(def.NodeGroups) > 1 {
 			return nil, errors.New("columnar only supports 1 node group")
 		}
@@ -799,6 +810,13 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", true)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to wait for deployment")
+		}
+	}
+
+	if def.Cloud.DataApi {
+		err = p.enableDataApi(ctx, cloudProjectID, cloudClusterID)
+		if err != nil {
+			return nil, err
 		}
 	}
 
@@ -2221,12 +2239,13 @@ func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
 		return err
 	}
 
-	cloudProjectID := clusterInfo.ProjectID
-	cloudClusterID := clusterInfo.Cluster.ID
+	return d.enableDataApi(ctx, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+}
 
+func (d *Deployer) enableDataApi(ctx context.Context, cloudProjectID, cloudClusterID string) error {
 	d.logger.Debug("enabling data API")
 
-	err = d.v4.UpdateDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID, &capellav4.UpdateDataApiRequest{
+	err := d.v4.UpdateDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID, &capellav4.UpdateDataApiRequest{
 		EnableDataApi: true,
 	})
 	if err != nil {
