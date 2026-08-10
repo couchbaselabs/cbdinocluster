@@ -1638,7 +1638,11 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 		if err != nil {
 			p.logger.Debug("failed to fetch data api details", zap.Error(err))
 		} else if dataApi.ConnectionString != "" {
-			dataApiConnstr = fmt.Sprintf("https://%s", dataApi.ConnectionString)
+			// The v4 API returns this connection string with its scheme.
+			dataApiConnstr = dataApi.ConnectionString
+			if !strings.HasPrefix(dataApiConnstr, "https://") {
+				dataApiConnstr = "https://" + dataApiConnstr
+			}
 		}
 	} else {
 		// The v4 analytics API reports no connection string, so this needs v2.
