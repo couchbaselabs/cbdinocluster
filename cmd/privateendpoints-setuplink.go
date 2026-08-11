@@ -178,8 +178,14 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				VpcNetworkID: path.Base(*networkInterface.Network),
 				SubnetIDs:    []string{path.Base(*networkInterface.Subnetwork)},
 			})
+			if err != nil {
+				logger.Fatal("failed to generate private endpoint link command", zap.Error(err))
+			}
 
 			serviceAttachments, err := peCtrl.GetServiceAttachments(command)
+			if err != nil {
+				logger.Fatal("failed to get service attachments", zap.Error(err))
+			}
 
 			err = peCtrl.CreatePrivateDNSZone(ctx, &gcpcontrol.CreatePrivateDNSZoneOptions{
 				ClusterID:          cloudCluster.CloudClusterID,
