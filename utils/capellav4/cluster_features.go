@@ -20,44 +20,6 @@ func (c *Client) GetCertificate(ctx context.Context, orgID, projectID, clusterID
 }
 
 const (
-	DataApiStateEnabled   = "enabled"
-	DataApiStateDisabled  = "disabled"
-	DataApiStateEnabling  = "enabling"
-	DataApiStateDisabling = "disabling"
-)
-
-type DataApiInfo struct {
-	Enabled                  bool   `json:"enabled"`
-	State                    string `json:"state"`
-	EnabledForNetworkPeering bool   `json:"enabledForNetworkPeering"`
-	StateForNetworkPeering   string `json:"stateForNetworkPeering"`
-	ConnectionString         string `json:"connectionString"`
-}
-
-func (c *Client) GetDataApi(ctx context.Context, orgID, projectID, clusterID string) (*DataApiInfo, error) {
-	resp := &DataApiInfo{}
-	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/dataAPI", orgID, projectID, clusterID)
-	if err := c.doRead(ctx, http.MethodGet, path, nil, resp); err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
-type UpdateDataApiRequest struct {
-	EnableDataApi        bool `json:"enableDataApi"`
-	EnableNetworkPeering bool `json:"enableNetworkPeering"`
-}
-
-func (c *Client) UpdateDataApi(
-	ctx context.Context,
-	orgID, projectID, clusterID string,
-	req *UpdateDataApiRequest,
-) error {
-	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/dataAPI", orgID, projectID, clusterID)
-	return c.doWrite(ctx, http.MethodPut, path, req, nil)
-}
-
-const (
 	PrivateEndpointServiceEnabled  = "enabled"
 	PrivateEndpointServiceDisabled = "disabled"
 	PrivateEndpointServiceIdle     = "idle"

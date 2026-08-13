@@ -25,7 +25,6 @@ var connstrCmd = &cobra.Command{
 		useTLS, _ := cmd.Flags().GetBool("tls")
 		noTLS, _ := cmd.Flags().GetBool("no-tls")
 		cb2Mode, _ := cmd.Flags().GetBool("couchbase2")
-		dapiMode, _ := cmd.Flags().GetBool("data-api")
 		analyticsMode, _ := cmd.Flags().GetBool("analytics")
 		waitVisible, _ := cmd.Flags().GetBool("wait-visible")
 
@@ -40,13 +39,6 @@ var connstrCmd = &cobra.Command{
 			}
 
 			connstrType = "couchbase2"
-		}
-		if dapiMode {
-			if connstrType != "" {
-				logger.Fatal("cannot request both data-api and other connstr types")
-			}
-
-			connstrType = "data-api"
 		}
 		if analyticsMode {
 			if connstrType != "" {
@@ -72,16 +64,6 @@ var connstrCmd = &cobra.Command{
 			connStr = connectInfo.ConnStrCb2
 			if connStr == "" {
 				logger.Fatal("couchbase2 endpoint is unavailable")
-			}
-		} else if connstrType == "data-api" {
-			if noTLS {
-				logger.Fatal("cannot request non-TLS for Data API")
-			}
-
-			connStr = connectInfo.DataApiConnstr
-
-			if connStr == "" {
-				logger.Fatal("data API endpoint is unavailable")
 			}
 		} else if connstrType == "analytics" {
 			if useTLS {
@@ -169,7 +151,6 @@ func init() {
 	connstrCmd.PersistentFlags().Bool("couchbase2", false, "Requests a couchbase2 connstr")
 	connstrCmd.PersistentFlags().Bool("tls", false, "Explicitly requests a TLS endpoint")
 	connstrCmd.PersistentFlags().Bool("no-tls", false, "Explicitly requests non-TLS endpoint")
-	connstrCmd.PersistentFlags().Bool("data-api", false, "Requests a Data API connstr")
 	connstrCmd.PersistentFlags().Bool("analytics", false, "Requests an Analytics connstr")
 	connstrCmd.PersistentFlags().Bool("wait-visible", false, "Wait for the DNS to be visible to this host")
 }

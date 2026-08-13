@@ -358,15 +358,14 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 			dnsAName = thisCluster.DnsName
 		}
 		return &deployment.ConnectInfo{
-			ConnStr:        fmt.Sprintf("couchbase://%s", "srv."+thisCluster.DnsName),
-			ConnStrTls:     fmt.Sprintf("couchbases://%s", "srv."+thisCluster.DnsName),
-			Analytics:      fmt.Sprintf("http://%s:8095", thisCluster.DnsName),
-			AnalyticsTls:   fmt.Sprintf("https://%s:18095", thisCluster.DnsName),
-			Mgmt:           fmt.Sprintf("http://%s", thisCluster.DnsName),
-			MgmtTls:        fmt.Sprintf("https://%s", thisCluster.DnsName),
-			DataApiConnstr: "",
-			DnsAName:       dnsAName,
-			DnsSRVName:     dnsSRVName,
+			ConnStr:      fmt.Sprintf("couchbase://%s", "srv."+thisCluster.DnsName),
+			ConnStrTls:   fmt.Sprintf("couchbases://%s", "srv."+thisCluster.DnsName),
+			Analytics:    fmt.Sprintf("http://%s:8095", thisCluster.DnsName),
+			AnalyticsTls: fmt.Sprintf("https://%s:18095", thisCluster.DnsName),
+			Mgmt:         fmt.Sprintf("http://%s", thisCluster.DnsName),
+			MgmtTls:      fmt.Sprintf("https://%s", thisCluster.DnsName),
+			DnsAName:     dnsAName,
+			DnsSRVName:   dnsSRVName,
 		}, nil
 	}
 
@@ -422,13 +421,12 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:        connStr,
-		ConnStrTls:     connStrTls,
-		Analytics:      analytics,
-		AnalyticsTls:   analyticsTls,
-		Mgmt:           mgmt,
-		MgmtTls:        mgmtTls,
-		DataApiConnstr: "",
+		ConnStr:      connStr,
+		ConnStrTls:   connStrTls,
+		Analytics:    analytics,
+		AnalyticsTls: analyticsTls,
+		Mgmt:         mgmt,
+		MgmtTls:      mgmtTls,
 	}, nil
 }
 
@@ -1279,8 +1277,4 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 
 func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
 	return errors.New("docker deploy does not support upgrade cluster command")
-}
-
-func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
-	return errors.New("docker deploy does not support enabling data api")
 }

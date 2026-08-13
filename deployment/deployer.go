@@ -33,16 +33,15 @@ type ClusterInfo interface {
 }
 
 type ConnectInfo struct {
-	ConnStr        string
-	ConnStrTls     string
-	ConnStrCb2     string
-	Analytics      string
-	AnalyticsTls   string
-	Mgmt           string
-	MgmtTls        string
-	DataApiConnstr string
-	DnsAName       string
-	DnsSRVName     string
+	ConnStr      string
+	ConnStrTls   string
+	ConnStrCb2   string
+	Analytics    string
+	AnalyticsTls string
+	Mgmt         string
+	MgmtTls      string
+	DnsAName     string
+	DnsSRVName   string
 }
 
 type UserInfo struct {
@@ -156,7 +155,6 @@ type Deployer interface {
 	CreateCapellaLink(ctx context.Context, columnarID, linkName, clusterId, directID string) error
 	CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error
 	DropLink(ctx context.Context, columnarID, linkName string) error
-	EnableDataApi(ctx context.Context, clusterID string) error
 	KillCouchbase(ctx context.Context, clusterID string, nodes []string) error
 	SetAutoFailover(ctx context.Context, clusterID string, enabled bool, timeout int) error
 }

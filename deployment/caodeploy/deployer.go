@@ -871,12 +871,11 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:        connstr,
-		ConnStrTls:     connstrTls,
-		ConnStrCb2:     connstrCb2,
-		Mgmt:           mgmtAddr,
-		MgmtTls:        mgmtTlsAddr,
-		DataApiConnstr: "",
+		ConnStr:    connstr,
+		ConnStrTls: connstrTls,
+		ConnStrCb2: connstrCb2,
+		Mgmt:       mgmtAddr,
+		MgmtTls:    mgmtTlsAddr,
 	}, nil
 }
 
@@ -1131,10 +1130,6 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 
 func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
 	return errors.New("caodeploy does not support upgrade cluster command")
-}
-
-func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
-	return errors.New("caodeploy does not support enabling data api")
 }
 
 func (d *Deployer) FailOverNode(ctx context.Context, clusterID string, nodeID string, failOverType deployment.FailOverType, allowUnsafe bool) error {

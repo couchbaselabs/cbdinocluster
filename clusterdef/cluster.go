@@ -86,8 +86,4 @@ type CloudCluster struct {
 	Region        string `yaml:"region,omitempty"`
 	Cidr          string `yaml:"cidr,omitempty"`
 	FreeTier      bool   `yaml:"free-tier,omitempty"`
-
-	// Enabling the Data API after creation takes minutes, so tests that
-	// need it should request it at create time.
-	DataApi bool `yaml:"data-api,omitempty"`
 }

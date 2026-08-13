@@ -579,13 +579,6 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return nil, errors.Wrap(err, "failed to wait for cluster deployment")
 	}
 
-	if def.Cloud.DataApi {
-		err = p.enableDataApi(ctx, cloudProjectID, cloudClusterID)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	// we cheat for now...
 	clusters, err := p.ListClusters(ctx)
 	if err != nil {
@@ -739,10 +732,6 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, err
 		}
 
-		if def.Cloud.DataApi {
-			return nil, errors.New("columnar clusters do not support the Data API")
-		}
-
 		if len(def.NodeGroups) > 1 {
 			return nil, errors.New("columnar only supports 1 node group")
 		}
@@ -810,13 +799,6 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", true)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to wait for deployment")
-		}
-	}
-
-	if def.Cloud.DataApi {
-		err = p.enableDataApi(ctx, cloudProjectID, cloudClusterID)
-		if err != nil {
-			return nil, err
 		}
 	}
 
@@ -1626,24 +1608,10 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	var connStr string
-	var dataApiConnstr string
 	var dnsSRV string
 	if clusterInfo.Cluster != nil {
 		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.ConnectionString)
 		dnsSRV = clusterInfo.Cluster.ConnectionString
-
-		// The Data API connection string is a separate resource. A cluster without
-		// the Data API must still report its normal connection string.
-		dataApi, err := p.v4.GetDataApi(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
-		if err != nil {
-			p.logger.Debug("failed to fetch data api details", zap.Error(err))
-		} else if dataApi.ConnectionString != "" {
-			// The v4 API returns this connection string with its scheme.
-			dataApiConnstr = dataApi.ConnectionString
-			if !strings.HasPrefix(dataApiConnstr, "https://") {
-				dataApiConnstr = "https://" + dataApiConnstr
-			}
-		}
 	} else {
 		// The v4 analytics API reports no connection string, so this needs v2.
 		detail, err := p.columnarV2Detail(ctx, clusterInfo)
@@ -1656,12 +1624,11 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:        "",
-		ConnStrTls:     connStr,
-		Mgmt:           "",
-		MgmtTls:        "",
-		DataApiConnstr: dataApiConnstr,
-		DnsSRVName:     dnsSRV,
+		ConnStr:    "",
+		ConnStrTls: connStr,
+		Mgmt:       "",
+		MgmtTls:    "",
+		DnsSRVName: dnsSRV,
 	}, nil
 }
 
@@ -2235,35 +2202,6 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 		MaxWarnings: 25,
 	}
 	return d.mgr.Client.DoBasicColumnarQuery(ctx, d.tenantID, columnarInfo.ProjectID, columnarInfo.Columnar.ID, req)
-}
-
-func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
-	clusterInfo, err := d.getCluster(ctx, clusterID)
-	if err != nil {
-		return err
-	}
-
-	return d.enableDataApi(ctx, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
-}
-
-func (d *Deployer) enableDataApi(ctx context.Context, cloudProjectID, cloudClusterID string) error {
-	d.logger.Debug("enabling data API")
-
-	err := d.v4.UpdateDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID, &capellav4.UpdateDataApiRequest{
-		EnableDataApi: true,
-	})
-	if err != nil {
-		return errors.Wrap(err, "failed to enable Data API")
-	}
-
-	d.logger.Debug("waiting for Data API to enable")
-
-	err = d.v4mgr.WaitForDataApiEnabled(ctx, d.tenantID, cloudProjectID, cloudClusterID)
-	if err != nil {
-		return errors.Wrap(err, "failed to wait for Data API enablement")
-	}
-
-	return nil
 }
 
 func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) (string, error) {

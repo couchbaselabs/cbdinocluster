@@ -261,10 +261,6 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 	return errors.New("localdeploy does not support upgrade cluster command")
 }
 
-func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
-	return errors.New("localdeploy does not support enabling data api")
-}
-
 func (d *Deployer) FailOverNode(ctx context.Context, clusterID string, nodeID string, failOverType deployment.FailOverType, allowUnsafe bool) error {
 	return errors.New("localdeploy does not support failing over a node")
 }
