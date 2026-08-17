@@ -139,7 +139,12 @@ func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error
 	for _, project := range projects {
 		meta, err := stringclustermeta.Parse(project.Name)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse meta-data from project name")
+			// One malformed name in the shared org must not block the other
+			// projects, in particular during cleanup and remove-all.
+			p.logger.Warn("failed to parse meta-data from project name, skipping project",
+				zap.String("project-name", project.Name),
+				zap.Error(err))
+			continue
 		}
 		if meta == nil {
 			continue
