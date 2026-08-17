@@ -264,7 +264,7 @@ func (p *Deployer) columnarV2DetailByID(ctx context.Context, columnarID string) 
 
 	columnars, err := p.client.ListAllColumnars(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
 		Page:          1,
-		PerPage:       100,
+		PerPage:       1000,
 		SortBy:        "name",
 		SortDirection: "asc",
 	})
