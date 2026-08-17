@@ -191,6 +191,24 @@ func TestServiceGroupsEqual(t *testing.T) {
 	assert.False(t, serviceGroupsEqual(capellav4.ProviderAws, []capellav4.ServiceGroup{base}, []capellav4.ServiceGroup{fewerServices}))
 
 	assert.False(t, serviceGroupsEqual(capellav4.ProviderAws, []capellav4.ServiceGroup{base}, nil))
+
+	other := base
+	other.Node.Compute = capellav4.Compute{Cpu: 8, Ram: 32}
+	other.Services = []string{"analytics"}
+	assert.True(t, serviceGroupsEqual(capellav4.ProviderAws,
+		[]capellav4.ServiceGroup{base, other}, []capellav4.ServiceGroup{other, base}),
+		"service group order must not count as a change")
+}
+
+// Capella reports autoExpansion on Azure, and a definition cannot set it.
+func TestServiceGroupsEqualIgnoresAutoExpansion(t *testing.T) {
+	wanted, err := buildServiceGroups(capellav4.ProviderAzure, []*clusterdef.NodeGroup{{Count: 3}})
+	require.NoError(t, err)
+
+	current := wanted[0]
+	current.Node.Disk.AutoExpansion = true
+
+	assert.True(t, serviceGroupsEqual(capellav4.ProviderAzure, []capellav4.ServiceGroup{current}, wanted))
 }
 
 // Capella reports a size and IOPS for provisioned Azure disks that a definition

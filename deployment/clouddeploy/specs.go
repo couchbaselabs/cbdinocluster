@@ -117,28 +117,53 @@ func normalizeDisk(cloudProvider string, disk capellav4.Disk) capellav4.Disk {
 }
 
 // Only the fields that a definition can express are compared. Capella manages
-// the others by itself.
+// the others by itself. The v4 API does not guarantee the order of the
+// reported service groups, so the groups are matched as a multiset.
 func serviceGroupsEqual(cloudProvider string, current, wanted []capellav4.ServiceGroup) bool {
 	if len(current) != len(wanted) {
 		return false
 	}
 
-	for i := range current {
-		if current[i].NumOfNodes != wanted[i].NumOfNodes {
-			return false
+	matched := make([]bool, len(current))
+	for _, wantedGroup := range wanted {
+		found := false
+		for i, currentGroup := range current {
+			if matched[i] {
+				continue
+			}
+			if serviceGroupMatches(cloudProvider, currentGroup, wantedGroup) {
+				matched[i] = true
+				found = true
+				break
+			}
 		}
-		if current[i].Node.Compute != wanted[i].Node.Compute {
-			return false
-		}
-		if normalizeDisk(cloudProvider, current[i].Node.Disk) != normalizeDisk(cloudProvider, wanted[i].Node.Disk) {
-			return false
-		}
-		if !sameServices(current[i].Services, wanted[i].Services) {
+		if !found {
 			return false
 		}
 	}
 
 	return true
+}
+
+func serviceGroupMatches(cloudProvider string, current, wanted capellav4.ServiceGroup) bool {
+	if current.NumOfNodes != wanted.NumOfNodes {
+		return false
+	}
+	if current.Node.Compute != wanted.Node.Compute {
+		return false
+	}
+	if comparableDisk(cloudProvider, current.Node.Disk) != comparableDisk(cloudProvider, wanted.Node.Disk) {
+		return false
+	}
+	return sameServices(current.Services, wanted.Services)
+}
+
+// A definition cannot express autoExpansion, and Capella reports it back on
+// Azure, so it must not count as a change.
+func comparableDisk(cloudProvider string, disk capellav4.Disk) capellav4.Disk {
+	disk = normalizeDisk(cloudProvider, disk)
+	disk.AutoExpansion = false
+	return disk
 }
 
 func sameServices(services1, services2 []string) bool {
