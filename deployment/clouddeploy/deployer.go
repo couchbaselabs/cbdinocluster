@@ -1126,11 +1126,25 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 	return errors.New("clouddeploy does not support cluster node removal")
 }
 
+// A free tier cluster has its own delete endpoint, and the generic cluster
+// record does not identify the tier, so fall back to the free tier endpoint
+// when the generic delete is rejected.
+func (p *Deployer) deleteCloudCluster(ctx context.Context, projectID, clusterID string) error {
+	err := p.v4.DeleteCluster(ctx, p.tenantID, projectID, clusterID)
+	if err == nil {
+		return nil
+	}
+	if ftErr := p.v4.DeleteFreeTierCluster(ctx, p.tenantID, projectID, clusterID); ftErr == nil {
+		return nil
+	}
+	return err
+}
+
 func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) error {
 	p.logger.Debug("deleting the cloud cluster", zap.String("cluster-id", clusterInfo.Meta.ID.String()))
 
 	if clusterInfo.Cluster != nil {
-		err := p.v4.DeleteCluster(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+		err := p.deleteCloudCluster(ctx, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to delete cluster")
 		}
@@ -1561,7 +1575,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		if target.isColumnar {
 			err = p.client.DeleteColumnar(ctx, p.tenantID, target.projectID, target.clusterID)
 		} else {
-			err = p.v4.DeleteCluster(ctx, p.tenantID, target.projectID, target.clusterID)
+			err = p.deleteCloudCluster(ctx, target.projectID, target.clusterID)
 		}
 		if err != nil {
 			errs = multierr.Append(errs, errors.Wrap(err, "failed to remove cluster"))

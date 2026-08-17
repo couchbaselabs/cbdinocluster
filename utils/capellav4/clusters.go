@@ -187,3 +187,8 @@ func (c *Client) DeleteCluster(ctx context.Context, orgID, projectID, clusterID 
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s", orgID, projectID, clusterID)
 	return c.doWrite(ctx, http.MethodDelete, path, nil, nil)
 }
+
+func (c *Client) DeleteFreeTierCluster(ctx context.Context, orgID, projectID, clusterID string) error {
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/freeTier/%s", orgID, projectID, clusterID)
+	return c.doWrite(ctx, http.MethodDelete, path, nil, nil)
+}
