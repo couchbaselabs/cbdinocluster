@@ -134,6 +134,23 @@ func TestBuildServiceGroupsRejectsInstanceType(t *testing.T) {
 	assert.Contains(t, err.Error(), "cpu and memory")
 }
 
+func TestBuildServiceGroupsAcceptsInstanceTypeWithServerImage(t *testing.T) {
+	groups, err := buildServiceGroups(capellav4.ProviderAws, []*clusterdef.NodeGroup{
+		{
+			Count: 3,
+			Cloud: clusterdef.CloudNodeGroup{
+				InstanceType: "m5.2xlarge",
+				ServerImage:  "couchbase-cloud-server-8.0.0-1234",
+				Cpu:          8,
+				Memory:       32,
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 8, groups[0].Node.Compute.Cpu)
+	assert.Equal(t, 32, groups[0].Node.Compute.Ram)
+}
+
 func TestBuildServiceGroupsRejectsUnknownProvider(t *testing.T) {
 	_, err := buildServiceGroups("oracle", []*clusterdef.NodeGroup{{Count: 3}})
 	require.Error(t, err)

@@ -44,7 +44,9 @@ func buildServiceGroups(
 	var groups []capellav4.ServiceGroup
 	for _, nodeGroup := range nodeGrps {
 		// The v4 API sizes nodes by cpu and ram. It has no instance type field.
-		if nodeGroup.Cloud.InstanceType != "" {
+		// A def with server-image deploys through the legacy path, which reads
+		// instance-type, so the field is tolerated there and ignored here.
+		if nodeGroup.Cloud.InstanceType != "" && nodeGroup.Cloud.ServerImage == "" {
 			return nil, errors.Errorf(
 				"cloud instance-type `%s` is only supported together with cloud server-image, use cloud cpu and memory instead",
 				nodeGroup.Cloud.InstanceType)
