@@ -53,6 +53,11 @@ func (m *Manager) WaitForClusterState(
 			currentState = cluster.CurrentState
 		}
 
+		// Terminal failure states share a "Failed" suffix, such as deploymentFailed.
+		if strings.HasSuffix(currentState, "Failed") && currentState != desiredState {
+			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", currentState)
+		}
+
 		if desiredState == StateDeleted {
 			m.Logger.Info("waiting for cluster deletion...",
 				zap.String("current", currentState))
@@ -61,11 +66,6 @@ func (m *Manager) WaitForClusterState(
 				return err
 			}
 			continue
-		}
-
-		// Terminal failure states share a "failed" suffix, such as deployment_failed.
-		if strings.Contains(currentState, "failed") && currentState != desiredState {
-			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", currentState)
 		}
 
 		m.Logger.Info("waiting for cluster status...",
@@ -110,6 +110,11 @@ func (m *Manager) WaitForAnalyticsClusterState(
 			return fmt.Errorf("analytics cluster disappeared during wait for '%s' state", desiredState)
 		}
 
+		// Terminal failure states share a "Failed" suffix, such as deploymentFailed.
+		if strings.HasSuffix(currentState, "Failed") && currentState != desiredState {
+			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", currentState)
+		}
+
 		if desiredState == StateDeleted {
 			m.Logger.Info("waiting for cluster deletion...",
 				zap.String("current", currentState))
@@ -118,11 +123,6 @@ func (m *Manager) WaitForAnalyticsClusterState(
 				return err
 			}
 			continue
-		}
-
-		// Terminal failure states share a "failed" suffix, such as deployment_failed.
-		if strings.Contains(currentState, "failed") && currentState != desiredState {
-			return fmt.Errorf("cancelling as cluster is in a failed state ('%s')", currentState)
 		}
 
 		m.Logger.Info("waiting for cluster status...",
