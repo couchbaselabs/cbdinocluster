@@ -7,18 +7,19 @@ import (
 )
 
 const (
-	StateDeploying   = "deploying"
-	StateHealthy     = "healthy"
-	StateDegraded    = "degraded"
-	StateScaling     = "scaling"
-	StateUpgrading   = "upgrading"
-	StateRebalancing = "rebalancing"
-	StatePeering     = "peering"
-	StateDestroying  = "destroying"
-	StateTurnedOff   = "turnedOff"
-	StateTurningOff  = "turningOff"
-	StateTurningOn   = "turningOn"
-	StateDraft       = "draft"
+	StateDeploying     = "deploying"
+	StateHealthy       = "healthy"
+	StateDegraded      = "degraded"
+	StateScaling       = "scaling"
+	StateUpgrading     = "upgrading"
+	StateRebalancing   = "rebalancing"
+	StatePeering       = "peering"
+	StateDestroying    = "destroying"
+	StateDestroyFailed = "destroyFailed"
+	StateTurnedOff     = "turnedOff"
+	StateTurningOff    = "turningOff"
+	StateTurningOn     = "turningOn"
+	StateDraft         = "draft"
 )
 
 // The v2 API used hostedAWS, hostedGCP and hostedAzure for these.

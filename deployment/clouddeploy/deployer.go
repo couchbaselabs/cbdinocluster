@@ -1657,12 +1657,12 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 			p.logger.Info("removing cluster",
 				zap.String("cluster-id", cluster.Meta.ID.String()))
 
-			if cluster.Cluster != nil && cluster.Cluster.CurrentState == "destroy_failed" {
-				p.logger.Warn("skipping due to destroy_failed state (cluster)")
+			if cluster.Cluster != nil && cluster.Cluster.CurrentState == capellav4.StateDestroyFailed {
+				p.logger.Warn("skipping due to destroyFailed state (cluster)")
 				continue
 			}
-			if cluster.Columnar != nil && cluster.Columnar.CurrentState == "destroy_failed" {
-				p.logger.Warn("skipping due to destroy_failed state (columnar)")
+			if cluster.Columnar != nil && cluster.Columnar.CurrentState == capellav4.StateDestroyFailed {
+				p.logger.Warn("skipping due to destroyFailed state (columnar)")
 				continue
 			}
 
