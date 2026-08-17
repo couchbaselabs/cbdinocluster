@@ -292,11 +292,14 @@ func (h *CmdHelper) GetAllDeployers(ctx context.Context) map[string]deployment.D
 		out["cao"] = caoDeployer
 	}
 
+	// A silently missing cloud deployer stops the cleanup of expired Capella
+	// clusters, so a broken Capella config must fail loudly.
 	cloudDeployer, err := h.getCloudDeployer(ctx)
 	if cloudDeployer != nil {
 		out["cloud"] = cloudDeployer
 	} else if err != nil {
-		logger.Warn("capella is enabled but the cloud deployer could not be created",
+		logger.Fatal("capella is enabled but the cloud deployer could not be created; "+
+			"run `cbdinocluster init` again or disable capella",
 			zap.Error(err))
 	}
 
