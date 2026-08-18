@@ -1627,10 +1627,24 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	var connStr string
+	var dataApiConnstr string
 	var dnsSRV string
 	if clusterInfo.Cluster != nil {
 		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.ConnectionString)
 		dnsSRV = clusterInfo.Cluster.ConnectionString
+
+		// The Data API connection string is a separate resource. A cluster without
+		// the Data API must still report its normal connection string.
+		dataApi, err := p.v4.GetDataApi(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+		if err != nil {
+			p.logger.Debug("failed to fetch data api details", zap.Error(err))
+		} else if dataApi.ConnectionString != "" {
+			// The v4 API returns this connection string with its scheme.
+			dataApiConnstr = dataApi.ConnectionString
+			if !strings.HasPrefix(dataApiConnstr, "https://") {
+				dataApiConnstr = "https://" + dataApiConnstr
+			}
+		}
 	} else {
 		// The v4 analytics API reports no connection string, so this needs v2.
 		detail, err := p.columnarV2Detail(ctx, clusterInfo)
@@ -1643,11 +1657,12 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:    "",
-		ConnStrTls: connStr,
-		Mgmt:       "",
-		MgmtTls:    "",
-		DnsSRVName: dnsSRV,
+		ConnStr:        "",
+		ConnStrTls:     connStr,
+		Mgmt:           "",
+		MgmtTls:        "",
+		DataApiConnstr: dataApiConnstr,
+		DnsSRVName:     dnsSRV,
 	}, nil
 }
 

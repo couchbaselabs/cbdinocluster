@@ -19,6 +19,23 @@ func (c *Client) GetCertificate(ctx context.Context, orgID, projectID, clusterID
 	return resp.Certificate, nil
 }
 
+type DataApiInfo struct {
+	Enabled                  bool   `json:"enabled"`
+	State                    string `json:"state"`
+	EnabledForNetworkPeering bool   `json:"enabledForNetworkPeering"`
+	StateForNetworkPeering   string `json:"stateForNetworkPeering"`
+	ConnectionString         string `json:"connectionString"`
+}
+
+func (c *Client) GetDataApi(ctx context.Context, orgID, projectID, clusterID string) (*DataApiInfo, error) {
+	resp := &DataApiInfo{}
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/dataAPI", orgID, projectID, clusterID)
+	if err := c.doRead(ctx, http.MethodGet, path, nil, resp); err != nil {
+		return nil, err
+	}
+	return resp, nil
+}
+
 const (
 	PrivateEndpointServiceEnabled  = "enabled"
 	PrivateEndpointServiceDisabled = "disabled"
