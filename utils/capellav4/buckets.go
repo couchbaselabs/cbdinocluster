@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 const (
@@ -75,7 +76,7 @@ func (c *Client) CreateBucket(
 
 func (c *Client) DeleteBucket(ctx context.Context, orgID, projectID, clusterID, bucketID string) error {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets/%s",
-		orgID, projectID, clusterID, bucketID)
+		orgID, projectID, clusterID, url.PathEscape(bucketID))
 	return c.doWrite(ctx, http.MethodDelete, path, nil, nil)
 }
 
@@ -120,7 +121,7 @@ type listScopesResponse struct {
 func (c *Client) ListScopes(ctx context.Context, orgID, projectID, clusterID, bucketID string) ([]ScopeInfo, error) {
 	resp := &listScopesResponse{}
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets/%s/scopes",
-		orgID, projectID, clusterID, bucketID)
+		orgID, projectID, clusterID, url.PathEscape(bucketID))
 	if err := c.doRead(ctx, http.MethodGet, path, nil, resp); err != nil {
 		return nil, err
 	}
@@ -137,13 +138,13 @@ func (c *Client) CreateScope(
 	req *CreateScopeRequest,
 ) error {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets/%s/scopes",
-		orgID, projectID, clusterID, bucketID)
+		orgID, projectID, clusterID, url.PathEscape(bucketID))
 	return c.doWrite(ctx, http.MethodPost, path, req, nil)
 }
 
 func (c *Client) DeleteScope(ctx context.Context, orgID, projectID, clusterID, bucketID, scopeName string) error {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets/%s/scopes/%s",
-		orgID, projectID, clusterID, bucketID, scopeName)
+		orgID, projectID, clusterID, url.PathEscape(bucketID), url.PathEscape(scopeName))
 	return c.doWrite(ctx, http.MethodDelete, path, nil, nil)
 }
 
@@ -158,7 +159,7 @@ func (c *Client) CreateCollection(
 	req *CreateCollectionRequest,
 ) error {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets/%s/scopes/%s/collections",
-		orgID, projectID, clusterID, bucketID, scopeName)
+		orgID, projectID, clusterID, url.PathEscape(bucketID), url.PathEscape(scopeName))
 	return c.doWrite(ctx, http.MethodPost, path, req, nil)
 }
 
@@ -167,6 +168,6 @@ func (c *Client) DeleteCollection(
 	orgID, projectID, clusterID, bucketID, scopeName, collectionName string,
 ) error {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/buckets/%s/scopes/%s/collections/%s",
-		orgID, projectID, clusterID, bucketID, scopeName, collectionName)
+		orgID, projectID, clusterID, url.PathEscape(bucketID), url.PathEscape(scopeName), url.PathEscape(collectionName))
 	return c.doWrite(ctx, http.MethodDelete, path, nil, nil)
 }
