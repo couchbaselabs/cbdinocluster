@@ -1934,7 +1934,7 @@ func (p *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 	_, err = p.v4.CreateBucket(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, &capellav4.CreateBucketRequest{
 		BucketConflictResolution: "seqno",
 		DurabilityLevel:          "none",
-		Flush:                    opts.FlushEnabled,
+		FlushEnabled:             opts.FlushEnabled,
 		MemoryAllocationInMb:     ramQuotaMb,
 		Name:                     opts.Name,
 		Replicas:                 numReplicas,

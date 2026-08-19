@@ -25,7 +25,7 @@ type BucketInfo struct {
 	BucketConflictResolution string `json:"bucketConflictResolution"`
 	DurabilityLevel          string `json:"durabilityLevel"`
 	Replicas                 int    `json:"replicas"`
-	Flush                    bool   `json:"flush"`
+	FlushEnabled             bool   `json:"flushEnabled"`
 	TimeToLiveInSeconds      int    `json:"timeToLiveInSeconds"`
 	EvictionPolicy           string `json:"evictionPolicy"`
 }
@@ -52,7 +52,7 @@ type CreateBucketRequest struct {
 	BucketConflictResolution string `json:"bucketConflictResolution,omitempty"`
 	DurabilityLevel          string `json:"durabilityLevel,omitempty"`
 	Replicas                 int    `json:"replicas,omitempty"`
-	Flush                    bool   `json:"flush,omitempty"`
+	FlushEnabled             bool   `json:"flushEnabled,omitempty"`
 	TimeToLiveInSeconds      int    `json:"timeToLiveInSeconds,omitempty"`
 }
 
