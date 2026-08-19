@@ -2146,7 +2146,7 @@ func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error 
 	err = d.mgr.Client.RedeployCluster(ctx, cluster.Cluster.ID, d.internalSupportToken)
 
 	if err != nil {
-		errors.Wrap(err, "Failed to redeploy cluster")
+		return errors.Wrap(err, "failed to redeploy cluster")
 	}
 
 	d.logger.Debug("waiting for redeploy cluster to begin")
