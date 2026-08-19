@@ -1631,8 +1631,10 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	var dataApiConnstr string
 	var dnsSRV string
 	if clusterInfo.Cluster != nil {
-		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.ConnectionString)
-		dnsSRV = clusterInfo.Cluster.ConnectionString
+		// The v4 API can return this connection string with or without its scheme.
+		srvName := strings.TrimPrefix(clusterInfo.Cluster.ConnectionString, "couchbases://")
+		connStr = fmt.Sprintf("couchbases://%s", srvName)
+		dnsSRV = srvName
 
 		// The Data API connection string is a separate resource. A cluster without
 		// the Data API must still report its normal connection string.
@@ -2281,7 +2283,8 @@ func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query str
 		return "", errors.New("failed to parse cluster certificate")
 	}
 
-	baseSpec, err := gocbconnstr.Parse(fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.ConnectionString))
+	srvName := strings.TrimPrefix(clusterInfo.Cluster.ConnectionString, "couchbases://")
+	baseSpec, err := gocbconnstr.Parse(fmt.Sprintf("couchbases://%s", srvName))
 	if err != nil {
 		return "", errors.Wrap(err, "failed to parse connstr")
 	}
