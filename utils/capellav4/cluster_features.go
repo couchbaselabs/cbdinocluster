@@ -19,6 +19,13 @@ func (c *Client) GetCertificate(ctx context.Context, orgID, projectID, clusterID
 	return resp.Certificate, nil
 }
 
+const (
+	DataApiStateEnabled   = "enabled"
+	DataApiStateDisabled  = "disabled"
+	DataApiStateEnabling  = "enabling"
+	DataApiStateDisabling = "disabling"
+)
+
 type DataApiInfo struct {
 	Enabled                  bool   `json:"enabled"`
 	State                    string `json:"state"`
@@ -34,6 +41,20 @@ func (c *Client) GetDataApi(ctx context.Context, orgID, projectID, clusterID str
 		return nil, err
 	}
 	return resp, nil
+}
+
+type UpdateDataApiRequest struct {
+	EnableDataApi        bool `json:"enableDataApi"`
+	EnableNetworkPeering bool `json:"enableNetworkPeering"`
+}
+
+func (c *Client) UpdateDataApi(
+	ctx context.Context,
+	orgID, projectID, clusterID string,
+	req *UpdateDataApiRequest,
+) error {
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s/dataAPI", orgID, projectID, clusterID)
+	return c.doWrite(ctx, http.MethodPut, path, req, nil)
 }
 
 const (

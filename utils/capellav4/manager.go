@@ -139,6 +139,27 @@ func (m *Manager) WaitForAnalyticsClusterState(
 	}
 }
 
+func (m *Manager) WaitForDataApiEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
+	for {
+		info, err := m.Client.GetDataApi(ctx, orgID, projectID, clusterID)
+		if err != nil {
+			return errors.Wrap(err, "failed to fetch data api state")
+		}
+
+		m.Logger.Info("waiting for data api state...",
+			zap.String("current", info.State),
+			zap.String("desired", DataApiStateEnabled))
+
+		if info.State == DataApiStateEnabled {
+			return nil
+		}
+
+		if err := m.sleep(ctx, clusterPollInterval); err != nil {
+			return err
+		}
+	}
+}
+
 func (m *Manager) WaitForPrivateEndpointServiceEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
 	return m.waitForPrivateEndpointServiceEnabled(ctx, func(ctx context.Context) (string, error) {
 		info, err := m.Client.GetPrivateEndpointService(ctx, orgID, projectID, clusterID)
