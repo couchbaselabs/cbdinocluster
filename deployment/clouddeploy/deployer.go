@@ -1134,10 +1134,11 @@ func (p *Deployer) deleteCloudCluster(ctx context.Context, projectID, clusterID 
 	if err == nil {
 		return nil
 	}
-	if ftErr := p.v4.DeleteFreeTierCluster(ctx, p.tenantID, projectID, clusterID); ftErr == nil {
+	ftErr := p.v4.DeleteFreeTierCluster(ctx, p.tenantID, projectID, clusterID)
+	if ftErr == nil {
 		return nil
 	}
-	return err
+	return multierr.Combine(err, ftErr)
 }
 
 func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) error {
