@@ -173,6 +173,11 @@ func (m *Manager) waitForPrivateEndpointServiceEnabled(
 			zap.String("current", status),
 			zap.String("desired", PrivateEndpointServiceEnabled))
 
+		// Terminal failure states share a "Failed" suffix, such as enableFailed.
+		if strings.HasSuffix(status, "Failed") {
+			return fmt.Errorf("cancelling as private endpoint service is in a failed state ('%s')", status)
+		}
+
 		if status == PrivateEndpointServiceEnabled {
 			return nil
 		}
