@@ -1134,6 +1134,9 @@ var initCmd = &cobra.Command{
 
 		printCapellaConfig := func() {
 			fmt.Printf("  Enabled: %t\n", curConfig.Capella.Enabled.Value())
+			fmt.Printf("  V4 Endpoint: %s\n", curConfig.Capella.V4Endpoint)
+			fmt.Printf("  API Key: %s\n", curConfig.Capella.ApiKey)
+			fmt.Printf("  API Secret: %s\n", strings.Repeat("*", len(curConfig.Capella.ApiSecret)))
 			fmt.Printf("  Endpoint: %s\n", curConfig.Capella.Endpoint)
 			fmt.Printf("  Username: %s\n", curConfig.Capella.Username)
 			fmt.Printf("  Password: %s\n", strings.Repeat("*", len(curConfig.Capella.Password)))
@@ -1148,6 +1151,9 @@ var initCmd = &cobra.Command{
 		}
 		{
 			flagDisableCapella, _ := cmd.Flags().GetBool("disable-capella")
+			flagCapellaV4Endpoint, _ := cmd.Flags().GetString("capella-v4-endpoint")
+			flagCapellaApiKey, _ := cmd.Flags().GetString("capella-api-key")
+			flagCapellaApiSecret, _ := cmd.Flags().GetString("capella-api-secret")
 			flagCapellaEndpoint, _ := cmd.Flags().GetString("capella-endpoint")
 			flagCapellaUser, _ := cmd.Flags().GetString("capella-user")
 			flagCapellaPass, _ := cmd.Flags().GetString("capella-pass")
@@ -1159,6 +1165,9 @@ var initCmd = &cobra.Command{
 			flagCapellaAwsRegion, _ := cmd.Flags().GetString("capella-aws-region")
 			flagCapellaAzureRegion, _ := cmd.Flags().GetString("capella-azure-region")
 			flagCapellaGcpRegion, _ := cmd.Flags().GetString("capella-gcp-region")
+			envCapellaV4Endpoint := os.Getenv("CAPELLA_V4_ENDPOINT")
+			envCapellaApiKey := os.Getenv("CAPELLA_API_KEY")
+			envCapellaApiSecret := os.Getenv("CAPELLA_API_SECRET")
 			envCapellaEndpoint := os.Getenv("CAPELLA_ENDPOINT")
 			envCapellaUser := os.Getenv("CAPELLA_USER")
 			envCapellaPass := os.Getenv("CAPELLA_PASS")
@@ -1167,6 +1176,9 @@ var initCmd = &cobra.Command{
 			envCapellaInternalSupportToken := os.Getenv("CAPELLA_INTERNAL_SUPPORT_TOKEN")
 
 			capellaEnabled := curConfig.Capella.Enabled.ValueOr(true)
+			capellaV4Endpoint := curConfig.Capella.V4Endpoint
+			capellaApiKey := curConfig.Capella.ApiKey
+			capellaApiSecret := curConfig.Capella.ApiSecret
 			capellaEndpoint := curConfig.Capella.Endpoint
 			capellaUser := curConfig.Capella.Username
 			capellaPass := curConfig.Capella.Password
@@ -1191,6 +1203,61 @@ var initCmd = &cobra.Command{
 					capellaEnabled)
 				if !capellaEnabled {
 					break
+				}
+
+				if flagCapellaV4Endpoint != "" {
+					fmt.Printf("Capella v4 endpoint specified via flags:\n  %s\n", flagCapellaV4Endpoint)
+					capellaV4Endpoint = flagCapellaV4Endpoint
+				} else {
+					if capellaV4Endpoint == "" && envCapellaV4Endpoint != "" {
+						fmt.Printf("Defaulting to capella v4 endpoint from environment.\n")
+						capellaV4Endpoint = envCapellaV4Endpoint
+					}
+					if capellaV4Endpoint == "" {
+						capellaV4Endpoint = cbdcconfig.DEFAULT_CAPELLA_V4_ENDPOINT
+					}
+
+					capellaV4Endpoint = readString(
+						"What Capella v4 endpoint should we use?",
+						capellaV4Endpoint, false)
+				}
+				if capellaV4Endpoint == "" {
+					fmt.Printf("Capella v4 endpoint is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaApiKey != "" {
+					fmt.Printf("Capella API key specified via flags:\n  %s\n", flagCapellaApiKey)
+					capellaApiKey = flagCapellaApiKey
+				} else {
+					if capellaApiKey == "" && envCapellaApiKey != "" {
+						fmt.Printf("Defaulting to capella API key from environment.\n")
+						capellaApiKey = envCapellaApiKey
+					}
+
+					capellaApiKey = readString(
+						"What Capella API key should we use?",
+						capellaApiKey, false)
+				}
+
+				if flagCapellaApiSecret != "" {
+					fmt.Printf("Capella API secret specified via flags.\n")
+					capellaApiSecret = flagCapellaApiSecret
+				} else {
+					if capellaApiSecret == "" && envCapellaApiSecret != "" {
+						fmt.Printf("Defaulting to capella API secret from environment.\n")
+						capellaApiSecret = envCapellaApiSecret
+					}
+
+					capellaApiSecret = readString(
+						"What Capella API secret should we use?",
+						capellaApiSecret, true)
+				}
+				if capellaApiSecret == "" {
+					fmt.Printf("Capella API secret is required.\n")
+					capellaEnabled = false
+					continue
 				}
 
 				if flagCapellaEndpoint != "" {
@@ -1225,13 +1292,8 @@ var initCmd = &cobra.Command{
 					}
 
 					capellaUser = readString(
-						"What Capella user should we use?",
+						"What Capella user should we use? (optional)",
 						capellaUser, false)
-				}
-				if capellaUser == "" {
-					fmt.Printf("Capella user is required.\n")
-					capellaEnabled = false
-					continue
 				}
 
 				if flagCapellaPass != "" {
@@ -1244,13 +1306,12 @@ var initCmd = &cobra.Command{
 					}
 
 					capellaPass = readString(
-						"What Capella pass should we use?",
+						"What Capella pass should we use? (optional)",
 						capellaPass, true)
 				}
-				if capellaPass == "" {
-					fmt.Printf("Capella pass is required.\n")
-					capellaEnabled = false
-					continue
+				if capellaUser == "" || capellaPass == "" {
+					fmt.Printf("No Capella username and password specified.  Custom server images " +
+						"and columnar clusters will not be supported.\n")
 				}
 
 				if flagCapellaOid != "" {
@@ -1413,6 +1474,9 @@ var initCmd = &cobra.Command{
 			}
 
 			curConfig.Capella.Enabled.Set(capellaEnabled)
+			curConfig.Capella.V4Endpoint = capellaV4Endpoint
+			curConfig.Capella.ApiKey = capellaApiKey
+			curConfig.Capella.ApiSecret = capellaApiSecret
 			curConfig.Capella.Endpoint = capellaEndpoint
 			curConfig.Capella.Username = capellaUser
 			curConfig.Capella.Password = capellaPass
@@ -1605,9 +1669,12 @@ func init() {
 	initCmd.Flags().String("github-token", "", "GitHub token to use")
 	initCmd.Flags().String("github-user", "", "GitHub user to use")
 	initCmd.Flags().Bool("disable-capella", false, "Disable Capella")
-	initCmd.Flags().String("capella-endpoint", "", "Capella endpoint to use")
-	initCmd.Flags().String("capella-user", "", "Capella user to use")
-	initCmd.Flags().String("capella-pass", "", "Capella pass to use")
+	initCmd.Flags().String("capella-v4-endpoint", "", "Capella Management API v4 endpoint to use")
+	initCmd.Flags().String("capella-api-key", "", "Capella organization API key to use")
+	initCmd.Flags().String("capella-api-secret", "", "Capella organization API secret to use")
+	initCmd.Flags().String("capella-endpoint", "", "Capella v2 endpoint to use")
+	initCmd.Flags().String("capella-user", "", "Capella v2 user to use, only needed for features the v4 api does not expose")
+	initCmd.Flags().String("capella-pass", "", "Capella v2 pass to use, only needed for features the v4 api does not expose")
 	initCmd.Flags().String("capella-oid", "", "Capella organization id to use")
 	initCmd.Flags().String("capella-override-token", "", "Capella override token to use")
 	initCmd.Flags().String("capella-internal-support-token", "", "Capella internal support token to use")

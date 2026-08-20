@@ -2,8 +2,9 @@ package clouddeploy
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -11,13 +12,15 @@ import (
 
 	"go.uber.org/multierr"
 
-	"github.com/couchbase/gocbcorex/cbmgmtx"
-	"github.com/couchbase/gocbcorex/cbqueryx"
+	"github.com/couchbase/gocbcorex"
 	"github.com/couchbaselabs/cbdinocluster/utils/webhelper"
+	"github.com/couchbaselabs/gocbconnstr/v2"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/commondeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
 	"github.com/couchbaselabs/cbdinocluster/utils/cbdcuuid"
 	"github.com/couchbaselabs/cbdinocluster/utils/stringclustermeta"
 	"github.com/pkg/errors"
@@ -25,10 +28,15 @@ import (
 	"go.uber.org/zap"
 )
 
+// The internal v2 API is used only where v4 has no equivalent. Authentication
+// there invalidates any other active session for the same user.
 type Deployer struct {
 	logger                   *zap.Logger
 	client                   *capellacontrol.Controller
 	mgr                      *capellacontrol.Manager
+	v4                       *capellav4.Client
+	v4mgr                    *capellav4.Manager
+	hasLegacyCredentials     bool
 	tenantID                 string
 	overrideToken            string
 	internalSupportToken     string
@@ -44,6 +52,8 @@ var _ deployment.Deployer = (*Deployer)(nil)
 type NewDeployerOptions struct {
 	Logger                   *zap.Logger
 	Client                   *capellacontrol.Controller
+	V4Client                 *capellav4.Client
+	HasLegacyCredentials     bool
 	TenantID                 string
 	OverrideToken            string
 	InternalSupportToken     string
@@ -55,6 +65,10 @@ type NewDeployerOptions struct {
 }
 
 func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
+	if opts.V4Client == nil {
+		return nil, errors.New("a capella v4 client is required")
+	}
+
 	return &Deployer{
 		logger: opts.Logger,
 		client: opts.Client,
@@ -62,6 +76,12 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 			Logger: opts.Logger,
 			Client: opts.Client,
 		},
+		v4: opts.V4Client,
+		v4mgr: &capellav4.Manager{
+			Logger: opts.Logger,
+			Client: opts.V4Client,
+		},
+		hasLegacyCredentials:     opts.HasLegacyCredentials,
 		tenantID:                 opts.TenantID,
 		overrideToken:            opts.OverrideToken,
 		internalSupportToken:     opts.InternalSupportToken,
@@ -73,83 +93,165 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	}, nil
 }
 
+func (p *Deployer) requireLegacy(feature string) error {
+	if p.hasLegacyCredentials {
+		return nil
+	}
+	return errors.Errorf("%s needs the internal capella v2 api, which requires a "+
+		"username and password; note that authenticating there invalidates other "+
+		"active sessions for the same user", feature)
+}
+
+// The support token authenticates by itself and creates no v2 session.
+func (p *Deployer) requireSupportToken(feature string) error {
+	if p.internalSupportToken != "" {
+		return nil
+	}
+	return errors.Errorf("%s needs the capella internal support token; set it "+
+		"with `cbdinocluster init` or CAPELLA_INTERNAL_SUPPORT_TOKEN", feature)
+}
+
+// The v4 cluster object carries no project reference. cbdinocluster encodes the
+// cluster ID in the project name, so the project is the unit of ownership.
 type clusterInfo struct {
 	Meta        *stringclustermeta.MetaData
-	Project     *capellacontrol.ProjectInfo
-	Cluster     *capellacontrol.ClusterInfo
-	Columnar    *capellacontrol.ColumnarData
+	ProjectID   string
+	ProjectName string
+	Cluster     *capellav4.ClusterInfo
+	Columnar    *capellav4.AnalyticsClusterInfo
 	IsCorrupted bool
 }
 
-func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
+type cbdc2Project struct {
+	Meta *stringclustermeta.MetaData
+	Info *capellav4.ProjectInfo
+}
+
+func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error) {
 	p.logger.Debug("listing cloud projects")
 
-	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       1000,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
+	projects, err := p.v4.ListProjects(ctx, p.tenantID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list projects")
 	}
 
-	p.logger.Debug("listing all cloud clusters")
-
-	clusters, err := p.client.ListAllClusters(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       1000,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list all clusters")
-	}
-
-	getClustersForProject := func(projectID string) []*capellacontrol.ClusterInfo {
-		var out []*capellacontrol.ClusterInfo
-		for _, cluster := range clusters.Data {
-			if cluster.Data.Project.Id == projectID {
-				out = append(out, cluster.Data)
-			}
-		}
-		return out
-	}
-
-	var out []*clusterInfo
-
-	for _, project := range projects.Data {
-		meta, err := stringclustermeta.Parse(project.Data.Name)
+	var out []cbdc2Project
+	for _, project := range projects {
+		meta, err := stringclustermeta.Parse(project.Name)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse meta-data from project name")
+			// One malformed name in the shared org must not block the other
+			// projects, in particular during cleanup and remove-all.
+			p.logger.Warn("failed to parse meta-data from project name, skipping project",
+				zap.String("project-name", project.Name),
+				zap.Error(err))
+			continue
 		}
 		if meta == nil {
-			// not a cbdc2 project
 			continue
 		}
 
-		clusters := getClustersForProject(project.Data.ID)
+		out = append(out, cbdc2Project{Meta: meta, Info: project})
+	}
 
-		if len(clusters) == 0 {
-			continue
-		} else if len(clusters) > 1 {
-			out = append(out, &clusterInfo{
-				Meta:        meta,
-				Project:     project.Data,
-				Cluster:     nil,
-				IsCorrupted: true,
-			})
-			continue
+	return out, nil
+}
+
+func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*clusterInfo, error) {
+	base := &clusterInfo{
+		Meta:        project.Meta,
+		ProjectID:   project.Info.ID,
+		ProjectName: project.Info.Name,
+	}
+
+	clusters, err := p.v4.ListClusters(ctx, p.tenantID, project.Info.ID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list clusters for project")
+	}
+
+	columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, project.Info.ID)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list analytics clusters for project")
+	}
+
+	if len(clusters)+len(columnars) > 1 {
+		base.IsCorrupted = true
+		return base, nil
+	}
+	if len(clusters) == 1 {
+		base.Cluster = clusters[0]
+	} else if len(columnars) == 1 {
+		base.Columnar = columnars[0]
+	}
+
+	return base, nil
+}
+
+func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
+	projects, err := p.listCbdc2Projects(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	p.logger.Debug("listing cloud clusters", zap.Int("projects", len(projects)))
+
+	var out []*clusterInfo
+	for _, project := range projects {
+		info, err := p.inspectProject(ctx, project)
+		if err != nil {
+			return nil, err
 		}
 
-		cluster := clusters[0]
+		out = append(out, info)
+	}
 
-		out = append(out, &clusterInfo{
-			Meta:        meta,
-			Project:     project.Data,
-			Cluster:     cluster,
-			IsCorrupted: false,
-		})
+	return out, nil
+}
+
+func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterInfo, error) {
+	projects, err := p.listCbdc2Projects(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var foundProject *cbdc2Project
+	for _, project := range projects {
+		if project.Meta.ID.String() == clusterID {
+			foundProject = &project
+			break
+		}
+	}
+	if foundProject == nil {
+		return nil, errors.New("failed to find cluster")
+	}
+
+	foundCluster, err := p.inspectProject(ctx, *foundProject)
+	if err != nil {
+		return nil, err
+	}
+
+	if foundCluster.IsCorrupted {
+		return nil, errors.New("found cluster, but it is in a corrupted state")
+	}
+
+	if foundCluster.Cluster == nil && foundCluster.Columnar == nil {
+		return nil, errors.New("found cluster, but it has no cluster provisioned yet")
+	}
+
+	return foundCluster, nil
+}
+
+// The v4 analytics API exposes no connection string, certificate or database
+// credentials, so columnar clusters still need the v2 record.
+func (p *Deployer) columnarV2Detail(ctx context.Context, info *clusterInfo) (*capellacontrol.ColumnarData, error) {
+	if info.Columnar == nil {
+		return nil, errors.New("cluster is not a columnar cluster")
+	}
+	return p.columnarV2DetailByID(ctx, info.Columnar.ID)
+}
+
+func (p *Deployer) columnarV2DetailByID(ctx context.Context, columnarID string) (*capellacontrol.ColumnarData, error) {
+	if err := p.requireLegacy("this columnar operation"); err != nil {
+		return nil, err
 	}
 
 	columnars, err := p.client.ListAllColumnars(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
@@ -159,78 +261,16 @@ func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 		SortDirection: "asc",
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list all clusters")
+		return nil, errors.Wrap(err, "failed to list columnars")
 	}
 
-	getColumnarsForProject := func(projectID string) []*capellacontrol.ColumnarData {
-		var out []*capellacontrol.ColumnarData
-		for _, cluster := range columnars.Data {
-			if cluster.Data.ProjectID == projectID {
-				out = append(out, cluster.Data)
-			}
-		}
-		return out
-	}
-
-	for _, project := range projects.Data {
-		meta, err := stringclustermeta.Parse(project.Data.Name)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to parse meta-data from project name")
-		}
-		if meta == nil {
-			// not a cbdc2 project
-			continue
-		}
-
-		columnars := getColumnarsForProject(project.Data.ID)
-
-		if len(columnars) == 0 {
-			// Operational cluster
-			continue
-		} else if len(columnars) > 1 {
-			out = append(out, &clusterInfo{
-				Meta:        meta,
-				Project:     project.Data,
-				Cluster:     nil,
-				IsCorrupted: true,
-			})
-			continue
-		}
-
-		columnar := columnars[0]
-
-		out = append(out, &clusterInfo{
-			Meta:        meta,
-			Project:     project.Data,
-			Columnar:    columnar,
-			IsCorrupted: false,
-		})
-	}
-
-	return out, nil
-}
-
-func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterInfo, error) {
-	clusters, err := p.listClusters(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var foundCluster *clusterInfo
-	for _, cluster := range clusters {
-		if cluster.Meta.ID.String() == clusterID {
-			foundCluster = cluster
+	for _, columnar := range columnars.Data {
+		if columnar.Data.ID == columnarID {
+			return columnar.Data, nil
 		}
 	}
-	if foundCluster == nil {
-		return nil, errors.New("failed to find cluster")
-	}
 
-	if foundCluster.IsCorrupted {
-		return nil, errors.New("found cluster, but it is in a corrupted state")
-	}
-
-	return foundCluster, nil
+	return nil, errors.New("failed to find columnar instance")
 }
 
 func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, error) {
@@ -246,7 +286,7 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
 				Type:           deployment.ClusterTypeUnknown,
-				CloudProjectID: cluster.Project.ID,
+				CloudProjectID: cluster.ProjectID,
 				CloudClusterID: "",
 				CloudProvider:  "",
 				Region:         "",
@@ -258,7 +298,7 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
 				Type:           deployment.ClusterTypeUnknown,
-				CloudProjectID: cluster.Project.ID,
+				CloudProjectID: cluster.ProjectID,
 				CloudClusterID: "",
 				CloudProvider:  "",
 				Region:         "",
@@ -272,23 +312,23 @@ func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
 				Type:           deployment.ClusterTypeServer,
-				CloudProjectID: cluster.Project.ID,
-				CloudClusterID: cluster.Cluster.Id,
-				CloudProvider:  cluster.Cluster.Provider.Name,
-				Region:         cluster.Cluster.Provider.Region,
+				CloudProjectID: cluster.ProjectID,
+				CloudClusterID: cluster.Cluster.ID,
+				CloudProvider:  cluster.Cluster.CloudProvider.Type,
+				Region:         cluster.Cluster.CloudProvider.Region,
 				Expiry:         cluster.Meta.Expiry,
-				State:          cluster.Cluster.Status.State,
+				State:          cluster.Cluster.CurrentState,
 			})
 		} else if cluster.Columnar != nil {
 			out = append(out, &ClusterInfo{
 				ClusterID:      cluster.Meta.ID.String(),
 				Type:           deployment.ClusterTypeColumnar,
-				CloudProjectID: cluster.Project.ID,
+				CloudProjectID: cluster.ProjectID,
 				CloudClusterID: cluster.Columnar.ID,
-				CloudProvider:  cluster.Columnar.Config.Provider,
-				Region:         cluster.Columnar.Config.Region,
+				CloudProvider:  cluster.Columnar.CloudProviderName(),
+				Region:         cluster.Columnar.Region,
 				Expiry:         cluster.Meta.Expiry,
-				State:          cluster.Columnar.State,
+				State:          cluster.Columnar.CurrentState,
 			})
 		}
 	}
@@ -390,10 +430,14 @@ func (p *Deployer) buildDeploySpecs(
 			services = nodeGroup.Services
 		}
 
-		nsServices, err := clusterdef.ServicesToNsServicesOverride(services)
+		nsServiceNames, err := clusterdef.ServicesToNsServices(services)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to generate ns server services list")
 		}
+
+		nsServices := lo.Map(nsServiceNames, func(name string, _ int) capellacontrol.CreateServices {
+			return capellacontrol.CreateServices{Type: name}
+		})
 
 		specs = append(specs, capellacontrol.DeployClusterRequest_Spec{
 			Compute: capellacontrol.DeployClusterRequest_Spec_Compute{
@@ -417,136 +461,11 @@ func (p *Deployer) buildDeploySpecs(
 	return specs, nil
 }
 
-func (p *Deployer) buildCreateSpecs(
-	ctx context.Context,
-	cloudProvider string,
-	nodeGrps []*clusterdef.NodeGroup,
-) ([]capellacontrol.CreateClusterRequest_Spec, error) {
-	nodeProvider := ""
-	diskAutoExpansionEnabled := false
-	if cloudProvider == "aws" {
-		nodeProvider = "aws"
-		diskAutoExpansionEnabled = true
-	} else if cloudProvider == "gcp" {
-		nodeProvider = "gcp"
-		diskAutoExpansionEnabled = true
-	} else if cloudProvider == "azure" {
-		nodeProvider = "azure"
-		diskAutoExpansionEnabled = false
-	} else {
-		return nil, errors.New("invalid cloud provider for setup info")
-	}
-
-	var specs []capellacontrol.CreateClusterRequest_Spec
-	for _, nodeGroup := range nodeGrps {
-		var instanceType string
-		var diskType string
-		var diskSize int
-		var diskIops int
-
-		if cloudProvider == "aws" {
-			instanceType = "m5.xlarge"
-			diskType = "gp3"
-			diskSize = 50
-			diskIops = 3000
-		} else if cloudProvider == "gcp" {
-			instanceType = "n2-standard-4"
-			diskType = "pd-ssd"
-			diskSize = 50
-		} else if cloudProvider == "azure" {
-			instanceType = "Standard_D4s_v5"
-			diskType = "P6"
-			diskSize = 64
-			diskIops = 240
-		} else {
-			return nil, errors.New("invalid cloud provider specified")
-		}
-
-		if nodeGroup.Cloud.InstanceType != "" {
-			instanceType = nodeGroup.Cloud.InstanceType
-		}
-		if nodeGroup.Cloud.DiskType != "" {
-			diskType = nodeGroup.Cloud.DiskType
-		}
-		if nodeGroup.Cloud.DiskSize != 0 {
-			diskSize = nodeGroup.Cloud.DiskSize
-		}
-		if nodeGroup.Cloud.DiskIops != 0 {
-			diskIops = nodeGroup.Cloud.DiskIops
-		}
-
-		services := []clusterdef.Service{
-			clusterdef.KvService,
-			clusterdef.IndexService,
-			clusterdef.QueryService,
-			clusterdef.SearchService,
-		}
-		if len(nodeGroup.Services) > 0 {
-			services = nodeGroup.Services
-		}
-
-		nsServices, err := clusterdef.ServicesToNsServices(services)
-		if err != nil {
-			return nil, errors.Wrap(err, "failed to generate ns server services list")
-		}
-
-		specs = append(specs, capellacontrol.CreateClusterRequest_Spec{
-			Compute: instanceType,
-			Count:   nodeGroup.Count,
-			Disk: capellacontrol.CreateClusterRequest_Spec_Disk{
-				Type:     diskType,
-				SizeInGb: diskSize,
-				Iops:     diskIops,
-			},
-			DiskAutoScaling: capellacontrol.CreateClusterRequest_Spec_DiskScaling{
-				Enabled: diskAutoExpansionEnabled,
-			},
-			Provider: nodeProvider,
-			Services: nsServices,
-		})
-	}
-
-	return specs, nil
-}
-
-func (p *Deployer) buildModifySpecs(
-	ctx context.Context,
-	cloudProvider string,
-	nodeGrps []*clusterdef.NodeGroup,
-) ([]capellacontrol.UpdateClusterSpecsRequest_Spec, error) {
-	createSpecs, err := p.buildCreateSpecs(ctx, cloudProvider, nodeGrps)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to build the create specs")
-	}
-
-	var specs []capellacontrol.UpdateClusterSpecsRequest_Spec
-
-	for _, spec := range createSpecs {
-		specs = append(specs, capellacontrol.UpdateClusterSpecsRequest_Spec{
-			Compute: capellacontrol.UpdateClusterSpecsRequest_Spec_Compute{
-				Type: spec.Compute,
-			},
-			Count: spec.Count,
-			Disk: capellacontrol.UpdateClusterSpecsRequest_Spec_Disk{
-				Type:     spec.Disk.Type,
-				SizeInGb: spec.Disk.SizeInGb,
-				Iops:     spec.Disk.Iops,
-			},
-			DiskAutoScaling: capellacontrol.UpdateClusterSpecsRequest_Spec_DiskScaling{
-				Enabled: spec.DiskAutoScaling.Enabled,
-			},
-			Services: lo.Map(spec.Services, func(spec string, _ int) capellacontrol.UpdateClusterSpecsRequest_Spec_Service {
-				return capellacontrol.UpdateClusterSpecsRequest_Spec_Service{
-					Type: spec,
-				}
-			}),
-		})
-	}
-
-	return specs, nil
-}
-
 func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster, clusterVersion string, serverImage string) (deployment.ClusterInfo, error) {
+	if err := p.requireLegacy("custom server image deployment"); err != nil {
+		return nil, err
+	}
+
 	clusterID := cbdcuuid.New()
 
 	expiryTime := time.Time{}
@@ -562,43 +481,21 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 	p.logger.Debug("creating a new cloud project")
 
-	newProject, err := p.client.CreateProject(ctx, p.tenantID, &capellacontrol.CreateProjectRequest{
+	newProject, err := p.v4.CreateProject(ctx, p.tenantID, &capellav4.CreateProjectRequest{
 		Name: projectName,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create project")
 	}
 
-	cloudProjectID := newProject.Id
+	cloudProjectID := newProject.ID
 
-	cloudProvider := ""
-	cloudRegion := ""
-	clusterCidr := ""
-
-	if def.Cloud.CloudProvider != "" {
-		cloudProvider = def.Cloud.CloudProvider
-	}
-	if def.Cloud.Region != "" {
-		cloudRegion = def.Cloud.Region
-	}
-	if def.Cloud.Cidr != "" {
-		clusterCidr = def.Cloud.Cidr
+	cloudProvider, cloudRegion, err := p.resolveCloudLocation(def)
+	if err != nil {
+		return nil, err
 	}
 
-	if cloudProvider == "" {
-		cloudProvider = p.defaultCloud
-	}
-	if cloudRegion == "" {
-		if cloudProvider == "aws" {
-			cloudRegion = p.defaultAwsRegion
-		} else if cloudProvider == "azure" {
-			cloudRegion = p.defaultAzureRegion
-		} else if cloudProvider == "gcp" {
-			cloudRegion = p.defaultGcpRegion
-		} else {
-			return nil, errors.New("invalid cloud provider for region selection")
-		}
-	}
+	clusterCidr := def.Cloud.Cidr
 
 	deploymentProvider := ""
 	clusterProvider := ""
@@ -700,6 +597,29 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	return thisCluster, nil
 }
 
+func (p *Deployer) resolveCloudLocation(def *clusterdef.Cluster) (string, string, error) {
+	cloudProvider := def.Cloud.CloudProvider
+	if cloudProvider == "" {
+		cloudProvider = p.defaultCloud
+	}
+
+	cloudRegion := def.Cloud.Region
+	if cloudRegion == "" {
+		switch cloudProvider {
+		case capellav4.ProviderAws:
+			cloudRegion = p.defaultAwsRegion
+		case capellav4.ProviderAzure:
+			cloudRegion = p.defaultAzureRegion
+		case capellav4.ProviderGcp:
+			cloudRegion = p.defaultGcpRegion
+		default:
+			return "", "", errors.New("invalid cloud provider for region selection")
+		}
+	}
+
+	return cloudProvider, cloudRegion, nil
+}
+
 func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster, clusterVersion string) (deployment.ClusterInfo, error) {
 	clusterID := cbdcuuid.New()
 
@@ -714,88 +634,32 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 	}
 	projectName := metaData.String()
 
+	cloudProvider, cloudRegion, err := p.resolveCloudLocation(def)
+	if err != nil {
+		return nil, err
+	}
+
 	p.logger.Debug("creating a new cloud project")
 
-	newProject, err := p.client.CreateProject(ctx, p.tenantID, &capellacontrol.CreateProjectRequest{
+	newProject, err := p.v4.CreateProject(ctx, p.tenantID, &capellav4.CreateProjectRequest{
 		Name: projectName,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create project")
 	}
 
-	cloudProjectID := newProject.Id
-
-	cloudProvider := ""
-	cloudRegion := ""
-	clusterCidr := ""
-
-	if def.Cloud.CloudProvider != "" {
-		cloudProvider = def.Cloud.CloudProvider
-	}
-	if def.Cloud.Region != "" {
-		cloudRegion = def.Cloud.Region
-	}
-	if def.Cloud.Cidr != "" {
-		clusterCidr = def.Cloud.Cidr
-	}
-
-	if cloudProvider == "" {
-		cloudProvider = p.defaultCloud
-	}
-	if cloudRegion == "" {
-		if cloudProvider == "aws" {
-			cloudRegion = p.defaultAwsRegion
-		} else if cloudProvider == "azure" {
-			cloudRegion = p.defaultAzureRegion
-		} else if cloudProvider == "gcp" {
-			cloudRegion = p.defaultGcpRegion
-		} else {
-			return nil, errors.New("invalid cloud provider for region selection")
-		}
-	}
-
-	deploymentProvider := ""
-	clusterProvider := ""
-	if cloudProvider == "aws" {
-		deploymentProvider = "aws"
-		clusterProvider = "aws"
-	} else if cloudProvider == "gcp" {
-		deploymentProvider = "gcp"
-		if def.Columnar {
-			clusterProvider = "gcp"
-		} else {
-			clusterProvider = "hostedGCP"
-		}
-	} else if cloudProvider == "azure" {
-		deploymentProvider = "azure"
-		if def.Columnar {
-			clusterProvider = "azure"
-		} else {
-			clusterProvider = "hostedAzure"
-		}
-	} else {
-		return nil, errors.New("invalid cloud provider for setup info")
-	}
-
-	p.logger.Debug("fetching deployment options project")
-
-	deploymentOpts, err := p.client.GetProviderDeploymentOptions(ctx, p.tenantID, &capellacontrol.GetProviderDeploymentOptionsRequest{
-		Provider: deploymentProvider,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to get deployment options")
-	}
-
-	if clusterVersion == "" {
-		clusterVersion = deploymentOpts.ServerVersions.DefaultOptionKey
-	}
-	if clusterCidr == "" {
-		clusterCidr = deploymentOpts.CIDR.SuggestedBlock
-	}
+	cloudProjectID := newProject.ID
 
 	p.logger.Debug("creating a new cloud cluster")
 
 	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
+
+	// An empty CIDR makes Capella allocate a free block.
+	cloudProviderSpec := capellav4.CloudProvider{
+		Type:   cloudProvider,
+		Region: cloudRegion,
+		Cidr:   def.Cloud.Cidr,
+	}
 
 	cloudClusterID := ""
 	if def.Cloud.FreeTier {
@@ -803,69 +667,68 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.New("free-tier cluster cannot have node groups")
 		}
 
-		createReq := &capellacontrol.CreateTrialClusterRequest{
-			CIDR:           clusterCidr,
-			Description:    "",
-			Name:           clusterName,
-			ProjectId:      cloudProjectID,
-			Provider:       clusterProvider,
-			Region:         cloudRegion,
-			Server:         clusterVersion,
-			DeliveryMethod: "hosted",
+		createReq := &capellav4.CreateFreeTierClusterRequest{
+			Name:          clusterName,
+			CloudProvider: cloudProviderSpec,
 		}
-		p.logger.Debug("creating cluster", zap.Any("req", createReq))
+		p.logger.Debug("creating free tier cluster", zap.Any("req", createReq))
 
-		newCluster, err := p.client.CreateTrialCluster(ctx, p.tenantID, createReq)
+		newCluster, err := p.v4.CreateFreeTierCluster(ctx, p.tenantID, cloudProjectID, createReq)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create cluster")
 		}
 
-		cloudClusterID = newCluster.Id
+		cloudClusterID = newCluster.ID
 
 		p.logger.Debug("waiting for creation to complete")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", false)
+		err = p.v4mgr.WaitForClusterState(ctx, p.tenantID, cloudProjectID, cloudClusterID, capellav4.StateHealthy)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to wait for deployment")
 		}
 	} else if !def.Columnar {
-		specs, err := p.buildCreateSpecs(
-			ctx,
-			cloudProvider,
-			def.NodeGroups)
+		serviceGroups, err := buildServiceGroups(cloudProvider, def.NodeGroups)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to build cluster specs")
 		}
 
-		createReq := &capellacontrol.CreateClusterRequest{
-			CIDR:        clusterCidr,
-			Description: "",
-			Name:        clusterName,
-			Plan:        "Developer Pro",
-			ProjectId:   cloudProjectID,
-			Provider:    clusterProvider,
-			Region:      cloudRegion,
-			Server:      clusterVersion,
-			SingleAZ:    false,
-			Specs:       specs,
-			Timezone:    "PT",
+		createReq := &capellav4.CreateClusterRequest{
+			Name:          clusterName,
+			CloudProvider: cloudProviderSpec,
+			ServiceGroups: serviceGroups,
+			Availability: capellav4.Availability{
+				Type: capellav4.AvailabilityMulti,
+			},
+			Support: capellav4.Support{
+				Plan:     "developer pro",
+				Timezone: "PT",
+			},
+		}
+		if clusterVersion != "" {
+			createReq.CouchbaseServer = &capellav4.CouchbaseServer{
+				Version: clusterVersion,
+			}
 		}
 		p.logger.Debug("creating cluster", zap.Any("req", createReq))
 
-		newCluster, err := p.client.CreateCluster(ctx, p.tenantID, createReq)
+		newCluster, err := p.v4.CreateCluster(ctx, p.tenantID, cloudProjectID, createReq)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to create cluster")
 		}
 
-		cloudClusterID = newCluster.Id
+		cloudClusterID = newCluster.ID
 
 		p.logger.Debug("waiting for creation to complete")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", false)
+		err = p.v4mgr.WaitForClusterState(ctx, p.tenantID, cloudProjectID, cloudClusterID, capellav4.StateHealthy)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to wait for deployment")
 		}
 	} else {
+		if err := p.requireLegacy("columnar cluster deployment"); err != nil {
+			return nil, err
+		}
+
 		if len(def.NodeGroups) > 1 {
 			return nil, errors.New("columnar only supports 1 node group")
 		}
@@ -886,7 +749,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		createReq := &capellacontrol.CreateColumnarInstanceRequest{
 			Name:        clusterName,
 			Description: "",
-			Provider:    clusterProvider,
+			Provider:    cloudProvider,
 			Region:      cloudRegion,
 			Nodes:       nodeCount,
 			InstanceTypes: capellacontrol.ColumnarInstanceTypes{
@@ -998,11 +861,11 @@ func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, ne
 	metaData.Expiry = newExpiryTime
 	newProjectName := metaData.String()
 
-	_, err = d.client.UpdateProject(
+	err = d.v4.UpdateProject(
 		ctx,
 		d.tenantID,
-		clusterInfo.Project.ID,
-		&capellacontrol.UpdateProjectRequest{
+		clusterInfo.ProjectID,
+		&capellav4.UpdateProjectRequest{
 			Name: newProjectName,
 		})
 	if err != nil {
@@ -1021,12 +884,16 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 	if clusterInfo.Columnar != nil {
 		d.logger.Debug("can/will only modify the node count for a columnar cluster")
 
+		if err := d.requireLegacy("columnar cluster modification"); err != nil {
+			return err
+		}
+
 		newSpec := &capellacontrol.UpdateColumnarInstanceRequest{
 			Name:        clusterInfo.Columnar.Name,
 			Description: clusterInfo.Columnar.Description,
 			Nodes:       def.NodeGroups[0].Count,
 		}
-		err = d.client.UpdateColumnarSpecs(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, newSpec)
+		err = d.client.UpdateColumnarSpecs(ctx, d.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, newSpec)
 		if err != nil {
 			return errors.Wrap(err, "failed to update specs")
 		}
@@ -1048,28 +915,28 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		return nil
 	}
 
-	cloudProjectID := clusterInfo.Cluster.Project.Id
-	cloudClusterID := clusterInfo.Cluster.Id
-	cloudProvider := clusterInfo.Cluster.Provider.Name
+	cloudProjectID := clusterInfo.ProjectID
+	cloudClusterID := clusterInfo.Cluster.ID
+	cloudProvider := clusterInfo.Cluster.CloudProvider.Type
 
-	newSpecs, err := d.buildModifySpecs(
-		ctx,
-		cloudProvider,
-		def.NodeGroups)
+	newGroups, err := buildServiceGroups(cloudProvider, def.NodeGroups)
 	if err != nil {
 		return errors.Wrap(err, "failed to build cluster specs")
 	}
 
-	if !isServiceEqual(clusterInfo.Cluster.Services, newSpecs) {
+	if !serviceGroupsEqual(cloudProvider, clusterInfo.Cluster.ServiceGroups, newGroups) {
 		d.logger.Info("cluster current spec is different from the def spec")
-		d.logger.Debug("generated new specification list", zap.Any("specs", newSpecs))
-		err = d.client.UpdateClusterSpecs(
+		d.logger.Debug("generated new specification list", zap.Any("specs", newGroups))
+		err = d.v4.UpdateCluster(
 			ctx,
 			d.tenantID,
 			cloudProjectID,
 			cloudClusterID,
-			&capellacontrol.UpdateClusterSpecsRequest{
-				Specs: newSpecs,
+			&capellav4.UpdateClusterRequest{
+				Name:          clusterInfo.Cluster.Name,
+				Description:   clusterInfo.Cluster.Description,
+				Support:       clusterInfo.Cluster.Support,
+				ServiceGroups: newGroups,
 			})
 		if err != nil {
 			return errors.Wrap(err, "failed to update cluster specs")
@@ -1077,14 +944,14 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 
 		d.logger.Debug("waiting for cluster modification to begin")
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "scaling", false)
+		err = d.v4mgr.WaitForClusterState(ctx, d.tenantID, cloudProjectID, cloudClusterID, capellav4.StateScaling)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster modification to begin")
 		}
 
 		d.logger.Debug("waiting for cluster to be healthy")
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy", false)
+		err = d.v4mgr.WaitForClusterState(ctx, d.tenantID, cloudProjectID, cloudClusterID, capellav4.StateHealthy)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster to be healthy")
 		}
@@ -1106,7 +973,12 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		}
 	}
 
-	if clusterVersion != clusterInfo.Cluster.Config.Version && serverImage != "" {
+	// Only the v2 image override can change the server version.
+	if clusterVersion != clusterInfo.Cluster.CouchbaseServer.Version && serverImage != "" {
+		if err := d.requireLegacy("server version change"); err != nil {
+			return err
+		}
+
 		releaseId, err = getReleaseIdFromServerImage(serverImage)
 		if err != nil {
 			return errors.Wrap(err, "failed to get release id from server image")
@@ -1124,13 +996,13 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		if err != nil {
 			return errors.Wrap(err, "failed to update server version")
 		}
-		//time.Sleep(30 * time.Second)
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "upgrading", false)
+
+		err = d.v4mgr.WaitForClusterState(ctx, d.tenantID, cloudProjectID, cloudClusterID, capellav4.StateUpgrading)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster upgrade to begin")
 		}
 
-		err = d.mgr.WaitForClusterState(ctx, d.tenantID, cloudClusterID, "healthy", false)
+		err = d.v4mgr.WaitForClusterState(ctx, d.tenantID, cloudProjectID, cloudClusterID, capellav4.StateHealthy)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster returns to healthy")
 		}
@@ -1140,6 +1012,10 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 }
 
 func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, CurrentImages string, NewImage string) error {
+	if err := d.requireSupportToken("cluster image upgrade"); err != nil {
+		return err
+	}
+
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 
 	if err != nil {
@@ -1154,14 +1030,19 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 	)
 
 	if clusterInfo.Columnar != nil {
+		detail, err := d.columnarV2Detail(ctx, clusterInfo)
+		if err != nil {
+			return err
+		}
+
 		instanceId = clusterInfo.Columnar.ID
-		clusterId = clusterInfo.Columnar.Config.Id
-		cloudProvider = clusterInfo.Columnar.Config.Provider
+		clusterId = detail.Config.Id
+		cloudProvider = detail.Config.Provider
 		columnar = true
 	} else if clusterInfo.Cluster != nil {
-		instanceId = clusterInfo.Cluster.Id
-		clusterId = clusterInfo.Cluster.Id
-		cloudProvider = clusterInfo.Cluster.Provider.Name
+		instanceId = clusterInfo.Cluster.ID
+		clusterId = clusterInfo.Cluster.ID
+		cloudProvider = clusterInfo.Cluster.CloudProvider.Type
 	}
 
 	var provider string
@@ -1207,14 +1088,21 @@ func (d *Deployer) UpgradeCluster(ctx context.Context, clusterID string, Current
 		return errors.Wrap(err, "failed to upgrade server version")
 	}
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "upgrading", columnar)
+	waitForState := func(desiredState string) error {
+		if columnar {
+			return d.v4mgr.WaitForAnalyticsClusterState(ctx, d.tenantID, clusterInfo.ProjectID, instanceId, desiredState)
+		}
+		return d.v4mgr.WaitForClusterState(ctx, d.tenantID, clusterInfo.ProjectID, instanceId, desiredState)
+	}
+
+	err = waitForState(capellav4.StateUpgrading)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster upgrade to begin")
 	}
 
 	d.logger.Debug("waiting for cluster to be healthy")
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, instanceId, "healthy", columnar)
+	err = waitForState(capellav4.StateHealthy)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster to be healthy")
 	}
@@ -1230,30 +1118,52 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 	return errors.New("clouddeploy does not support cluster node removal")
 }
 
+// A free tier cluster has its own delete endpoint, and the generic cluster
+// record does not identify the tier, so fall back to the free tier endpoint
+// when the generic delete is rejected.
+func (p *Deployer) deleteCloudCluster(ctx context.Context, projectID, clusterID string) error {
+	err := p.v4.DeleteCluster(ctx, p.tenantID, projectID, clusterID)
+	if err == nil {
+		return nil
+	}
+	ftErr := p.v4.DeleteFreeTierCluster(ctx, p.tenantID, projectID, clusterID)
+	if ftErr == nil {
+		return nil
+	}
+	return multierr.Combine(err, ftErr)
+}
+
 func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) error {
 	p.logger.Debug("deleting the cloud cluster", zap.String("cluster-id", clusterInfo.Meta.ID.String()))
 
 	if clusterInfo.Cluster != nil {
-		err := p.client.DeleteCluster(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+		err := p.deleteCloudCluster(ctx, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to delete cluster")
 		}
 
 		p.logger.Debug("waiting for cluster deletion to finish")
 
-		err = p.mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.Cluster.Id, "", false)
+		err = p.v4mgr.WaitForClusterState(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, capellav4.StateDeleted)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster destruction")
 		}
 	} else if clusterInfo.Columnar != nil {
-		err := p.client.DeleteColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		// The deletion wait needs the underlying cloud cluster ID, which only the
+		// v2 record carries.
+		detail, err := p.columnarV2Detail(ctx, clusterInfo)
+		if err != nil {
+			return err
+		}
+
+		err = p.client.DeleteColumnar(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to delete cluster")
 		}
 
 		p.logger.Debug("waiting for cluster deletion to finish")
 
-		err = p.mgr.WaitForColumnarDeletion(ctx, p.tenantID, clusterInfo.Columnar.ID, clusterInfo.Columnar.Config.Id)
+		err = p.mgr.WaitForColumnarDeletion(ctx, p.tenantID, clusterInfo.Columnar.ID, detail.Config.Id)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for cluster destruction")
 		}
@@ -1261,7 +1171,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 
 	p.logger.Debug("deleting the cloud project")
 
-	err := p.client.DeleteProject(ctx, p.tenantID, clusterInfo.Project.ID)
+	err := p.v4.DeleteProject(ctx, p.tenantID, clusterInfo.ProjectID)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete project")
 	}
@@ -1290,37 +1200,37 @@ func (p *Deployer) ListAllowListEntries(ctx context.Context, clusterID string) (
 		return nil, err
 	}
 
-	var entries *capellacontrol.ListAllowListEntriesResponse
-	if clusterInfo.Cluster != nil {
-		entries, err = p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-			Page:          1,
-			PerPage:       1000,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
-	} else {
-		entries, err = p.client.ListAllowListEntriesColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
-			Page:          1,
-			PerPage:       1000,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
-	}
-
+	entries, err := p.listAllowedCidrs(ctx, clusterInfo)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to fetch allow list entries")
+		return nil, err
 	}
 
 	var out []*AllowListEntry
-	for _, entry := range entries.Data {
+	for _, entry := range entries {
 		out = append(out, &AllowListEntry{
-			ID:      entry.Data.ID,
-			Cidr:    entry.Data.Cidr,
-			Comment: entry.Data.Comment,
+			ID:      entry.ID,
+			Cidr:    entry.Cidr,
+			Comment: entry.Comment,
 		})
 	}
 
 	return out, nil
+}
+
+func (p *Deployer) listAllowedCidrs(ctx context.Context, clusterInfo *clusterInfo) ([]*capellav4.AllowedCidrInfo, error) {
+	var entries []*capellav4.AllowedCidrInfo
+	var err error
+
+	if clusterInfo.Cluster != nil {
+		entries, err = p.v4.ListAllowedCidrs(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+	} else {
+		entries, err = p.v4.ListAnalyticsAllowedCidrs(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to fetch allow list entries")
+	}
+
+	return entries, nil
 }
 
 func (p *Deployer) AddAllowListEntry(ctx context.Context, clusterID string, cidr string) error {
@@ -1329,20 +1239,11 @@ func (p *Deployer) AddAllowListEntry(ctx context.Context, clusterID string, cidr
 		return err
 	}
 
+	req := &capellav4.CreateAllowedCidrRequest{Cidr: cidr}
 	if clusterInfo.Cluster != nil {
-		err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
-			Create: []capellacontrol.UpdateAllowListEntriesRequest_Entry{
-				{
-					Cidr:    cidr,
-					Comment: "",
-				},
-			},
-		})
+		_, err = p.v4.CreateAllowedCidr(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, req)
 	} else {
-		err = p.client.AddAllowListEntryColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.UpdateAllowListEntriesRequest_Entry{
-			Cidr:    cidr,
-			Comment: "",
-		})
+		_, err = p.v4.CreateAnalyticsAllowedCidr(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, req)
 	}
 
 	if err != nil {
@@ -1358,30 +1259,15 @@ func (p *Deployer) RemoveAllowListEntry(ctx context.Context, clusterID string, c
 		return err
 	}
 
-	var entries *capellacontrol.ListAllowListEntriesResponse
-	if clusterInfo.Cluster != nil {
-		entries, err = p.client.ListAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-			Page:          1,
-			PerPage:       1000,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
-	} else {
-		entries, err = p.client.ListAllowListEntriesColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
-			Page:          1,
-			PerPage:       1000,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
-	}
+	entries, err := p.listAllowedCidrs(ctx, clusterInfo)
 	if err != nil {
-		return errors.Wrap(err, "failed to list allow list entries")
+		return err
 	}
 
 	foundEntryId := ""
-	for _, entry := range entries.Data {
-		if entry.Data.Cidr == cidr {
-			foundEntryId = entry.Data.ID
+	for _, entry := range entries {
+		if entry.Cidr == cidr {
+			foundEntryId = entry.ID
 		}
 	}
 
@@ -1390,11 +1276,9 @@ func (p *Deployer) RemoveAllowListEntry(ctx context.Context, clusterID string, c
 	}
 
 	if clusterInfo.Cluster != nil {
-		err = p.client.UpdateAllowListEntries(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.UpdateAllowListEntriesRequest{
-			Delete: []string{foundEntryId},
-		})
+		err = p.v4.DeleteAllowedCidr(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, foundEntryId)
 	} else {
-		err = p.client.DeleteAllowListEntryColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, foundEntryId)
+		err = p.v4.DeleteAnalyticsAllowedCidr(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, foundEntryId)
 	}
 
 	if err != nil {
@@ -1411,17 +1295,17 @@ func (p *Deployer) EnablePrivateEndpoints(ctx context.Context, clusterID string)
 	}
 
 	if clusterInfo.Columnar == nil {
-		err = p.client.EnablePrivateEndpoints(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+		err = p.v4.EnablePrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to enable private endpoints")
 		}
-		err = p.mgr.WaitForPrivateEndpointsEnabled(ctx, false, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+		err = p.v4mgr.WaitForPrivateEndpointServiceEnabled(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 	} else {
-		err = p.client.EnablePrivateEndpointsColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		err = p.v4.EnableAnalyticsPrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to enable private endpoints")
 		}
-		err = p.mgr.WaitForPrivateEndpointsEnabled(ctx, true, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		err = p.v4mgr.WaitForAnalyticsPrivateEndpointServiceEnabled(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 	}
 
 	if err != nil {
@@ -1437,9 +1321,9 @@ func (p *Deployer) DisablePrivateEndpoints(ctx context.Context, clusterID string
 		return err
 	}
 	if clusterInfo.Columnar == nil {
-		return p.client.DisablePrivateEndpoints(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+		return p.v4.DisablePrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 	}
-	return p.client.DisablePrivateEndpointsColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+	return p.v4.DisableAnalyticsPrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 }
 
 type PrivateEndpointDetails struct {
@@ -1454,52 +1338,56 @@ func (p *Deployer) GetPrivateEndpointDetails(ctx context.Context, clusterID stri
 	}
 
 	if clusterInfo.Columnar == nil {
-		details, err := p.client.GetPrivateEndpointDetails(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+		service, err := p.v4.GetPrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to fetch private endpoint link details")
 		}
 
-		if !details.Data.Enabled {
+		if !service.Enabled {
 			return nil, errors.New("private endpoints are not enabled")
 		}
 
+		// The v4 API reports the private DNS name with the endpoint list, not with
+		// the service.
+		endpoints, err := p.v4.ListPrivateEndpoints(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to fetch private endpoints")
+		}
+
 		return &PrivateEndpointDetails{
-			ServiceName: details.Data.ServiceName,
-			PrivateDNS:  details.Data.PrivateDNS,
+			ServiceName: service.ServiceName,
+			PrivateDNS:  endpoints.PrivateEndpointDNS,
 		}, nil
 	} else {
-		details, err := p.client.GetPrivateEndpointDetailsColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		service, err := p.v4.GetAnalyticsPrivateEndpointService(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to fetch private endpoint link details")
 		}
 
-		if !details.Data.Enabled {
+		if !service.Enabled {
 			return nil, errors.New("private endpoints are not enabled")
 		}
 
 		return &PrivateEndpointDetails{
-			ServiceName: details.Data.ServiceName,
-			PrivateDNS:  details.Data.PrivateDNS,
+			ServiceName: service.ServiceName,
+			PrivateDNS:  service.PrivateDNS,
 		}, nil
 	}
 
 }
 
-func (p *Deployer) GenPrivateEndpointLinkCommand(ctx context.Context, clusterID string, req *capellacontrol.PrivateEndpointLinkRequest) (string, error) {
+func (p *Deployer) GenPrivateEndpointLinkCommand(ctx context.Context, clusterID string, req *capellav4.EndpointCommandRequest) (string, error) {
 	clusterInfo, err := p.getCluster(ctx, clusterID)
 	if err != nil {
 		return "", err
 	}
 
 	if clusterInfo.Columnar == nil {
-		cmd, err := p.client.GenPrivateEndpointLinkCommand(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PrivateEndpointLinkRequest{
-			VpcID:     req.VpcID,
-			SubnetIds: req.SubnetIds,
-		})
+		cmd, err := p.v4.GetPrivateEndpointCommand(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, req)
 		if err != nil {
 			return "", errors.Wrap(err, "failed to generate private endpoint link command")
 		}
-		return cmd.Data.Command, nil
+		return cmd.Command, nil
 	} else {
 		return "", errors.New("private endpoint link command generation is not supported for columnar yet")
 	}
@@ -1511,28 +1399,24 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 		return err
 	}
 
+	if clusterInfo.Columnar != nil {
+		return p.acceptColumnarPrivateEndpointLink(ctx, clusterInfo, endpointID)
+	}
+
+	cloudProjectID := clusterInfo.ProjectID
+	cloudClusterID := clusterInfo.Cluster.ID
+	providerName := clusterInfo.Cluster.CloudProvider.Type
+
 	// in some deployment scenarios, the endpoint-id that the user has is only the
 	// first part of the id, and the rest of the id comes from somewhere else, so we
 	// list all of the ids, and pick the one that matches.
-	var peLinks *capellacontrol.ListPrivateEndpointLinksResponse
-	if clusterInfo.Columnar == nil {
-		peLinks, err = p.mgr.Client.ListPrivateEndpointLinks(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
-	} else {
-		peLinks, err = p.mgr.Client.ListPrivateEndpointLinksColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
-	}
+	endpoints, err := p.v4.ListPrivateEndpoints(ctx, p.tenantID, cloudProjectID, cloudClusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to list private endpoint links")
 	}
 
 	fullEndpointId := ""
-	providerName := ""
-	if clusterInfo.Columnar != nil {
-		providerName = clusterInfo.Columnar.Config.Provider
-	} else if clusterInfo.Cluster != nil {
-		providerName = clusterInfo.Cluster.Provider.Name
-	}
-
-	if providerName == "gcp" {
+	if providerName == capellav4.ProviderGcp {
 		// GCP's private endpoint implementation differs from other providers:
 		// The endpoint ID is only generated after accepting the link, unlike
 		// AWS/Azure where it's available before acceptance. Therefore, we use
@@ -1540,9 +1424,9 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 		fullEndpointId = endpointID
 	}
 
-	for _, peLink := range peLinks.Data {
-		if strings.Contains(peLink.EndpointID, endpointID) {
-			fullEndpointId = peLink.EndpointID
+	for _, endpoint := range endpoints.Endpoints {
+		if strings.Contains(endpoint.ID, endpointID) {
+			fullEndpointId = endpoint.ID
 			break
 		}
 	}
@@ -1551,169 +1435,174 @@ func (p *Deployer) AcceptPrivateEndpointLink(ctx context.Context, clusterID stri
 		return fmt.Errorf("failed to identify endpoint '%s'", endpointID)
 	}
 
-	if clusterInfo.Columnar == nil {
-		// GCP's private endpoint implementation differs from other providers:
-		// The endpoint ID is only generated after accepting the link, unlike
-		// AWS/Azure where it's available before acceptance. Therefore, we use
-		// the provided endpoint ID directly for GCP.
-		if providerName != "gcp" {
-			_, err = p.mgr.WaitForPrivateEndpointLink(ctx, clusterInfo.Columnar != nil, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, fullEndpointId)
-			if err != nil {
-				return errors.Wrap(err, "failed to wait for private endpoint link")
-			}
-		}
-
-		err = p.client.AcceptPrivateEndpointLink(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PrivateEndpointAcceptLinkRequest{
-			EndpointID: fullEndpointId,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to accept private endpoint link")
-		}
-
-		err = p.mgr.WaitForPrivateEndpointLinkState(ctx, clusterInfo.Columnar != nil, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, fullEndpointId, "linked")
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for private endpoint link to establish")
-		}
-
-	} else {
-		_, err = p.mgr.WaitForPrivateEndpointLink(ctx, clusterInfo.Columnar != nil, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, fullEndpointId)
+	if providerName != capellav4.ProviderGcp {
+		_, err = p.v4mgr.WaitForPrivateEndpoint(ctx, p.tenantID, cloudProjectID, cloudClusterID, fullEndpointId)
 		if err != nil {
 			return errors.Wrap(err, "failed to wait for private endpoint link")
 		}
+	}
 
-		err = p.client.AcceptPrivateEndpointLinkColumnar(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PrivateEndpointAcceptLinkRequest{
-			EndpointID: fullEndpointId,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to accept private endpoint link")
-		}
+	err = p.v4.AcceptPrivateEndpoint(ctx, p.tenantID, cloudProjectID, cloudClusterID, fullEndpointId)
+	if err != nil {
+		return errors.Wrap(err, "failed to accept private endpoint link")
+	}
 
-		err = p.mgr.WaitForPrivateEndpointLinkState(ctx, clusterInfo.Columnar != nil, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, fullEndpointId, "linked")
-		if err != nil {
-			return errors.Wrap(err, "failed to wait for private endpoint link to establish")
-		}
+	err = p.v4mgr.WaitForPrivateEndpointState(ctx, p.tenantID, cloudProjectID, cloudClusterID, fullEndpointId, capellav4.PrivateEndpointLinked)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for private endpoint link to establish")
 	}
 
 	return nil
 }
 
+func (p *Deployer) acceptColumnarPrivateEndpointLink(ctx context.Context, clusterInfo *clusterInfo, endpointID string) error {
+	cloudProjectID := clusterInfo.ProjectID
+	columnarID := clusterInfo.Columnar.ID
+	providerName := clusterInfo.Columnar.CloudProviderName()
+
+	endpoints, err := p.v4.ListAnalyticsPrivateEndpoints(ctx, p.tenantID, cloudProjectID, columnarID)
+	if err != nil {
+		return errors.Wrap(err, "failed to list private endpoint links")
+	}
+
+	fullEndpointId := ""
+	if providerName == capellav4.ProviderGcp {
+		fullEndpointId = endpointID
+	}
+
+	for _, endpoint := range endpoints {
+		if strings.Contains(endpoint.ID, endpointID) {
+			fullEndpointId = endpoint.ID
+			break
+		}
+	}
+
+	if fullEndpointId == "" {
+		return fmt.Errorf("failed to identify endpoint '%s'", endpointID)
+	}
+
+	if providerName != capellav4.ProviderGcp {
+		_, err = p.v4mgr.WaitForAnalyticsPrivateEndpoint(ctx, p.tenantID, cloudProjectID, columnarID, fullEndpointId)
+		if err != nil {
+			return errors.Wrap(err, "failed to wait for private endpoint link")
+		}
+	}
+
+	err = p.v4.AcceptAnalyticsPrivateEndpoint(ctx, p.tenantID, cloudProjectID, columnarID, fullEndpointId)
+	if err != nil {
+		return errors.Wrap(err, "failed to accept private endpoint link")
+	}
+
+	err = p.v4mgr.WaitForAnalyticsPrivateEndpointState(ctx, p.tenantID, cloudProjectID, columnarID, fullEndpointId, capellav4.PrivateEndpointLinked)
+	if err != nil {
+		return errors.Wrap(err, "failed to wait for private endpoint link to establish")
+	}
+
+	return nil
+}
+
+type removalTarget struct {
+	projectID string
+	clusterID string
+	// The cloud cluster behind a columnar instance, needed by its deletion wait.
+	underlyingID string
+	isColumnar   bool
+}
+
 func (p *Deployer) RemoveAll(ctx context.Context) error {
 	var errs error
-	clusters, err := p.client.ListAllClusters(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       100,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
+
+	projects, err := p.listCbdc2Projects(ctx)
 	if err != nil {
-		errs = multierr.Append(errs, errors.Wrap(err, "failed to list all clusters"))
-	} else {
-		var clustersToRemove []*capellacontrol.ClusterInfo
-		for _, cluster := range clusters.Data {
-			if !strings.HasPrefix(cluster.Data.Name, "cbdc2_") {
+		return errors.Wrap(err, "failed to list projects")
+	}
+
+	// A corrupted project can hold more than one cluster, which inspectProject
+	// collapses into one.
+	var targets []removalTarget
+	failedProjects := make(map[string]bool)
+	for _, project := range projects {
+		clusters, err := p.v4.ListClusters(ctx, p.tenantID, project.Info.ID)
+		if err != nil {
+			errs = multierr.Append(errs, errors.Wrap(err, "failed to list clusters"))
+			failedProjects[project.Info.ID] = true
+			continue
+		}
+
+		for _, cluster := range clusters {
+			targets = append(targets, removalTarget{
+				projectID: project.Info.ID,
+				clusterID: cluster.ID,
+			})
+		}
+
+		columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, project.Info.ID)
+		if err != nil {
+			errs = multierr.Append(errs, errors.Wrap(err, "failed to list analytics clusters"))
+			failedProjects[project.Info.ID] = true
+			continue
+		}
+
+		for _, columnar := range columnars {
+			detail, err := p.columnarV2DetailByID(ctx, columnar.ID)
+			if err != nil {
+				errs = multierr.Append(errs, err)
+				failedProjects[project.Info.ID] = true
 				continue
 			}
 
-			clustersToRemove = append(clustersToRemove, cluster.Data)
-		}
-
-		var clusterNamesToRemove []string
-		for _, cluster := range clustersToRemove {
-			clusterNamesToRemove = append(clusterNamesToRemove, cluster.Name)
-		}
-		p.logger.Info("found clusters to remove", zap.Strings("clusters", clusterNamesToRemove))
-
-		for _, cluster := range clustersToRemove {
-			p.logger.Info("removing a cluster", zap.String("cluster-id", cluster.Id))
-
-			err := p.client.DeleteCluster(ctx, p.tenantID, cluster.Project.Id, cluster.Id)
-			if err != nil {
-				errs = multierr.Append(errs, errors.Wrap(err, "failed to remove cluster"))
-			}
-		}
-
-		for _, cluster := range clustersToRemove {
-			p.logger.Info("waiting for cluster removal to complete", zap.String("cluster-id", cluster.Id))
-
-			err := p.mgr.WaitForClusterState(ctx, p.tenantID, cluster.Id, "", false)
-			if err != nil {
-				errs = multierr.Append(errs, errors.Wrap(err, "failed to wait for cluster to complete"))
-			}
+			targets = append(targets, removalTarget{
+				projectID:    project.Info.ID,
+				clusterID:    columnar.ID,
+				underlyingID: detail.Config.Id,
+				isColumnar:   true,
+			})
 		}
 	}
 
-	columnars, err := p.client.ListAllColumnars(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       1000,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
-	if err != nil {
-		errs = multierr.Append(errs, errors.Wrap(err, "failed to list all columnars"))
-	} else {
-		var columnarsToRemove []*capellacontrol.ColumnarData
-		for _, columnar := range columnars.Data {
-			if !strings.HasPrefix(columnar.Data.Name, "cbdc2_") {
-				continue
-			}
+	p.logger.Info("found clusters to remove", zap.Int("count", len(targets)))
 
-			columnarsToRemove = append(columnarsToRemove, columnar.Data)
+	for _, target := range targets {
+		p.logger.Info("removing a cluster", zap.String("cluster-id", target.clusterID))
+
+		if target.isColumnar {
+			err = p.client.DeleteColumnar(ctx, p.tenantID, target.projectID, target.clusterID)
+		} else {
+			err = p.deleteCloudCluster(ctx, target.projectID, target.clusterID)
 		}
-
-		var columnarNamesToRemove []string
-		for _, cluster := range columnarsToRemove {
-			columnarNamesToRemove = append(columnarNamesToRemove, cluster.Name)
-		}
-		p.logger.Info("found columnar to remove", zap.Strings("columnar", columnarNamesToRemove))
-
-		for _, columnar := range columnarsToRemove {
-			p.logger.Info("removing a columnar", zap.String("cluster-id", columnar.ID))
-
-			err := p.client.DeleteColumnar(ctx, p.tenantID, columnar.ProjectID, columnar.ID)
-			if err != nil {
-				errs = multierr.Append(errs, errors.Wrap(err, "failed to remove columnar"))
-			}
-		}
-
-		for _, columnar := range columnarsToRemove {
-			p.logger.Info("waiting for cluster columnar to complete", zap.String("cluster-id", columnar.ID))
-
-			err := p.mgr.WaitForColumnarDeletion(ctx, p.tenantID, columnar.ID, columnar.Config.Id)
-			if err != nil {
-				errs = multierr.Append(errs, errors.Wrap(err, "failed to wait for cluster to complete"))
-			}
+		if err != nil {
+			errs = multierr.Append(errs, errors.Wrap(err, "failed to remove cluster"))
+			failedProjects[target.projectID] = true
 		}
 	}
 
-	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       100,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
-	if err != nil {
-		errs = multierr.Append(errs, errors.Wrap(err, "failed to list all projects"))
-	} else {
-		var projectsToRemove []*capellacontrol.ProjectInfo
-		for _, project := range projects.Data {
-			if strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
-				projectsToRemove = append(projectsToRemove, project.Data)
-			}
+	for _, target := range targets {
+		p.logger.Info("waiting for cluster removal to complete", zap.String("cluster-id", target.clusterID))
+
+		if target.isColumnar {
+			err = p.mgr.WaitForColumnarDeletion(ctx, p.tenantID, target.clusterID, target.underlyingID)
+		} else {
+			err = p.v4mgr.WaitForClusterState(ctx, p.tenantID, target.projectID, target.clusterID, capellav4.StateDeleted)
+		}
+		if err != nil {
+			errs = multierr.Append(errs, errors.Wrap(err, "failed to wait for cluster to complete"))
+			failedProjects[target.projectID] = true
+		}
+	}
+
+	// Capella refuses to delete a project that still holds a cluster.
+	for _, project := range projects {
+		if failedProjects[project.Info.ID] {
+			p.logger.Warn("keeping project as its clusters were not all removed",
+				zap.String("project-id", project.Info.ID))
+			continue
 		}
 
-		var projectNamesToRemove []string
-		for _, project := range projectsToRemove {
-			projectNamesToRemove = append(projectNamesToRemove, project.Name)
-		}
-		p.logger.Info("found projects to remove", zap.Strings("projects", projectNamesToRemove))
+		p.logger.Info("removing a project", zap.String("project-id", project.Info.ID))
 
-		for _, project := range projectsToRemove {
-			p.logger.Info("removing a project", zap.String("project-id", project.ID))
-
-			err := p.client.DeleteProject(ctx, p.tenantID, project.ID)
-			if err != nil {
-				errs = multierr.Append(errs, errors.Wrap(err, "failed to remove project"))
-			}
+		err := p.v4.DeleteProject(ctx, p.tenantID, project.Info.ID)
+		if err != nil {
+			errs = multierr.Append(errs, errors.Wrap(err, "failed to remove project"))
 		}
 	}
 
@@ -1734,12 +1623,32 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	var dataApiConnstr string
 	var dnsSRV string
 	if clusterInfo.Cluster != nil {
-		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Cluster.Connect.Srv)
-		dataApiConnstr = fmt.Sprintf("https://%s", clusterInfo.Cluster.DataApiHostname)
-		dnsSRV = clusterInfo.Cluster.Connect.Srv
+		// The v4 API can return this connection string with or without its scheme.
+		srvName := strings.TrimPrefix(clusterInfo.Cluster.ConnectionString, "couchbases://")
+		connStr = fmt.Sprintf("couchbases://%s", srvName)
+		dnsSRV = srvName
+
+		// The Data API connection string is a separate resource. A cluster without
+		// the Data API must still report its normal connection string.
+		dataApi, err := p.v4.GetDataApi(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+		if err != nil {
+			p.logger.Debug("failed to fetch data api details", zap.Error(err))
+		} else if dataApi.ConnectionString != "" {
+			// The v4 API returns this connection string with its scheme.
+			dataApiConnstr = dataApi.ConnectionString
+			if !strings.HasPrefix(dataApiConnstr, "https://") {
+				dataApiConnstr = "https://" + dataApiConnstr
+			}
+		}
 	} else {
-		connStr = fmt.Sprintf("couchbases://%s", clusterInfo.Columnar.Config.Endpoint)
-		dnsSRV = clusterInfo.Columnar.Config.Endpoint
+		// The v4 analytics API reports no connection string, so this needs v2.
+		detail, err := p.columnarV2Detail(ctx, clusterInfo)
+		if err != nil {
+			return nil, err
+		}
+
+		connStr = fmt.Sprintf("couchbases://%s", detail.Config.Endpoint)
+		dnsSRV = detail.Config.Endpoint
 	}
 
 	return &deployment.ConnectInfo{
@@ -1762,45 +1671,33 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 	curTime := time.Now()
 	var allErr error
 	for _, cluster := range clusters {
+		if cluster.Cluster == nil && cluster.Columnar == nil && !cluster.IsCorrupted {
+			p.logger.Info("removing empty project",
+				zap.String("project-id", cluster.ProjectID))
+
+			err := p.v4.DeleteProject(ctx, p.tenantID, cluster.ProjectID)
+			if err != nil {
+				allErr = multierr.Append(allErr, errors.Wrapf(err, "project_id: %s", cluster.ProjectID))
+			}
+			continue
+		}
+
 		if !cluster.Meta.Expiry.IsZero() && !cluster.Meta.Expiry.After(curTime) {
 			p.logger.Info("removing cluster",
 				zap.String("cluster-id", cluster.Meta.ID.String()))
 
-			if cluster.Cluster != nil && cluster.Cluster.Status.State == "destroy_failed" {
-				p.logger.Warn("skipping due to destroy_failed state (cluster)")
+			if cluster.Cluster != nil && cluster.Cluster.CurrentState == capellav4.StateDestroyFailed {
+				p.logger.Warn("skipping due to destroyFailed state (cluster)")
 				continue
 			}
-			if cluster.Columnar != nil && cluster.Columnar.State == "destroy_failed" {
-				p.logger.Warn("skipping due to destroy_failed state (columnar)")
+			if cluster.Columnar != nil && cluster.Columnar.CurrentState == capellav4.StateDestroyFailed {
+				p.logger.Warn("skipping due to destroyFailed state (columnar)")
 				continue
 			}
 
 			err := p.removeCluster(ctx, cluster)
 			if err != nil {
-				allErr = multierr.Append(allErr, errors.Wrapf(err, "cluster_id: %s", cluster.Cluster.Id))
-			}
-		}
-	}
-
-	projects, err := p.client.ListProjects(ctx, p.tenantID, &capellacontrol.PaginatedRequest{
-		Page:          1,
-		PerPage:       100,
-		SortBy:        "name",
-		SortDirection: "asc",
-	})
-
-	if err != nil {
-		allErr = multierr.Append(allErr, errors.Wrap(err, "failed to list all projects"))
-	}
-
-	for _, project := range projects.Data {
-		if strings.HasPrefix(project.Data.Name, "cbdc2_") && project.Data.ClusterCount == 0 {
-			p.logger.Info("removing project",
-				zap.String("project-id", project.Data.ID))
-
-			err := p.client.DeleteProject(ctx, p.tenantID, project.Data.ID)
-			if err != nil {
-				allErr = multierr.Append(allErr, errors.Wrapf(err, "project_id: %s", project.Data.ID))
+				allErr = multierr.Append(allErr, errors.Wrapf(err, "cluster_id: %s", cluster.Meta.ID.String()))
 			}
 		}
 	}
@@ -1819,38 +1716,27 @@ func (p *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deploymen
 	}
 
 	if clusterInfo.Cluster != nil {
-		resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-			Page:          1,
-			PerPage:       1000,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
+		resp, err := p.v4.ListUsers(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to list users")
 		}
 
 		var users []deployment.UserInfo
-		for _, user := range resp.Data {
-			canRead := false
-			canWrite := false
-			for permName := range user.Data.Permissions {
-				if permName == "data_writer" {
-					canWrite = true
-				} else if permName == "data_reader" {
-					canRead = true
-				}
-			}
-
+		for _, user := range resp {
 			users = append(users, deployment.UserInfo{
-				Username: user.Data.Name,
-				CanRead:  canRead,
-				CanWrite: canWrite,
+				Username: user.Name,
+				CanRead:  user.HasPrivilege(capellav4.PrivilegeDataReader),
+				CanWrite: user.HasPrivilege(capellav4.PrivilegeDataWriter),
 			})
 		}
 
 		return users, nil
 	} else {
-		resp, err := p.mgr.Client.ListColumnarUsers(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+		if err := p.requireLegacy("columnar database credentials"); err != nil {
+			return nil, err
+		}
+
+		resp, err := p.mgr.Client.ListColumnarUsers(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
 			Page:          1,
 			PerPage:       1000,
 			SortBy:        "name",
@@ -1883,26 +1769,30 @@ func (p *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deplo
 		return err
 	}
 	if clusterInfo.Cluster != nil {
-		perms := make(map[string]capellacontrol.CreateUserRequest_Permission)
-
+		var privileges []string
 		if opts.CanRead {
-			perms["data_reader"] = capellacontrol.CreateUserRequest_Permission{}
+			privileges = append(privileges, capellav4.PrivilegeDataReader)
 		}
 		if opts.CanWrite {
-			perms["data_writer"] = capellacontrol.CreateUserRequest_Permission{}
+			privileges = append(privileges, capellav4.PrivilegeDataWriter)
 		}
 
-		err = p.mgr.Client.CreateUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateUserRequest{
-			Name:           opts.Username,
-			Password:       opts.Password,
-			Permissions:    perms,
-			CredentialType: "basic",
+		_, err = p.v4.CreateUser(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, &capellav4.CreateUserRequest{
+			Name:     opts.Username,
+			Password: opts.Password,
+			Access: []capellav4.UserAccess{
+				{Privileges: privileges},
+			},
 		})
 		if err != nil {
 			return errors.Wrap(err, "failed to create user")
 		}
 	} else {
-		roles, err := p.mgr.Client.GetColumnarRoles(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+		if err := p.requireLegacy("columnar database credentials"); err != nil {
+			return err
+		}
+
+		roles, err := p.mgr.Client.GetColumnarRoles(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
 			Page:          1,
 			PerPage:       250,
 			SortBy:        "name",
@@ -1917,7 +1807,7 @@ func (p *Deployer) CreateUser(ctx context.Context, clusterID string, opts *deplo
 			roleIds = append(roleIds, role.Data.ID)
 		}
 
-		err = p.mgr.Client.CreateColumnarUser(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.CreateColumnarUserRequest{
+		err = p.mgr.Client.CreateColumnarUser(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.CreateColumnarUserRequest{
 			Name:     opts.Username,
 			Password: opts.Password,
 			Roles:    roleIds,
@@ -1937,20 +1827,15 @@ func (p *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 		return err
 	}
 	if clusterInfo.Cluster != nil {
-		resp, err := p.mgr.Client.ListUsers(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.PaginatedRequest{
-			Page:          1,
-			PerPage:       1000,
-			SortBy:        "name",
-			SortDirection: "asc",
-		})
+		resp, err := p.v4.ListUsers(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to list users")
 		}
 
 		userId := ""
-		for _, user := range resp.Data {
-			if user.Data.Name == username {
-				userId = user.Data.ID
+		for _, user := range resp {
+			if user.Name == username {
+				userId = user.ID
 				break
 			}
 		}
@@ -1958,14 +1843,18 @@ func (p *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 			return errors.New("failed to find user by username")
 		}
 
-		err = p.mgr.Client.DeleteUser(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, userId)
+		err = p.v4.DeleteUser(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, userId)
 		if err != nil {
 			return errors.Wrap(err, "failed to delete user")
 		}
 
 		return nil
 	} else {
-		resp, err := p.mgr.Client.ListColumnarUsers(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
+		if err := p.requireLegacy("columnar database credentials"); err != nil {
+			return err
+		}
+
+		resp, err := p.mgr.Client.ListColumnarUsers(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, &capellacontrol.PaginatedRequest{
 			Page:          1,
 			PerPage:       1000,
 			SortBy:        "name",
@@ -1985,7 +1874,7 @@ func (p *Deployer) DeleteUser(ctx context.Context, clusterID string, username st
 			return errors.New("failed to find user by username")
 		}
 
-		err = p.mgr.Client.DeleteColumnarUser(ctx, p.tenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, userId)
+		err = p.mgr.Client.DeleteColumnarUser(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, userId)
 		if err != nil {
 			return errors.Wrap(err, "failed to delete user")
 		}
@@ -2001,15 +1890,15 @@ func (p *Deployer) ListBuckets(ctx context.Context, clusterID string) ([]deploym
 		return nil, err
 	}
 
-	resp, err := p.mgr.Client.ListBuckets(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id)
+	resp, err := p.v4.ListBuckets(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list buckets")
 	}
 
 	var buckets []deployment.BucketInfo
-	for _, bucket := range resp.Buckets.Data {
+	for _, bucket := range resp {
 		buckets = append(buckets, deployment.BucketInfo{
-			Name: bucket.Data.Name,
+			Name: bucket.Name,
 		})
 	}
 
@@ -2037,11 +1926,11 @@ func (p *Deployer) CreateBucket(ctx context.Context, clusterID string, opts *dep
 		return err
 	}
 
-	err = p.mgr.Client.CreateBucket(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, &capellacontrol.CreateBucketRequest{
+	_, err = p.v4.CreateBucket(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, &capellav4.CreateBucketRequest{
 		BucketConflictResolution: "seqno",
 		DurabilityLevel:          "none",
-		Flush:                    opts.FlushEnabled,
-		MemoryAllocationInMB:     ramQuotaMb,
+		FlushEnabled:             opts.FlushEnabled,
+		MemoryAllocationInMb:     ramQuotaMb,
 		Name:                     opts.Name,
 		Replicas:                 numReplicas,
 		StorageBackend:           storageBackend,
@@ -2086,7 +1975,7 @@ func (p *Deployer) DeleteBucket(ctx context.Context, clusterID string, bucketNam
 	// we can infer the bucket id by name right now
 	bucketId := base64.StdEncoding.EncodeToString([]byte(bucketName))
 
-	err = p.mgr.Client.DeleteBucket(ctx, p.tenantID, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, bucketId)
+	err = p.v4.DeleteBucket(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID, bucketId)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete bucket")
 	}
@@ -2101,11 +1990,17 @@ func (d *Deployer) LoadSampleBucket(ctx context.Context, clusterID string, bucke
 	}
 
 	if clusterInfo.Columnar == nil {
-		req := &capellacontrol.LoadSampleBucketRequest{Name: bucketName}
-		return d.mgr.Client.LoadClusterSampleBucket(ctx, clusterInfo.Cluster.TenantId, clusterInfo.Cluster.Project.Id, clusterInfo.Cluster.Id, req)
+		_, err := d.v4.LoadSampleBucket(ctx, d.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID,
+			&capellav4.LoadSampleBucketRequest{Name: bucketName})
+		return err
 	}
+
+	if err := d.requireLegacy("columnar sample buckets"); err != nil {
+		return err
+	}
+
 	req := &capellacontrol.LoadColumnarSampleBucketRequest{SampleName: bucketName}
-	return d.mgr.Client.LoadColumnarSampleBucket(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID, req)
+	return d.mgr.Client.LoadColumnarSampleBucket(ctx, d.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID, req)
 }
 
 func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string, error) {
@@ -2114,12 +2009,20 @@ func (p *Deployer) GetCertificate(ctx context.Context, clusterID string) (string
 		return "", err
 	}
 
-	var resp *capellacontrol.GetTrustedCAsResponse
 	if clusterInfo.Cluster != nil {
-		resp, err = p.mgr.Client.GetTrustedCAs(ctx, clusterInfo.Cluster.Id)
-	} else {
-		resp, err = p.mgr.Client.GetTrustedCAsColumnar(ctx, clusterInfo.Columnar.TenantID, clusterInfo.Columnar.ProjectID, clusterInfo.Columnar.ID)
+		cert, err := p.v4.GetCertificate(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+		if err != nil {
+			return "", errors.Wrap(err, "failed to get trusted CAs")
+		}
+		return strings.TrimSpace(cert), nil
 	}
+
+	// The v4 analytics API serves no certificates.
+	if err := p.requireLegacy("columnar certificates"); err != nil {
+		return "", err
+	}
+
+	resp, err := p.mgr.Client.GetTrustedCAsColumnar(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get trusted CAs")
 	}
@@ -2163,6 +2066,10 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 			"set it via `cbdinocluster init` (--upload-server-logs-host-name) or Capella.UploadServerLogsHostName in your config")
 	}
 
+	if err := d.requireSupportToken("server log collection"); err != nil {
+		return nil, err
+	}
+
 	cluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return []string{}, err
@@ -2170,9 +2077,13 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 
 	var cloudClusterId string
 	if cluster.Columnar != nil {
-		cloudClusterId = cluster.Columnar.Config.Id
+		detail, err := d.columnarV2Detail(ctx, cluster)
+		if err != nil {
+			return nil, err
+		}
+		cloudClusterId = detail.Config.Id
 	} else if cluster.Cluster != nil {
-		cloudClusterId = cluster.Cluster.Id
+		cloudClusterId = cluster.Cluster.ID
 	}
 
 	err = d.startLogCollection(ctx, cloudClusterId)
@@ -2214,6 +2125,10 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 }
 
 func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error {
+	if err := d.requireSupportToken("cluster redeploy"); err != nil {
+		return err
+	}
+
 	cluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return err
@@ -2222,22 +2137,22 @@ func (d *Deployer) RedeployCluster(ctx context.Context, clusterID string) error 
 		return errors.New("redeploy not supported for columanr clusters yet")
 	}
 
-	err = d.mgr.Client.RedeployCluster(ctx, cluster.Cluster.Id, d.internalSupportToken)
+	err = d.mgr.Client.RedeployCluster(ctx, cluster.Cluster.ID, d.internalSupportToken)
 
 	if err != nil {
-		errors.Wrap(err, "Failed to redeploy cluster")
+		return errors.Wrap(err, "failed to redeploy cluster")
 	}
 
 	d.logger.Debug("waiting for redeploy cluster to begin")
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "rebalancing", false)
+	err = d.v4mgr.WaitForClusterState(ctx, d.tenantID, cluster.ProjectID, cluster.Cluster.ID, capellav4.StateRebalancing)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster modification to begin")
 	}
 
 	d.logger.Debug("waiting for cluster to be healthy")
 
-	err = d.mgr.WaitForClusterState(ctx, d.tenantID, cluster.Cluster.Id, "healthy", false)
+	err = d.v4mgr.WaitForClusterState(ctx, d.tenantID, cluster.ProjectID, cluster.Cluster.ID, capellav4.StateHealthy)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for cluster to be healthy")
 	}
@@ -2253,6 +2168,9 @@ func (d *Deployer) CreateCapellaLink(ctx context.Context, columnarID, linkName, 
 	if columnarInfo.Columnar == nil {
 		return errors.Wrap(err, "this is not a columnar cluster")
 	}
+	if err := d.requireLegacy("columnar links"); err != nil {
+		return err
+	}
 
 	resolvedClusterId := directID
 	if directID == "" {
@@ -2263,14 +2181,14 @@ func (d *Deployer) CreateCapellaLink(ctx context.Context, columnarID, linkName, 
 		if clusterInfo.Columnar != nil {
 			return errors.Wrap(err, "can not link to another columnar cluster")
 		}
-		resolvedClusterId = clusterInfo.Cluster.Id
+		resolvedClusterId = clusterInfo.Cluster.ID
 	}
 
 	req := &capellacontrol.CreateColumnarCapellaLinkRequest{
 		LinkName:           linkName,
 		ProvisionedCluster: capellacontrol.ProvisionedCluster{ClusterId: resolvedClusterId},
 	}
-	return d.mgr.Client.CreateColumnarCapellaLink(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, req)
+	return d.mgr.Client.CreateColumnarCapellaLink(ctx, d.tenantID, columnarInfo.ProjectID, columnarInfo.Columnar.ID, req)
 }
 
 func (d *Deployer) CreateS3Link(ctx context.Context, columnarID, linkName, region, endpoint, accessKey, secretKey string) error {
@@ -2281,6 +2199,9 @@ func (d *Deployer) CreateS3Link(ctx context.Context, columnarID, linkName, regio
 	if columnarInfo.Columnar == nil {
 		return errors.Wrap(err, "this is not a columnar cluster")
 	}
+	if err := d.requireLegacy("columnar links"); err != nil {
+		return err
+	}
 
 	req := &capellacontrol.CreateColumnarS3LinkRequest{
 		Region:          region,
@@ -2290,7 +2211,7 @@ func (d *Deployer) CreateS3Link(ctx context.Context, columnarID, linkName, regio
 		Endpoint:        endpoint,
 		Type:            "s3",
 	}
-	return d.mgr.Client.CreateColumnarS3Link(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, linkName, req)
+	return d.mgr.Client.CreateColumnarS3Link(ctx, d.tenantID, columnarInfo.ProjectID, columnarInfo.Columnar.ID, linkName, req)
 }
 
 func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) error {
@@ -2301,12 +2222,15 @@ func (d *Deployer) DropLink(ctx context.Context, columnarID, linkName string) er
 	if columnarInfo.Columnar == nil {
 		return errors.Wrap(err, "this is not a columnar cluster")
 	}
+	if err := d.requireLegacy("columnar links"); err != nil {
+		return err
+	}
 
 	req := &capellacontrol.ColumnarQueryRequest{
 		Statement:   fmt.Sprintf("DROP LINK `%s`", linkName),
 		MaxWarnings: 25,
 	}
-	return d.mgr.Client.DoBasicColumnarQuery(ctx, columnarInfo.Columnar.TenantID, columnarInfo.Columnar.ProjectID, columnarInfo.Columnar.ID, req)
+	return d.mgr.Client.DoBasicColumnarQuery(ctx, d.tenantID, columnarInfo.ProjectID, columnarInfo.Columnar.ID, req)
 }
 
 func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
@@ -2315,19 +2239,29 @@ func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
 		return err
 	}
 
-	cloudProjectID := clusterInfo.Cluster.Project.Id
-	cloudClusterID := clusterInfo.Cluster.Id
+	return d.enableDataApi(ctx, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
+}
 
+func (d *Deployer) enableDataApi(ctx context.Context, cloudProjectID, cloudClusterID string) error {
 	d.logger.Debug("enabling data API")
 
-	err = d.client.EnableDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID)
+	info, err := d.v4.GetDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get Data API state")
+	}
+
+	// The update replaces both fields, so keep the network peering state.
+	err = d.v4.UpdateDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID, &capellav4.UpdateDataApiRequest{
+		EnableDataApi:        true,
+		EnableNetworkPeering: info.EnabledForNetworkPeering,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to enable Data API")
 	}
 
 	d.logger.Debug("waiting for Data API to enable")
 
-	err = d.mgr.WaitForDataApiEnabled(ctx, d.tenantID, cloudClusterID)
+	err = d.v4mgr.WaitForDataApiEnabled(ctx, d.tenantID, cloudProjectID, cloudClusterID)
 	if err != nil {
 		return errors.Wrap(err, "failed to wait for Data API enablement")
 	}
@@ -2339,86 +2273,107 @@ func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) 
 	return "", errors.New("clouddeploy does not support getting gateway certificates")
 }
 
-func (d *Deployer) getMgmtX(ctx context.Context, clusterID string) (*cbmgmtx.Management, error) {
+func (d *Deployer) bucketTarget(ctx context.Context, clusterID string, bucketName string) (projectID string, cloudClusterID string, bucketID string, err error) {
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
-		return nil, err
+		return "", "", "", err
+	}
+	if clusterInfo.Cluster == nil {
+		return "", "", "", errors.New("buckets are not supported for columnar clusters")
 	}
 
-	cloudProjectID := clusterInfo.Cluster.Project.Id
-	cloudClusterID := clusterInfo.Cluster.Id
-
-	mcli, err := d.client.GetMgmtX(ctx, d.tenantID, cloudProjectID, cloudClusterID)
-	if err != nil {
-		return nil, err
-	}
-
-	return mcli, nil
+	return clusterInfo.ProjectID,
+		clusterInfo.Cluster.ID,
+		base64.StdEncoding.EncodeToString([]byte(bucketName)),
+		nil
 }
 
-func (d *Deployer) getQueryX(ctx context.Context, clusterID string) (*cbqueryx.Query, error) {
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string, opts *deployment.ExecuteQueryOptions) (string, error) {
+	if opts == nil || opts.Username == "" || opts.Password == "" {
+		return "", errors.New("cloud queries need the username and password of an existing database user")
+	}
+
 	clusterInfo, err := d.getCluster(ctx, clusterID)
 	if err != nil {
-		return nil, err
+		return "", err
+	}
+	if clusterInfo.Cluster == nil {
+		return "", errors.New("queries are not supported for columnar clusters")
 	}
 
-	cloudProjectID := clusterInfo.Cluster.Project.Id
-	cloudClusterID := clusterInfo.Cluster.Id
-
-	qcli, err := d.client.GetQueryX(ctx, d.tenantID, cloudProjectID, cloudClusterID)
+	cert, err := d.v4.GetCertificate(ctx, d.tenantID, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 	if err != nil {
-		return nil, err
+		return "", errors.Wrap(err, "failed to get cluster certificate")
 	}
 
-	return qcli, nil
-}
+	caPool := x509.NewCertPool()
+	if !caPool.AppendCertsFromPEM([]byte(cert)) {
+		return "", errors.New("failed to parse cluster certificate")
+	}
 
-func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
-	qcli, err := d.getQueryX(ctx, clusterID)
+	srvName := strings.TrimPrefix(clusterInfo.Cluster.ConnectionString, "couchbases://")
+	baseSpec, err := gocbconnstr.Parse(fmt.Sprintf("couchbases://%s", srvName))
 	if err != nil {
-		return "", errors.Wrap(err, "failed to get query client")
+		return "", errors.Wrap(err, "failed to parse connstr")
 	}
 
-	results, err := qcli.Query(ctx, &cbqueryx.QueryOptions{
-		Statement: query,
+	resolvedSpec, err := gocbconnstr.Resolve(baseSpec)
+	if err != nil {
+		return "", errors.Wrap(err, "failed to resolve connstr")
+	}
+
+	var httpAddrs []string
+	for _, host := range resolvedSpec.HttpHosts {
+		httpAddrs = append(httpAddrs, fmt.Sprintf("%s:%d", host.Host, host.Port))
+	}
+
+	var memdAddrs []string
+	for _, host := range resolvedSpec.MemdHosts {
+		memdAddrs = append(memdAddrs, fmt.Sprintf("%s:%d", host.Host, host.Port))
+	}
+
+	// SRV resolution returns only memd hosts, and the agent bootstraps over
+	// HTTP, so the management addresses come from the same hosts.
+	if len(httpAddrs) == 0 {
+		for _, host := range resolvedSpec.MemdHosts {
+			httpAddrs = append(httpAddrs, fmt.Sprintf("%s:%d", host.Host, 18091))
+		}
+	}
+
+	// The connection times out when the caller's IP is not on the allow list.
+	agent, err := gocbcorex.CreateAgent(ctx, gocbcorex.AgentOptions{
+		Logger:    d.logger.Named("agent"),
+		TLSConfig: &tls.Config{RootCAs: caPool},
+		Authenticator: &gocbcorex.PasswordAuthenticator{
+			Username: opts.Username,
+			Password: opts.Password,
+		},
+		SeedConfig: gocbcorex.SeedConfig{
+			HTTPAddrs: httpAddrs,
+			MemdAddrs: memdAddrs,
+		},
 	})
 	if err != nil {
-		return "", errors.Wrap(err, "failed to execute query")
+		return "", errors.Wrap(err, "failed to create gocbcorex agent")
 	}
+	defer agent.Close()
 
-	rows := make([]json.RawMessage, 0)
-	for results.HasMoreRows() {
-		row, err := results.ReadRow()
-		if err != nil {
-			return "", errors.Wrap(err, "failed to read row")
-		}
-
-		rows = append(rows, row)
-	}
-
-	rowsBytes, err := json.Marshal(rows)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to serialize rows")
-	}
-
-	return string(rowsBytes), nil
+	return commondeploy.AgentHelper{Agent: agent}.ExecuteQuery(ctx, query)
 }
 
 func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucketName string) ([]deployment.ScopeInfo, error) {
-	mcli, err := d.getMgmtX(ctx, clusterID)
+	projectID, cloudClusterID, bucketID, err := d.bucketTarget(ctx, clusterID, bucketName)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to get mgmt client")
+		return nil, err
 	}
 
-	manifest, err := mcli.GetCollectionManifest(ctx, &cbmgmtx.GetCollectionManifestOptions{
-		BucketName: bucketName,
-	})
+	resp, err := d.v4.ListScopes(ctx, d.tenantID, projectID, cloudClusterID, bucketID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to fetch collection manifest")
 	}
 
 	var scopes []deployment.ScopeInfo
-	for _, scope := range manifest.Scopes {
+	for _, scope := range resp {
 		var collections []deployment.CollectionInfo
 		for _, collection := range scope.Collections {
 			collections = append(collections, deployment.CollectionInfo{
@@ -2435,14 +2390,13 @@ func (d *Deployer) ListCollections(ctx context.Context, clusterID string, bucket
 }
 
 func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	mcli, err := d.getMgmtX(ctx, clusterID)
+	projectID, cloudClusterID, bucketID, err := d.bucketTarget(ctx, clusterID, bucketName)
 	if err != nil {
-		return errors.Wrap(err, "failed to get mgmt client")
+		return err
 	}
 
-	_, err = mcli.CreateScope(ctx, &cbmgmtx.CreateScopeOptions{
-		BucketName: bucketName,
-		ScopeName:  scopeName,
+	err = d.v4.CreateScope(ctx, d.tenantID, projectID, cloudClusterID, bucketID, &capellav4.CreateScopeRequest{
+		Name: scopeName,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create scope")
@@ -2452,15 +2406,13 @@ func (d *Deployer) CreateScope(ctx context.Context, clusterID string, bucketName
 }
 
 func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	mcli, err := d.getMgmtX(ctx, clusterID)
+	projectID, cloudClusterID, bucketID, err := d.bucketTarget(ctx, clusterID, bucketName)
 	if err != nil {
-		return errors.Wrap(err, "failed to get mgmt client")
+		return err
 	}
 
-	_, err = mcli.CreateCollection(ctx, &cbmgmtx.CreateCollectionOptions{
-		BucketName:     bucketName,
-		ScopeName:      scopeName,
-		CollectionName: collectionName,
+	err = d.v4.CreateCollection(ctx, d.tenantID, projectID, cloudClusterID, bucketID, scopeName, &capellav4.CreateCollectionRequest{
+		Name: collectionName,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create collection")
@@ -2470,15 +2422,12 @@ func (d *Deployer) CreateCollection(ctx context.Context, clusterID string, bucke
 }
 
 func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName, scopeName string) error {
-	mcli, err := d.getMgmtX(ctx, clusterID)
+	projectID, cloudClusterID, bucketID, err := d.bucketTarget(ctx, clusterID, bucketName)
 	if err != nil {
-		return errors.Wrap(err, "failed to get mgmt client")
+		return err
 	}
 
-	_, err = mcli.DeleteScope(ctx, &cbmgmtx.DeleteScopeOptions{
-		BucketName: bucketName,
-		ScopeName:  scopeName,
-	})
+	err = d.v4.DeleteScope(ctx, d.tenantID, projectID, cloudClusterID, bucketID, scopeName)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete scope")
 	}
@@ -2487,16 +2436,12 @@ func (d *Deployer) DeleteScope(ctx context.Context, clusterID string, bucketName
 }
 
 func (d *Deployer) DeleteCollection(ctx context.Context, clusterID string, bucketName, scopeName, collectionName string) error {
-	mcli, err := d.getMgmtX(ctx, clusterID)
+	projectID, cloudClusterID, bucketID, err := d.bucketTarget(ctx, clusterID, bucketName)
 	if err != nil {
-		return errors.Wrap(err, "failed to get mgmt client")
+		return err
 	}
 
-	_, err = mcli.DeleteCollection(ctx, &cbmgmtx.DeleteCollectionOptions{
-		BucketName:     bucketName,
-		ScopeName:      scopeName,
-		CollectionName: collectionName,
-	})
+	err = d.v4.DeleteCollection(ctx, d.tenantID, projectID, cloudClusterID, bucketID, scopeName, collectionName)
 	if err != nil {
 		return errors.Wrap(err, "failed to delete collection")
 	}

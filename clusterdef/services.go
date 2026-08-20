@@ -2,7 +2,6 @@ package clusterdef
 
 import (
 	"errors"
-	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 
 	"golang.org/x/exp/slices"
 )
@@ -53,21 +52,6 @@ func ServicesToNsServices(services []Service) ([]string, error) {
 		}
 
 		out = append(out, serviceStr)
-	}
-	return out, nil
-}
-
-func ServicesToNsServicesOverride(services []Service) ([]capellacontrol.CreateServices, error) {
-	var out []capellacontrol.CreateServices
-	for _, service := range services {
-		serviceStr, err := ServiceToNsService(service)
-		if err != nil {
-			return nil, err
-		}
-		service := capellacontrol.CreateServices{
-			Type: serviceStr,
-		}
-		out = append(out, service)
 	}
 	return out, nil
 }
@@ -125,6 +109,24 @@ func ServicesToCaoServices(services []Service) ([]string, error) {
 	var out []string
 	for _, service := range services {
 		serviceStr, err := ServiceToCaoService(service)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, serviceStr)
+	}
+	return out, nil
+}
+
+// Capella uses the operator service names, not the ns_server names.
+func ServiceToCapellaService(service Service) (string, error) {
+	return ServiceToCaoService(service)
+}
+
+func ServicesToCapellaServices(services []Service) ([]string, error) {
+	var out []string
+	for _, service := range services {
+		serviceStr, err := ServiceToCapellaService(service)
 		if err != nil {
 			return nil, err
 		}

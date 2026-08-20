@@ -181,7 +181,7 @@ func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, er
 	return "", errors.New("localdeploy does not support getting metrics")
 }
 
-func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string, opts *deployment.ExecuteQueryOptions) (string, error) {
 	return "", errors.New("localdeploy does not support executing queries")
 }
 

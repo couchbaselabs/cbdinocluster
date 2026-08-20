@@ -3,20 +3,12 @@ package capellacontrol
 import (
 	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/couchbase/gocbcorex/cbhttpx"
-	"github.com/couchbase/gocbcorex/cbmgmtx"
-	"github.com/couchbase/gocbcorex/cbqueryx"
 	"github.com/google/go-querystring/query"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -36,15 +28,6 @@ type BasicCredentials struct {
 var _ Credentials = (*BasicCredentials)(nil)
 
 func (c BasicCredentials) isCredentials() bool { return true }
-
-type TokenCredentials struct {
-	AccessKey string
-	SecretKey string
-}
-
-var _ Credentials = (*TokenCredentials)(nil)
-
-func (c TokenCredentials) isCredentials() bool { return true }
 
 type Controller struct {
 	logger     *zap.Logger
@@ -72,7 +55,6 @@ func NewController(ctx context.Context, opts *ControllerOptions) (*Controller, e
 
 	switch opts.Auth.(type) {
 	case *BasicCredentials:
-	case *TokenCredentials:
 	default:
 		return nil, errors.New("invalid auth type")
 	}
@@ -277,18 +259,6 @@ func (c *Controller) doBasicReq(
 			}
 
 			req.Header.Add("Authorization", "Bearer "+auth.jwtToken)
-		case *TokenCredentials:
-			// NOTE: This does not appear to actually work right now?
-
-			reqTimeStr := strconv.FormatInt(time.Now().Unix(), 10)
-
-			payload := strings.Join([]string{method, path, reqTimeStr}, "\n")
-			reqHash := hmac.New(sha256.New, []byte(auth.SecretKey))
-			reqHash.Write([]byte(payload))
-			reqHashStr := base64.StdEncoding.EncodeToString(reqHash.Sum(nil))
-
-			req.Header.Add("Couchbase-Timestamp", reqTimeStr)
-			req.Header.Add("Authorization", "Bearer "+auth.AccessKey+":"+reqHashStr)
 		default:
 			return nil, errors.New("invalid auth type")
 		}
@@ -546,8 +516,6 @@ type ClusterInfo struct {
 	CreatedAt        time.Time           `json:"createdAt"`
 	CreatedBy        string              `json:"createdBy"`
 	CreatedByUserID  string              `json:"createdByUserID"`
-	DataApiState     string              `json:"dataApiState"`
-	DataApiHostname  string              `json:"dataApiHostname"`
 	Description      string              `json:"description"`
 	HasOnOffSchedule bool                `json:"hasOnOffSchedule"`
 	Id               string              `json:"id"`
@@ -684,17 +652,6 @@ type CreateClusterRequest_Spec struct {
 	Services        []string                              `json:"services"`
 }
 
-type CreateTrialClusterRequest struct {
-	CIDR           string `json:"cidr"`
-	Description    string `json:"description"`
-	Name           string `json:"name"`
-	ProjectId      string `json:"projectId"`
-	Provider       string `json:"provider"`
-	Region         string `json:"region"`
-	Server         string `json:"server"`
-	DeliveryMethod string `json:"deliveryMethod"` // hosted
-}
-
 type DeployClusterRequest struct {
 	CIDR        string                      `json:"cidr"`
 	Description string                      `json:"description"`
@@ -823,22 +780,6 @@ func (c *Controller) CreateCluster(
 	return resp, nil
 }
 
-func (c *Controller) CreateTrialCluster(
-	ctx context.Context,
-	tenantID string,
-	req *CreateTrialClusterRequest,
-) (*CreateClusterResponse, error) {
-	resp := &CreateClusterResponse{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/trial/cluster", tenantID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
-
 func (c *Controller) DeployCluster(
 	ctx context.Context,
 	tenantID string,
@@ -904,69 +845,6 @@ func (c *Controller) GetClusterDeletionEvents(
 	return resp, nil
 }
 
-type UpdateClusterMetaRequest struct {
-	Description string `json:"description"`
-	Name        string `json:"name"`
-}
-
-func (c *Controller) UpdateClusterMeta(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *UpdateClusterMetaRequest,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/meta", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-type UpdateClusterSpecsRequest_Spec struct {
-	Compute         UpdateClusterSpecsRequest_Spec_Compute     `json:"compute"`
-	Count           int                                        `json:"count"`
-	Disk            UpdateClusterSpecsRequest_Spec_Disk        `json:"disk"`
-	DiskAutoScaling UpdateClusterSpecsRequest_Spec_DiskScaling `json:"diskAutoScaling"`
-	Services        []UpdateClusterSpecsRequest_Spec_Service   `json:"services"`
-}
-
-type UpdateClusterSpecsRequest_Spec_Compute struct {
-	Type string `json:"type"`
-}
-
-type UpdateClusterSpecsRequest_Spec_Disk struct {
-	Type     string `json:"type"`
-	SizeInGb int    `json:"sizeInGb"`
-	Iops     int    `json:"iops,omitempty"`
-}
-
-type UpdateClusterSpecsRequest_Spec_DiskScaling struct {
-	Enabled bool `json:"enabled"`
-}
-
-type UpdateClusterSpecsRequest_Spec_Service struct {
-	Type string `json:"type"`
-}
-
-type UpdateClusterSpecsRequest struct {
-	Specs []UpdateClusterSpecsRequest_Spec `json:"specs"`
-}
-
-func (c *Controller) UpdateClusterSpecs(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *UpdateClusterSpecsRequest,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/specs", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (c *Controller) UpdateColumnarSpecs(
 	ctx context.Context,
 	tenantID string,
@@ -977,37 +855,6 @@ func (c *Controller) UpdateColumnarSpecs(
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s", tenantID, projectID, columnarID)
 	err := c.doBasicReq(ctx, false, "PATCH", path, req, nil)
 	return err
-}
-
-type ClusterJobInfo struct {
-	JobType              string    `json:"jobType"`
-	ID                   string    `json:"id"`
-	ClusterID            string    `json:"clusterId"`
-	ClusterName          string    `json:"clusterName"`
-	ProjectID            string    `json:"projectId"`
-	TenantID             string    `json:"tenantId"`
-	StartTime            time.Time `json:"startTime"`
-	CompletionPercentage int       `json:"completionPercentage"`
-	CurrentStep          string    `json:"currentStep"`
-	InitiatedBy          string    `json:"initiatedBy"`
-	JobResourceType      string    `json:"jobResourceType"`
-}
-
-type ListClusterJobsResponse PagedResourceResponse[*ClusterJobInfo]
-
-func (c *Controller) ListClusterJobs(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*ListClusterJobsResponse, error) {
-	resp := &ListClusterJobsResponse{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/jobs", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
 }
 
 type GetProviderDeploymentOptionsRequest struct {
@@ -1110,309 +957,6 @@ func (c *Controller) ListAllowListEntries(
 	}
 
 	return resp, nil
-}
-
-func (c *Controller) ListAllowListEntriesColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *PaginatedRequest,
-) (*ListAllowListEntriesResponse, error) {
-	resp := &ListAllowListEntriesResponse{}
-
-	form, _ := query.Values(req)
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/allowlists?%s", tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
-
-type UpdateAllowListEntriesRequest struct {
-	Create []UpdateAllowListEntriesRequest_Entry `json:"create"`
-	Delete []string                              `json:"delete"`
-}
-
-type UpdateAllowListEntriesRequest_Entry struct {
-	Cidr      string `json:"cidr"`
-	Comment   string `json:"comment"`
-	ExpiresAt string `json:"expiresAt,omitempty"`
-}
-
-func (c *Controller) UpdateAllowListEntries(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *UpdateAllowListEntriesRequest,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/allowlists-bulk", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Controller) AddAllowListEntryColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *UpdateAllowListEntriesRequest_Entry,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/allowlists", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Controller) DeleteAllowListEntryColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID, allowID string,
-) error {
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/allowlists/%s", tenantID, projectID, clusterID, allowID)
-	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Controller) EnablePrivateEndpoints(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Controller) DisablePrivateEndpoints(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Controller) EnablePrivateEndpointsColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (c *Controller) DisablePrivateEndpointsColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "DELETE", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-type PrivateEndpointInfo struct {
-	Enabled bool   `json:"enabled"`
-	Status  string `json:"status"` // idle, enabling, enabled
-}
-
-type GetPrivateEndpointResponse ResourceResponse[PrivateEndpointInfo]
-
-func (c *Controller) GetPrivateEndpoint(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*GetPrivateEndpointResponse, error) {
-	resp := &GetPrivateEndpointResponse{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
-}
-
-func (c *Controller) GetPrivateEndpointColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*GetPrivateEndpointResponse, error) {
-	resp := &GetPrivateEndpointResponse{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
-}
-
-type PrivateEndpointDetailsInfo struct {
-	Enabled     bool   `json:"enabled"`
-	PrivateDNS  string `json:"privateDns"`
-	ServiceName string `json:"serviceName"`
-}
-
-func (c *Controller) GetPrivateEndpointDetails(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*ResourceResponse[PrivateEndpointDetailsInfo], error) {
-	resp := &ResourceResponse[PrivateEndpointDetailsInfo]{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/details", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
-}
-
-func (c *Controller) GetPrivateEndpointDetailsColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*ResourceResponse[PrivateEndpointDetailsInfo], error) {
-	resp := &ResourceResponse[PrivateEndpointDetailsInfo]{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/details", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
-}
-
-type PrivateEndpointLinkInfo struct {
-	EndpointID string    `json:"endpointId"`
-	Status     string    `json:"status"` // pendingAcceptance, pending, linked, rejected
-	CreatedAt  time.Time `json:"createdAt"`
-}
-
-type ListPrivateEndpointLinksResponse PagedResponse[*PrivateEndpointLinkInfo]
-
-func (c *Controller) ListPrivateEndpointLinks(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*ListPrivateEndpointLinksResponse, error) {
-	resp := &ListPrivateEndpointLinksResponse{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/connection", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
-}
-
-func (c *Controller) ListPrivateEndpointLinksColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*ListPrivateEndpointLinksResponse, error) {
-	resp := &ListPrivateEndpointLinksResponse{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/connection", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
-}
-
-type PrivateEndpointLinkRequest struct {
-	VpcID     string `json:"vpcId"`
-	SubnetIds string `json:"subnetIds"` // this is a space-delimited list of subnet-ids
-}
-
-type PrivateEndpointLinkSetupInfo struct {
-	Command string `json:"command"`
-}
-
-type CreatePrivateEndpointLinkResponse ResourceResponse[PrivateEndpointLinkSetupInfo]
-
-// This isn't actually neccessary, it's used by the UI to generate the aws link
-// command to use to link to the VPC.
-/*
-   Example Output:
-     aws ec2 create-vpc-endpoint
-       --vpc-id vpc-0ea6734517a89f0f9
-	   --region us-west-2
-	   --service-name com.amazonaws.vpce.us-west-2.vpce-svc-048c94c79e2d1249a
-	   --vpc-endpoint-type Interface
-	   --subnet-ids subnet-03b3b018d16b1e599 subnet-066bf3b21c106d96b
-*/
-func (c *Controller) GenPrivateEndpointLinkCommand(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *PrivateEndpointLinkRequest,
-) (*CreatePrivateEndpointLinkResponse, error) {
-	resp := &CreatePrivateEndpointLinkResponse{}
-
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/linkcommand", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, &resp)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, err
-}
-
-type PrivateEndpointAcceptLinkRequest struct {
-	EndpointID string `json:"endpointId"`
-}
-
-func (c *Controller) AcceptPrivateEndpointLink(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *PrivateEndpointAcceptLinkRequest,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/privateendpoint/connection", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
-
-	return err
-}
-
-func (c *Controller) AcceptPrivateEndpointLinkColumnar(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *PrivateEndpointAcceptLinkRequest,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/privateendpoint/connection", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	if err != nil {
-		return err
-	}
-
-	return err
 }
 
 type UserInfo struct {
@@ -1874,20 +1418,6 @@ func (c *Controller) LoadColumnarSampleBucket(
 	return err
 }
 
-type LoadSampleBucketRequest struct {
-	Name string `json:"name"`
-}
-
-func (c *Controller) LoadClusterSampleBucket(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-	req *LoadSampleBucketRequest,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/buckets/samples", tenantID, projectID, clusterID)
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
-	return err
-}
-
 type ProvisionedCluster struct {
 	ClusterId string `json:"clusterId"`
 }
@@ -1943,84 +1473,4 @@ func (c *Controller) DoBasicColumnarQuery(
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/analytics/service", tenantID, projectID, columnarID)
 	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
 	return err
-}
-
-type EnableDataApiRequest struct {
-	Enabled bool `json:"enabled"`
-}
-
-func (c *Controller) EnableDataApi(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) error {
-	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/data-api", tenantID, projectID, clusterID)
-	req := EnableDataApiRequest{Enabled: true}
-	err := c.doBasicReq(ctx, false, "PUT", path, req, nil)
-	return err
-}
-
-type BearerAuth struct {
-	Token string
-}
-
-var _ cbhttpx.Authenticator = (*BearerAuth)(nil)
-
-func (b *BearerAuth) ApplyToRequest(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+b.Token)
-}
-
-func (c *Controller) getGocbcorexAuth(ctx context.Context) (cbhttpx.Authenticator, error) {
-	var xauth cbhttpx.Authenticator
-
-	switch auth := c.auth.(type) {
-	case *BasicCredentials:
-		if auth.jwtToken == "" {
-			c.updateJwtToken(ctx, auth)
-		}
-
-		xauth = &BearerAuth{
-			Token: auth.jwtToken,
-		}
-	default:
-		return nil, fmt.Errorf("unsupported authentication type: %T", c.auth)
-	}
-
-	return xauth, nil
-}
-
-func (c *Controller) GetMgmtX(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*cbmgmtx.Management, error) {
-	auth, err := c.getGocbcorexAuth(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get authenticator: %w", err)
-	}
-
-	path := fmt.Sprintf("/v2/databases/%s/proxy", clusterID)
-	return &cbmgmtx.Management{
-		Transport: http.DefaultTransport,
-		UserAgent: "cbdinocluster",
-		Endpoint:  c.endpoint + path,
-		Auth:      auth,
-	}, nil
-}
-
-func (c *Controller) GetQueryX(
-	ctx context.Context,
-	tenantID, projectID, clusterID string,
-) (*cbqueryx.Query, error) {
-	auth, err := c.getGocbcorexAuth(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get authenticator: %w", err)
-	}
-
-	path := fmt.Sprintf("/v2/databases/%s/proxy/_p/query", clusterID)
-	return &cbqueryx.Query{
-		Logger:    c.logger,
-		Transport: http.DefaultTransport,
-		UserAgent: "cbdinocluster",
-		Endpoint:  c.endpoint + path,
-		Auth:      auth,
-	}, nil
 }

@@ -4,7 +4,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
-	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
 	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 	"github.com/spf13/cobra"
@@ -174,12 +174,18 @@ var privateEndpointsSetupLinkCmd = &cobra.Command{
 				logger.Fatal("failed to get network and subnet for GCP instance", zap.Error(err))
 			}
 
-			command, err := cloudDeployer.GenPrivateEndpointLinkCommand(ctx, cloudCluster.ClusterID, &capellacontrol.PrivateEndpointLinkRequest{
-				VpcID:     path.Base(*networkInterface.Network),
-				SubnetIds: path.Base(*networkInterface.Subnetwork),
+			command, err := cloudDeployer.GenPrivateEndpointLinkCommand(ctx, cloudCluster.ClusterID, &capellav4.EndpointCommandRequest{
+				VpcNetworkID: path.Base(*networkInterface.Network),
+				SubnetIDs:    []string{path.Base(*networkInterface.Subnetwork)},
 			})
+			if err != nil {
+				logger.Fatal("failed to generate private endpoint link command", zap.Error(err))
+			}
 
 			serviceAttachments, err := peCtrl.GetServiceAttachments(command)
+			if err != nil {
+				logger.Fatal("failed to get service attachments", zap.Error(err))
+			}
 
 			err = peCtrl.CreatePrivateDNSZone(ctx, &gcpcontrol.CreatePrivateDNSZoneOptions{
 				ClusterID:          cloudCluster.CloudClusterID,

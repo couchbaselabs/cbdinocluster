@@ -358,15 +358,14 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 			dnsAName = thisCluster.DnsName
 		}
 		return &deployment.ConnectInfo{
-			ConnStr:        fmt.Sprintf("couchbase://%s", "srv."+thisCluster.DnsName),
-			ConnStrTls:     fmt.Sprintf("couchbases://%s", "srv."+thisCluster.DnsName),
-			Analytics:      fmt.Sprintf("http://%s:8095", thisCluster.DnsName),
-			AnalyticsTls:   fmt.Sprintf("https://%s:18095", thisCluster.DnsName),
-			Mgmt:           fmt.Sprintf("http://%s", thisCluster.DnsName),
-			MgmtTls:        fmt.Sprintf("https://%s", thisCluster.DnsName),
-			DataApiConnstr: "",
-			DnsAName:       dnsAName,
-			DnsSRVName:     dnsSRVName,
+			ConnStr:      fmt.Sprintf("couchbase://%s", "srv."+thisCluster.DnsName),
+			ConnStrTls:   fmt.Sprintf("couchbases://%s", "srv."+thisCluster.DnsName),
+			Analytics:    fmt.Sprintf("http://%s:8095", thisCluster.DnsName),
+			AnalyticsTls: fmt.Sprintf("https://%s:18095", thisCluster.DnsName),
+			Mgmt:         fmt.Sprintf("http://%s", thisCluster.DnsName),
+			MgmtTls:      fmt.Sprintf("https://%s", thisCluster.DnsName),
+			DnsAName:     dnsAName,
+			DnsSRVName:   dnsSRVName,
 		}, nil
 	}
 
@@ -422,13 +421,12 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:        connStr,
-		ConnStrTls:     connStrTls,
-		Analytics:      analytics,
-		AnalyticsTls:   analyticsTls,
-		Mgmt:           mgmt,
-		MgmtTls:        mgmtTls,
-		DataApiConnstr: "",
+		ConnStr:      connStr,
+		ConnStrTls:   connStrTls,
+		Analytics:    analytics,
+		AnalyticsTls: analyticsTls,
+		Mgmt:         mgmt,
+		MgmtTls:      mgmtTls,
 	}, nil
 }
 
@@ -717,7 +715,7 @@ func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, er
 	return metrics, nil
 }
 
-func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string, opts *deployment.ExecuteQueryOptions) (string, error) {
 	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (string, error) {
 		return commondeploy.AgentHelper{Agent: agent}.ExecuteQuery(ctx, query)
 	})

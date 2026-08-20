@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const Version = 6
+const Version = 7
 
 type StringBool string
 
@@ -106,13 +106,20 @@ type Config_Azure struct {
 }
 
 type Config_Capella struct {
-	Enabled              StringBool `yaml:"enabled"`
-	Endpoint             string     `yaml:"endpoint"`
-	Username             string     `yaml:"username"`
-	Password             string     `yaml:"password"`
-	OrganizationID       string     `yaml:"organization-id"`
-	OverrideToken        string     `yaml:"override-token"`
-	InternalSupportToken string     `yaml:"Internal-support-token"`
+	Enabled StringBool `yaml:"enabled"`
+
+	V4Endpoint string `yaml:"v4-endpoint"`
+	ApiKey     string `yaml:"api-key"`
+	ApiSecret  string `yaml:"api-secret"`
+
+	// The internal v2 API is only needed where v4 has no equivalent.
+	// Authentication invalidates any other active session for the same user.
+	Endpoint             string `yaml:"endpoint"`
+	Username             string `yaml:"username"`
+	Password             string `yaml:"password"`
+	OrganizationID       string `yaml:"organization-id"`
+	OverrideToken        string `yaml:"override-token"`
+	InternalSupportToken string `yaml:"Internal-support-token"`
 
 	DefaultCloud       string `yaml:"default-cloud"`
 	DefaultAwsRegion   string `yaml:"default-aws-region"`
@@ -202,6 +209,11 @@ func Upgrade(config *Config) *Config {
 	if config.Version < 6 {
 		config.DefaultExpiry = 0
 		config.Version = 6
+	}
+
+	if config.Version < 7 {
+		config.Capella.V4Endpoint = DEFAULT_CAPELLA_V4_ENDPOINT
+		config.Version = 7
 	}
 
 	return config

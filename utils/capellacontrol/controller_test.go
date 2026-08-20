@@ -10,6 +10,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// This test needs a live Capella account.
+// It shows that a second v2 login invalidates the session of the first.
 func TestMultipleControllers(t *testing.T) {
 	ctx := context.Background()
 	logger, _ := zap.NewDevelopment()
@@ -17,6 +19,10 @@ func TestMultipleControllers(t *testing.T) {
 	capellaUser := os.Getenv("CAPELLA_USER")
 	capellaPass := os.Getenv("CAPELLA_PASS")
 	capellaOid := os.Getenv("CAPELLA_OID")
+
+	if capellaUser == "" || capellaPass == "" || capellaOid == "" {
+		t.Skip("skipping as CAPELLA_USER, CAPELLA_PASS and CAPELLA_OID are not all set")
+	}
 
 	ctrl1, err := capellacontrol.NewController(ctx, &capellacontrol.ControllerOptions{
 		Logger:   logger,

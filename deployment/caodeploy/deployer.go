@@ -871,12 +871,11 @@ func (d *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 	}
 
 	return &deployment.ConnectInfo{
-		ConnStr:        connstr,
-		ConnStrTls:     connstrTls,
-		ConnStrCb2:     connstrCb2,
-		Mgmt:           mgmtAddr,
-		MgmtTls:        mgmtTlsAddr,
-		DataApiConnstr: "",
+		ConnStr:    connstr,
+		ConnStrTls: connstrTls,
+		ConnStrCb2: connstrCb2,
+		Mgmt:       mgmtAddr,
+		MgmtTls:    mgmtTlsAddr,
 	}, nil
 }
 
@@ -1031,7 +1030,7 @@ func (d *Deployer) GetMetrics(ctx context.Context, clusterID string) (string, er
 	return "", errors.New("caodeploy does not support getting metrics")
 }
 
-func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string) (string, error) {
+func (d *Deployer) ExecuteQuery(ctx context.Context, clusterID string, query string, opts *deployment.ExecuteQueryOptions) (string, error) {
 	return withAgent(d, ctx, clusterID, func(agent *gocbcorex.Agent) (string, error) {
 		return commondeploy.AgentHelper{Agent: agent}.ExecuteQuery(ctx, query)
 	})
