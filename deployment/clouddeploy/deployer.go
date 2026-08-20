@@ -168,27 +168,19 @@ func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*c
 		return nil, errors.Wrap(err, "failed to list clusters for project")
 	}
 
-	if len(clusters) > 1 {
-		base.IsCorrupted = true
-		return base, nil
-	}
-	if len(clusters) == 1 {
-		base.Cluster = clusters[0]
-		return base, nil
-	}
-
 	columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, project.Info.ID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list analytics clusters for project")
 	}
 
-	if len(columnars) > 1 {
+	if len(clusters)+len(columnars) > 1 {
 		base.IsCorrupted = true
 		return base, nil
 	}
-	if len(columnars) == 1 {
+	if len(clusters) == 1 {
+		base.Cluster = clusters[0]
+	} else if len(columnars) == 1 {
 		base.Columnar = columnars[0]
-		return base, nil
 	}
 
 	return base, nil
