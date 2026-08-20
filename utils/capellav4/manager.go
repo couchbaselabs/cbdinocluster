@@ -321,6 +321,10 @@ func (m *Manager) waitForPrivateEndpointState(
 			zap.String("current", currentState),
 			zap.String("desired", desiredState))
 
+		if currentState == PrivateEndpointFailed && desiredState != PrivateEndpointFailed {
+			return fmt.Errorf("cancelling as private endpoint is in a failed state ('%s')", currentState)
+		}
+
 		if currentState == desiredState {
 			return nil
 		}
