@@ -2245,8 +2245,15 @@ func (d *Deployer) EnableDataApi(ctx context.Context, clusterID string) error {
 func (d *Deployer) enableDataApi(ctx context.Context, cloudProjectID, cloudClusterID string) error {
 	d.logger.Debug("enabling data API")
 
-	err := d.v4.UpdateDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID, &capellav4.UpdateDataApiRequest{
-		EnableDataApi: true,
+	info, err := d.v4.GetDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID)
+	if err != nil {
+		return errors.Wrap(err, "failed to get Data API state")
+	}
+
+	// The update replaces both fields, so keep the network peering state.
+	err = d.v4.UpdateDataApi(ctx, d.tenantID, cloudProjectID, cloudClusterID, &capellav4.UpdateDataApiRequest{
+		EnableDataApi:        true,
+		EnableNetworkPeering: info.EnabledForNetworkPeering,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to enable Data API")
