@@ -1310,8 +1310,8 @@ var initCmd = &cobra.Command{
 						capellaPass, true)
 				}
 				if capellaUser == "" || capellaPass == "" {
-					fmt.Printf("No Capella username and password specified.  Custom server images, " +
-						"log collection, cluster redeploy, queries and columnar clusters will not be supported.\n")
+					fmt.Printf("No Capella username and password specified.  Custom server images " +
+						"and columnar clusters will not be supported.\n")
 				}
 
 				if flagCapellaOid != "" {
