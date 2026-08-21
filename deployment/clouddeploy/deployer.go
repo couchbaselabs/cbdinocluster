@@ -131,6 +131,25 @@ type cbdc2Project struct {
 // maxProjectInspectConcurrency bounds the concurrent Capella requests.
 const maxProjectInspectConcurrency = 8
 
+// maxProjectNameLen is the limit the v4 api puts on a project name.
+const maxProjectNameLen = 128
+
+// projectNameFor encodes the cluster identity into the project name. A long
+// purpose is trimmed rather than allowed to fail the create call.
+func (p *Deployer) projectNameFor(meta stringclustermeta.MetaData) string {
+	name := meta.String()
+	if len(name) <= maxProjectNameLen {
+		return name
+	}
+
+	overflow := len(name) - maxProjectNameLen
+	meta.Purpose = meta.Purpose[:len(meta.Purpose)-overflow]
+	p.logger.Warn("trimmed the purpose to fit the project name limit",
+		zap.String("purpose", meta.Purpose))
+
+	return meta.String()
+}
+
 func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error) {
 	p.logger.Debug("listing cloud projects")
 
@@ -352,6 +371,7 @@ func (p *Deployer) toClusterInfo(cluster *clusterInfo) *ClusterInfo {
 	if cluster.IsCorrupted {
 		return &ClusterInfo{
 			ClusterID:      cluster.Meta.ID.String(),
+			Purpose:        cluster.Meta.Purpose,
 			Type:           deployment.ClusterTypeUnknown,
 			CloudProjectID: cluster.ProjectID,
 			CloudClusterID: "",
@@ -365,6 +385,7 @@ func (p *Deployer) toClusterInfo(cluster *clusterInfo) *ClusterInfo {
 	if cluster.Cluster == nil && cluster.Columnar == nil {
 		return &ClusterInfo{
 			ClusterID:      cluster.Meta.ID.String(),
+			Purpose:        cluster.Meta.Purpose,
 			Type:           deployment.ClusterTypeUnknown,
 			CloudProjectID: cluster.ProjectID,
 			CloudClusterID: "",
@@ -378,6 +399,7 @@ func (p *Deployer) toClusterInfo(cluster *clusterInfo) *ClusterInfo {
 	if cluster.Cluster != nil {
 		return &ClusterInfo{
 			ClusterID:      cluster.Meta.ID.String(),
+			Purpose:        cluster.Meta.Purpose,
 			Type:           deployment.ClusterTypeServer,
 			CloudProjectID: cluster.ProjectID,
 			CloudClusterID: cluster.Cluster.ID,
@@ -390,6 +412,7 @@ func (p *Deployer) toClusterInfo(cluster *clusterInfo) *ClusterInfo {
 
 	return &ClusterInfo{
 		ClusterID:      cluster.Meta.ID.String(),
+		Purpose:        cluster.Meta.Purpose,
 		Type:           deployment.ClusterTypeColumnar,
 		CloudProjectID: cluster.ProjectID,
 		CloudClusterID: cluster.Columnar.ID,
@@ -556,10 +579,11 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	}
 
 	metaData := stringclustermeta.MetaData{
-		ID:     clusterID,
-		Expiry: expiryTime,
+		ID:      clusterID,
+		Expiry:  expiryTime,
+		Purpose: def.Purpose,
 	}
-	projectName := metaData.String()
+	projectName := p.projectNameFor(metaData)
 
 	p.logger.Debug("creating a new cloud project")
 
@@ -662,6 +686,7 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	// this describes. Reading it back would only tell us what we just asked for.
 	return &ClusterInfo{
 		ClusterID:      clusterID.String(),
+		Purpose:        metaData.Purpose,
 		Type:           deployment.ClusterTypeServer,
 		CloudProjectID: cloudProjectID,
 		CloudClusterID: cloudClusterID,
@@ -704,10 +729,11 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 	}
 
 	metaData := stringclustermeta.MetaData{
-		ID:     clusterID,
-		Expiry: expiryTime,
+		ID:      clusterID,
+		Expiry:  expiryTime,
+		Purpose: def.Purpose,
 	}
-	projectName := metaData.String()
+	projectName := p.projectNameFor(metaData)
 
 	cloudProvider, cloudRegion, err := p.resolveCloudLocation(def)
 	if err != nil {
@@ -884,6 +910,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 	// asked for.
 	return &ClusterInfo{
 		ClusterID:      clusterID.String(),
+		Purpose:        metaData.Purpose,
 		Type:           clusterType,
 		CloudProjectID: cloudProjectID,
 		CloudClusterID: cloudClusterID,
