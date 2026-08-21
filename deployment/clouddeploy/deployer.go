@@ -1746,7 +1746,16 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 	curTime := time.Now()
 	var allErr error
 	for _, cluster := range clusters {
+		expired := !cluster.Meta.Expiry.IsZero() && !cluster.Meta.Expiry.After(curTime)
+
+		// An allocate creates the project before the cluster, so an unexpired empty
+		// project may belong to a deployment still in flight. Removing it would
+		// break that run.
 		if cluster.Cluster == nil && cluster.Columnar == nil && !cluster.IsCorrupted {
+			if !expired {
+				continue
+			}
+
 			p.logger.Info("removing empty project",
 				zap.String("project-id", cluster.ProjectID))
 
@@ -1757,18 +1766,24 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 			continue
 		}
 
-		if !cluster.Meta.Expiry.IsZero() && !cluster.Meta.Expiry.After(curTime) {
-			p.logger.Info("removing cluster",
-				zap.String("cluster-id", cluster.Meta.ID.String()))
-
+		if expired {
+			// Capella itself failed to destroy these, so asking again achieves
+			// nothing. They stay until somebody removes them by hand.
 			if cluster.Cluster != nil && cluster.Cluster.CurrentState == capellav4.StateDestroyFailed {
-				p.logger.Warn("skipping due to destroyFailed state (cluster)")
+				p.logger.Info("skipping expired cluster in destroyFailed state, it needs manual removal",
+					zap.String("cluster-id", cluster.Meta.ID.String()),
+					zap.String("project-id", cluster.ProjectID))
 				continue
 			}
 			if cluster.Columnar != nil && cluster.Columnar.CurrentState == capellav4.StateDestroyFailed {
-				p.logger.Warn("skipping due to destroyFailed state (columnar)")
+				p.logger.Info("skipping expired columnar in destroyFailed state, it needs manual removal",
+					zap.String("cluster-id", cluster.Meta.ID.String()),
+					zap.String("project-id", cluster.ProjectID))
 				continue
 			}
+
+			p.logger.Info("removing cluster",
+				zap.String("cluster-id", cluster.Meta.ID.String()))
 
 			err := p.removeCluster(ctx, cluster)
 			if err != nil {
