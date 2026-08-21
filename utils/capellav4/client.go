@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -24,6 +26,11 @@ const DefaultEndpoint = "https://cloudapi.cloud.couchbase.com"
 const MaxPerPage = 100
 
 const maxReadRetries = 10
+
+const maxWriteRetries = 5
+
+// Clamp on Retry-After, so a bad or hostile header cannot stall a run for minutes.
+const maxRetryAfter = 60 * time.Second
 
 type Client struct {
 	logger     *zap.Logger
@@ -77,7 +84,8 @@ type Error struct {
 	HttpStatusCode int    `json:"httpStatusCode"`
 	Message        string `json:"message"`
 
-	FullText string `json:"-"`
+	FullText   string        `json:"-"`
+	RetryAfter time.Duration `json:"-"`
 }
 
 var _ error = (*Error)(nil)
@@ -113,6 +121,75 @@ func isRetryable(err error) bool {
 	}
 }
 
+// The spec documents this header as Retry-After, but the 429 body calls it
+// retryAfter, so accept either spelling.
+func (c *Client) retryAfterOf(header http.Header) time.Duration {
+	value := header.Get("Retry-After")
+	if value == "" {
+		value = header.Get("retryAfter")
+	}
+	return parseRetryAfter(value)
+}
+
+// The v4 API sends the retry delay either as seconds or as an http date.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+
+	var wait time.Duration
+	if seconds, err := strconv.Atoi(value); err == nil {
+		wait = time.Duration(seconds) * time.Second
+	} else if deadline, err := http.ParseTime(value); err == nil {
+		wait = time.Until(deadline)
+	}
+
+	if wait <= 0 {
+		return 0
+	}
+	return min(wait, maxRetryAfter)
+}
+
+// Write retries follow a stricter policy than reads, so this must stay separate from isRetryable.
+func isWriteRetryable(err error) bool {
+	var apiErr *Error
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.HttpStatusCode == http.StatusTooManyRequests
+}
+
+func retryWait(err error, retryNum int) (time.Duration, bool) {
+	var apiErr *Error
+	if errors.As(err, &apiErr) && apiErr.RetryAfter > 0 {
+		return apiErr.RetryAfter, true
+	}
+
+	// The wait doubles because the old fixed step exhausted the retries before a capella rate limit window closes.
+	base := min((500*time.Millisecond)<<min(retryNum, 7), maxRetryAfter)
+
+	// Half the base plus a random remainder spreads concurrent callers without ever waiting near zero.
+	return base/2 + time.Duration(rand.Int63n(int64(base/2))), false
+}
+
+func (c *Client) waitForRetry(ctx context.Context, err error, retryNum int) error {
+	retryTime, fromHeader := retryWait(err, retryNum)
+	c.logger.Debug("request failed, retrying",
+		zap.Error(err),
+		zap.Duration("retryTime", retryTime),
+		zap.Bool("fromRetryAfterHeader", fromHeader),
+		zap.Int("retryNum", retryNum))
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(retryTime):
+	}
+
+	return nil
+}
+
 func (c *Client) doOnce(ctx context.Context, method, path string, body, out any) error {
 	var bodyRdr io.Reader
 	if body != nil {
@@ -145,6 +222,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 		apiErr := &Error{}
 		_ = json.Unmarshal(respBytes, apiErr)
 		apiErr.FullText = string(respBytes)
+		apiErr.RetryAfter = c.retryAfterOf(resp.Header)
 		if apiErr.HttpStatusCode == 0 {
 			apiErr.HttpStatusCode = resp.StatusCode
 		}
@@ -198,23 +276,38 @@ func (c *Client) doRead(ctx context.Context, method, path string, body, out any)
 			return err
 		}
 
-		retryTime := time.Duration(500+retryNum*100) * time.Millisecond
-		c.logger.Debug("request failed, retrying",
-			zap.Error(err),
-			zap.Duration("retryTime", retryTime),
-			zap.Int("retryNum", retryNum))
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(retryTime):
+		if err := c.waitForRetry(ctx, err, retryNum); err != nil {
+			return err
 		}
 	}
 }
 
-// Writes are never retried to prevent e.g. a repeated create which provisions the resource twice.
+// Writes only retry on a 429, which the server rejects before it processes the request.
+// Every other failure, such as a 5xx or a lost connection, leaves the outcome unknown,
+// so a retry risks e.g. a repeated create which provisions the resource twice.
 func (c *Client) doWrite(ctx context.Context, method, path string, body, out any) error {
-	return c.doOnce(ctx, method, path, body, out)
+	for retryNum := 0; ; retryNum++ {
+		err := c.doOnce(ctx, method, path, body, out)
+		if err == nil {
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return err
+		}
+		if !isWriteRetryable(err) {
+			return err
+		}
+		if retryNum >= maxWriteRetries {
+			c.logger.Debug("write failed, exhausted retries",
+				zap.Error(err), zap.Int("retryNum", retryNum))
+			return err
+		}
+
+		if err := c.waitForRetry(ctx, err, retryNum); err != nil {
+			return err
+		}
+	}
 }
 
 type pageInfo struct {

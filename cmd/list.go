@@ -35,9 +35,10 @@ type ClusterListOutput_Node struct {
 }
 
 var listCmd = &cobra.Command{
-	Use:     "list",
+	Use:     "list [cluster-id]",
 	Aliases: []string{"ls", "ps"},
-	Short:   "Lists all clusters",
+	Short:   "Lists all clusters, or only those matching an optional cluster id prefix",
+	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
@@ -52,7 +53,13 @@ var listCmd = &cobra.Command{
 		for deployerName, deployer := range deployers {
 			wg.Add(1)
 			go func(deployerName string, deployer deployment.Deployer) {
-				deployerClusters, err := deployer.ListClusters(ctx)
+				var deployerClusters []deployment.ClusterInfo
+				var err error
+				if len(args) == 1 {
+					deployerClusters, err = deployer.FindClusters(ctx, args[0])
+				} else {
+					deployerClusters, err = deployer.ListClusters(ctx)
+				}
 				if err != nil {
 					logger.Warn("failed to list clusters", zap.Error(err))
 				}

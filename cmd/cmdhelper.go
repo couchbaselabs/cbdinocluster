@@ -505,7 +505,9 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 	for deployerName, deployer := range allDeployers {
 		wg.Add(1)
 		go func(deployerName string, deployer deployment.Deployer) {
-			clusters, err := deployer.ListClusters(cancelCtx)
+			defer wg.Done()
+
+			clusters, err := deployer.FindClusters(cancelCtx, userInput)
 			if err != nil {
 				// ignore errors if the context is cancelled
 				if cancelCtx.Err() != nil {
@@ -522,16 +524,12 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 				zap.String("deployer", deployerName))
 
 			for _, cluster := range clusters {
-				if strings.HasPrefix(cluster.GetID(), userInput) {
-					identifiedCluster <- &clusterWithDeployer{
-						DeployerName: deployerName,
-						Deployer:     deployer,
-						Cluster:      cluster,
-					}
+				identifiedCluster <- &clusterWithDeployer{
+					DeployerName: deployerName,
+					Deployer:     deployer,
+					Cluster:      cluster,
 				}
 			}
-
-			wg.Done()
 		}(deployerName, deployer)
 	}
 	go func() {

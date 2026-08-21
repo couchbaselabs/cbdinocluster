@@ -32,6 +32,9 @@ func (c *Client) ListAnalyticsClusters(ctx context.Context, orgID, projectID str
 	return listAll[*AnalyticsClusterInfo](ctx, c, path, nil)
 }
 
+// The response carries no project reference, verified against the live API, so
+// the result cannot be attributed to projects and this cannot replace the per
+// project listing. Callers that need the project must use ListAnalyticsClusters.
 func (c *Client) ListAllAnalyticsClusters(ctx context.Context, orgID string) ([]*AnalyticsClusterInfo, error) {
 	path := fmt.Sprintf("/v4/organizations/%s/analyticsClusters", orgID)
 	return listAll[*AnalyticsClusterInfo](ctx, c, path, nil)

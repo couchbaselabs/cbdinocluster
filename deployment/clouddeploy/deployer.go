@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/multierr"
@@ -127,6 +128,9 @@ type cbdc2Project struct {
 	Info *capellav4.ProjectInfo
 }
 
+// maxProjectInspectConcurrency bounds the concurrent Capella requests.
+const maxProjectInspectConcurrency = 8
+
 func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error) {
 	p.logger.Debug("listing cloud projects")
 
@@ -157,54 +161,125 @@ func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error
 }
 
 func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*clusterInfo, error) {
+	projectID := project.Info.ID
+
 	base := &clusterInfo{
 		Meta:        project.Meta,
-		ProjectID:   project.Info.ID,
+		ProjectID:   projectID,
 		ProjectName: project.Info.Name,
 	}
 
-	clusters, err := p.v4.ListClusters(ctx, p.tenantID, project.Info.ID)
+	clusters, err := p.v4.ListClusters(ctx, p.tenantID, projectID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list clusters for project")
 	}
 
-	columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, project.Info.ID)
+	// The organization wide analytics listing reports no project, so this has to
+	// be asked per project. See ListAllAnalyticsClusters.
+	projectColumnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, projectID)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list analytics clusters for project")
 	}
 
-	if len(clusters)+len(columnars) > 1 {
+	if len(clusters)+len(projectColumnars) > 1 {
 		base.IsCorrupted = true
 		return base, nil
 	}
 	if len(clusters) == 1 {
 		base.Cluster = clusters[0]
-	} else if len(columnars) == 1 {
-		base.Columnar = columnars[0]
+	} else if len(projectColumnars) == 1 {
+		base.Columnar = projectColumnars[0]
 	}
 
 	return base, nil
 }
 
-func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
+// findClusters inspects only the cbdc2 projects whose cluster ID matches, so a
+// single cluster lookup costs one project listing instead of one cluster
+// listing per project.
+func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*clusterInfo, error) {
 	projects, err := p.listCbdc2Projects(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	p.logger.Debug("listing cloud clusters", zap.Int("projects", len(projects)))
-
-	var out []*clusterInfo
+	var matched []cbdc2Project
 	for _, project := range projects {
-		info, err := p.inspectProject(ctx, project)
+		if strings.HasPrefix(project.Meta.ID.String(), idPrefix) {
+			matched = append(matched, project)
+		}
+	}
+
+	p.logger.Debug("listing cloud clusters",
+		zap.Int("projects", len(projects)),
+		zap.Int("matched-projects", len(matched)))
+
+	if len(matched) == 0 {
+		return nil, nil
+	}
+
+	if len(matched) == 1 {
+		info, err := p.inspectProject(ctx, matched[0])
 		if err != nil {
 			return nil, err
 		}
 
-		out = append(out, info)
+		return []*clusterInfo{info}, nil
+	}
+
+	inspectCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
+
+	results := make([]*clusterInfo, len(matched))
+	sem := make(chan struct{}, maxProjectInspectConcurrency)
+
+	for i, project := range matched {
+		wg.Add(1)
+		go func(i int, project cbdc2Project) {
+			defer wg.Done()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			if inspectCtx.Err() != nil {
+				return
+			}
+
+			info, err := p.inspectProject(inspectCtx, project)
+			if err != nil {
+				errOnce.Do(func() {
+					firstErr = err
+					cancel()
+				})
+				return
+			}
+
+			results[i] = info
+		}(i, project)
+	}
+
+	wg.Wait()
+
+	if firstErr != nil {
+		return nil, firstErr
+	}
+
+	var out []*clusterInfo
+	for _, info := range results {
+		if info != nil {
+			out = append(out, info)
+		}
 	}
 
 	return out, nil
+}
+
+func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
+	return p.findClusters(ctx, "")
 }
 
 func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterInfo, error) {
@@ -273,64 +348,71 @@ func (p *Deployer) columnarV2DetailByID(ctx context.Context, columnarID string) 
 	return nil, errors.New("failed to find columnar instance")
 }
 
+func (p *Deployer) toClusterInfo(cluster *clusterInfo) *ClusterInfo {
+	if cluster.IsCorrupted {
+		return &ClusterInfo{
+			ClusterID:      cluster.Meta.ID.String(),
+			Type:           deployment.ClusterTypeUnknown,
+			CloudProjectID: cluster.ProjectID,
+			CloudClusterID: "",
+			CloudProvider:  "",
+			Region:         "",
+			Expiry:         cluster.Meta.Expiry,
+			State:          "corrupted",
+		}
+	}
+
+	if cluster.Cluster == nil && cluster.Columnar == nil {
+		return &ClusterInfo{
+			ClusterID:      cluster.Meta.ID.String(),
+			Type:           deployment.ClusterTypeUnknown,
+			CloudProjectID: cluster.ProjectID,
+			CloudClusterID: "",
+			CloudProvider:  "",
+			Region:         "",
+			Expiry:         cluster.Meta.Expiry,
+			State:          "provisioning",
+		}
+	}
+
+	if cluster.Cluster != nil {
+		return &ClusterInfo{
+			ClusterID:      cluster.Meta.ID.String(),
+			Type:           deployment.ClusterTypeServer,
+			CloudProjectID: cluster.ProjectID,
+			CloudClusterID: cluster.Cluster.ID,
+			CloudProvider:  cluster.Cluster.CloudProvider.Type,
+			Region:         cluster.Cluster.CloudProvider.Region,
+			Expiry:         cluster.Meta.Expiry,
+			State:          cluster.Cluster.CurrentState,
+		}
+	}
+
+	return &ClusterInfo{
+		ClusterID:      cluster.Meta.ID.String(),
+		Type:           deployment.ClusterTypeColumnar,
+		CloudProjectID: cluster.ProjectID,
+		CloudClusterID: cluster.Columnar.ID,
+		CloudProvider:  cluster.Columnar.CloudProviderName(),
+		Region:         cluster.Columnar.Region,
+		Expiry:         cluster.Meta.Expiry,
+		State:          cluster.Columnar.CurrentState,
+	}
+}
+
 func (p *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, error) {
-	clusters, err := p.listClusters(ctx)
+	return p.FindClusters(ctx, "")
+}
+
+func (p *Deployer) FindClusters(ctx context.Context, idPrefix string) ([]deployment.ClusterInfo, error) {
+	clusters, err := p.findClusters(ctx, idPrefix)
 	if err != nil {
 		return nil, err
 	}
 
 	var out []deployment.ClusterInfo
-
 	for _, cluster := range clusters {
-		if cluster.IsCorrupted {
-			out = append(out, &ClusterInfo{
-				ClusterID:      cluster.Meta.ID.String(),
-				Type:           deployment.ClusterTypeUnknown,
-				CloudProjectID: cluster.ProjectID,
-				CloudClusterID: "",
-				CloudProvider:  "",
-				Region:         "",
-				Expiry:         cluster.Meta.Expiry,
-				State:          "corrupted",
-			})
-			continue
-		} else if cluster.Cluster == nil && cluster.Columnar == nil {
-			out = append(out, &ClusterInfo{
-				ClusterID:      cluster.Meta.ID.String(),
-				Type:           deployment.ClusterTypeUnknown,
-				CloudProjectID: cluster.ProjectID,
-				CloudClusterID: "",
-				CloudProvider:  "",
-				Region:         "",
-				Expiry:         cluster.Meta.Expiry,
-				State:          "provisioning",
-			})
-			continue
-		}
-
-		if cluster.Cluster != nil {
-			out = append(out, &ClusterInfo{
-				ClusterID:      cluster.Meta.ID.String(),
-				Type:           deployment.ClusterTypeServer,
-				CloudProjectID: cluster.ProjectID,
-				CloudClusterID: cluster.Cluster.ID,
-				CloudProvider:  cluster.Cluster.CloudProvider.Type,
-				Region:         cluster.Cluster.CloudProvider.Region,
-				Expiry:         cluster.Meta.Expiry,
-				State:          cluster.Cluster.CurrentState,
-			})
-		} else if cluster.Columnar != nil {
-			out = append(out, &ClusterInfo{
-				ClusterID:      cluster.Meta.ID.String(),
-				Type:           deployment.ClusterTypeColumnar,
-				CloudProjectID: cluster.ProjectID,
-				CloudClusterID: cluster.Columnar.ID,
-				CloudProvider:  cluster.Columnar.CloudProviderName(),
-				Region:         cluster.Columnar.Region,
-				Expiry:         cluster.Meta.Expiry,
-				State:          cluster.Columnar.CurrentState,
-			})
-		}
+		out = append(out, p.toClusterInfo(cluster))
 	}
 
 	return out, nil
@@ -576,25 +658,18 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return nil, errors.Wrap(err, "failed to wait for cluster deployment")
 	}
 
-	// we cheat for now...
-	clusters, err := p.ListClusters(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list clusters")
-	}
-
-	var thisCluster *ClusterInfo
-	for _, cluster := range clusters {
-		cluster := cluster.(*ClusterInfo)
-
-		if cluster.ClusterID == clusterID.String() {
-			thisCluster = cluster
-		}
-	}
-	if thisCluster == nil {
-		return nil, errors.New("failed to find new cluster after deployment")
-	}
-
-	return thisCluster, nil
+	// The deployment waited for the healthy state, so we already know everything
+	// this describes. Reading it back would only tell us what we just asked for.
+	return &ClusterInfo{
+		ClusterID:      clusterID.String(),
+		Type:           deployment.ClusterTypeServer,
+		CloudProjectID: cloudProjectID,
+		CloudClusterID: cloudClusterID,
+		CloudProvider:  cloudProvider,
+		Region:         cloudRegion,
+		Expiry:         metaData.Expiry,
+		State:          capellav4.StateHealthy,
+	}, nil
 }
 
 func (p *Deployer) resolveCloudLocation(def *clusterdef.Cluster) (string, string, error) {
@@ -799,24 +874,24 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		}
 	}
 
-	// we cheat for now...
-	clusters, err := p.ListClusters(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list clusters")
+	clusterType := deployment.ClusterTypeServer
+	if def.Columnar {
+		clusterType = deployment.ClusterTypeColumnar
 	}
 
-	var thisCluster *ClusterInfo
-	for _, cluster := range clusters {
-		cluster := cluster.(*ClusterInfo)
-
-		if cluster.ClusterID == clusterID.String() {
-			thisCluster = cluster
-		}
-	}
-	if thisCluster == nil {
-		return nil, errors.New("failed to find new cluster after deployment")
-	}
-	return thisCluster, nil
+	// Every branch above waited for the healthy state, so we already know
+	// everything this describes. Reading it back would only tell us what we just
+	// asked for.
+	return &ClusterInfo{
+		ClusterID:      clusterID.String(),
+		Type:           clusterType,
+		CloudProjectID: cloudProjectID,
+		CloudClusterID: cloudClusterID,
+		CloudProvider:  cloudProvider,
+		Region:         cloudRegion,
+		Expiry:         metaData.Expiry,
+		State:          capellav4.StateHealthy,
+	}, nil
 }
 
 func (p *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
