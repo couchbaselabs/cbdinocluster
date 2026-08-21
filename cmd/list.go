@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -21,9 +22,15 @@ type ClusterListOutput_Item struct {
 	ID       string                   `json:"id"`
 	Type     string                   `json:"type"`
 	State    string                   `json:"state"`
+	Purpose  string                   `json:"purpose,omitempty"`
 	Expiry   *time.Time               `json:"expiry,omitempty"`
 	Deployer string                   `json:"deployer"`
 	Nodes    []ClusterListOutput_Node `json:"nodes"`
+
+	// Capella only. Callers need these to find the cluster in the Capella UI, or
+	// to raise it with support when cbdinocluster cannot remove it.
+	CloudProjectID string `json:"cloud_project_id,omitempty"`
+	CloudClusterID string `json:"cloud_cluster_id,omitempty"`
 }
 
 type ClusterListOutput_Node struct {
@@ -35,9 +42,10 @@ type ClusterListOutput_Node struct {
 }
 
 var listCmd = &cobra.Command{
-	Use:     "list",
+	Use:     "list [cluster-id]",
 	Aliases: []string{"ls", "ps"},
-	Short:   "Lists all clusters",
+	Short:   "Lists all clusters, or only those matching an optional cluster id prefix",
+	Args:    cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
@@ -52,7 +60,13 @@ var listCmd = &cobra.Command{
 		for deployerName, deployer := range deployers {
 			wg.Add(1)
 			go func(deployerName string, deployer deployment.Deployer) {
-				deployerClusters, err := deployer.ListClusters(ctx)
+				var deployerClusters []deployment.ClusterInfo
+				var err error
+				if len(args) == 1 {
+					deployerClusters, err = deployer.FindClusters(ctx, args[0])
+				} else {
+					deployerClusters, err = deployer.ListClusters(ctx)
+				}
 				if err != nil {
 					logger.Warn("failed to list clusters", zap.Error(err))
 				}
@@ -90,12 +104,18 @@ var listCmd = &cobra.Command{
 					expiryStr = time.Until(cluster.GetExpiry()).Round(time.Second).String()
 				}
 
-				fmt.Printf("  %s [Type: %s, State: %s, Timeout: %s, Deployer: %s]\n",
+				purposeStr := ""
+				if purpose := cluster.GetPurpose(); purpose != "" {
+					purposeStr = fmt.Sprintf(", Purpose: %s", purpose)
+				}
+
+				fmt.Printf("  %s [Type: %s, State: %s, Timeout: %s, Deployer: %s%s]\n",
 					cluster.GetID(),
 					cluster.GetType(),
 					cluster.GetState(),
 					expiryStr,
-					deployerName)
+					deployerName,
+					purposeStr)
 				for _, node := range cluster.GetNodes() {
 					printId := node.GetID()
 					if !node.IsClusterNode() {
@@ -116,7 +136,13 @@ var listCmd = &cobra.Command{
 					ID:       cluster.Info.GetID(),
 					Type:     string(cluster.Info.GetType()),
 					State:    cluster.Info.GetState(),
+					Purpose:  cluster.Info.GetPurpose(),
 					Deployer: cluster.DeployerName,
+				}
+
+				if cloudInfo, ok := cluster.Info.(*clouddeploy.ClusterInfo); ok {
+					clusterItem.CloudProjectID = cloudInfo.CloudProjectID
+					clusterItem.CloudClusterID = cloudInfo.CloudClusterID
 				}
 
 				expiry := cluster.Info.GetExpiry()
