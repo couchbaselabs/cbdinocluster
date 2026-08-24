@@ -101,10 +101,10 @@ func isRetryable(err error) bool {
 		return true
 	}
 
+	// A rate limited request is not retried, so a busy window fails fast
+	// instead of stalling a run.
 	switch {
 	case apiErr.HttpStatusCode == http.StatusRequestTimeout:
-		return true
-	case apiErr.HttpStatusCode == http.StatusTooManyRequests:
 		return true
 	case apiErr.HttpStatusCode >= 500:
 		return true

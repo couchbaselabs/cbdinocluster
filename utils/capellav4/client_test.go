@@ -174,17 +174,39 @@ func TestReadDoesNotRetryClientError(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load())
 }
 
-func TestWriteIsNeverRetried(t *testing.T) {
+func TestReadDoesNotRetryRateLimit(t *testing.T) {
+	// The key pool is the rate limit strategy, so a 429 fails fast.
 	var requests atomic.Int32
 	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
-		w.WriteHeader(http.StatusServiceUnavailable)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
 	}))
 
-	_, err := client.CreateProject(context.Background(), "org", &CreateProjectRequest{Name: "n"})
+	_, err := client.GetCluster(context.Background(), "org", "proj", "clus")
 	require.Error(t, err)
 
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusTooManyRequests, apiErr.HttpStatusCode)
 	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestWriteIsNeverRetried(t *testing.T) {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusTooManyRequests, http.StatusRequestTimeout} {
+		t.Run(strconv.Itoa(status), func(t *testing.T) {
+			var requests atomic.Int32
+			client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(status)
+			}))
+
+			_, err := client.CreateProject(context.Background(), "org", &CreateProjectRequest{Name: "n"})
+			require.Error(t, err)
+
+			assert.Equal(t, int32(1), requests.Load())
+		})
+	}
 }
 
 func TestCreateClusterOmitsUnsetServerVersionAndCidr(t *testing.T) {
