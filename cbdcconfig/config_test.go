@@ -115,3 +115,41 @@ func TestSaveFailsWhenConfigDirCannotBeCreated(t *testing.T) {
 	require.Error(t, err)
 	require.NoFileExists(t, overridePath)
 }
+
+// TestUpgradeFoldsLegacyCapellaKey proves the version 8 migration moves the
+// single api-key/api-secret pair into the key list and clears the old fields,
+// so the next Save drops them from the file.
+func TestUpgradeFoldsLegacyCapellaKey(t *testing.T) {
+	ctx := context.Background()
+	setHomeDir(t, t.TempDir())
+	t.Setenv(cbdcconfig.EnvConfigPath, "")
+
+	configPath := filepath.Join(t.TempDir(), "legacy.yaml")
+	cbdcconfig.SetConfigPathOverride(configPath)
+	t.Cleanup(func() { cbdcconfig.SetConfigPathOverride("") })
+
+	require.NoError(t, os.WriteFile(configPath, []byte(
+		"version: 7\ncapella:\n  api-key: legacy-key\n  api-secret: legacy-secret\n"), 0600))
+
+	loaded, err := cbdcconfig.Load(ctx)
+	require.NoError(t, err)
+	require.Equal(t, cbdcconfig.Version, loaded.Version)
+	require.Equal(t, []cbdcconfig.Config_CapellaApiKey{{
+		Key:    "legacy-key",
+		Secret: "legacy-secret",
+	}}, loaded.Capella.ApiKeys)
+	require.Empty(t, loaded.Capella.ApiKey)
+	require.Empty(t, loaded.Capella.ApiSecret)
+
+	saved, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(saved), "api-key:")
+	require.NotContains(t, string(saved), "api-secret:")
+	require.Contains(t, string(saved), "api-keys:")
+}
+
+func TestUpgradeWithoutLegacyCapellaKey(t *testing.T) {
+	cfg := cbdcconfig.Upgrade(&cbdcconfig.Config{Version: 7})
+	require.Equal(t, cbdcconfig.Version, cfg.Version)
+	require.Empty(t, cfg.Capella.ApiKeys)
+}

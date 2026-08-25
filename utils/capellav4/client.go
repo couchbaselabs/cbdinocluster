@@ -12,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
@@ -29,7 +31,8 @@ type Client struct {
 	logger     *zap.Logger
 	httpClient *http.Client
 	endpoint   string
-	secretKey  string
+	secretKeys []string
+	nextKey    atomic.Uint64
 }
 
 type ClientOptions struct {
@@ -37,14 +40,21 @@ type ClientOptions struct {
 	HttpClient *http.Client
 	Endpoint   string
 	// The v4 API authenticates with the secret alone. The access key is not sent.
-	SecretKey string
+	// Capella limits requests per key, so a pool of keys raises the budget.
+	SecretKeys []string
 }
 
 func NewClient(opts *ClientOptions) (*Client, error) {
 	if opts == nil {
 		return nil, errors.New("client options must be specified")
 	}
-	if opts.SecretKey == "" {
+	var secretKeys []string
+	for _, secretKey := range opts.SecretKeys {
+		if secretKey = strings.TrimSpace(secretKey); secretKey != "" {
+			secretKeys = append(secretKeys, secretKey)
+		}
+	}
+	if len(secretKeys) == 0 {
 		return nil, errors.New("a capella api secret key is required")
 	}
 
@@ -67,7 +77,7 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 		logger:     logger,
 		httpClient: httpClient,
 		endpoint:   endpoint,
-		secretKey:  opts.SecretKey,
+		secretKeys: secretKeys,
 	}, nil
 }
 
@@ -113,7 +123,12 @@ func isRetryable(err error) bool {
 	}
 }
 
-func (c *Client) doOnce(ctx context.Context, method, path string, body, out any) error {
+func isRateLimit(err error) bool {
+	var apiErr *Error
+	return errors.As(err, &apiErr) && apiErr.HttpStatusCode == http.StatusTooManyRequests
+}
+
+func (c *Client) doOnce(ctx context.Context, secretKey, method, path string, body, out any) error {
 	var bodyRdr io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -131,7 +146,7 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 	if bodyRdr != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Authorization", "Bearer "+c.secretKey)
+	req.Header.Set("Authorization", "Bearer "+secretKey)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -179,9 +194,25 @@ func (c *Client) doOnce(ctx context.Context, method, path string, body, out any)
 	return nil
 }
 
+// send tries the request once per key, so a rate limited key costs a key swap
+// rather than a wait.
+func (c *Client) send(ctx context.Context, method, path string, body, out any) error {
+	start := c.nextKey.Add(1)
+
+	var err error
+	for i := range c.secretKeys {
+		secretKey := c.secretKeys[(start+uint64(i))%uint64(len(c.secretKeys))]
+		err = c.doOnce(ctx, secretKey, method, path, body, out)
+		if !isRateLimit(err) {
+			return err
+		}
+	}
+	return err
+}
+
 func (c *Client) doRead(ctx context.Context, method, path string, body, out any) error {
 	for retryNum := 0; ; retryNum++ {
-		err := c.doOnce(ctx, method, path, body, out)
+		err := c.send(ctx, method, path, body, out)
 		if err == nil {
 			return nil
 		}
@@ -212,9 +243,11 @@ func (c *Client) doRead(ctx context.Context, method, path string, body, out any)
 	}
 }
 
-// Writes are never retried to prevent e.g. a repeated create which provisions the resource twice.
+// A write is never repeated, because a second attempt could provision the resource twice.
+// Only a 429 was safe to handle automatically, since the server refused the request before
+// doing any work, and the key sweep in send now covers that.
 func (c *Client) doWrite(ctx context.Context, method, path string, body, out any) error {
-	return c.doOnce(ctx, method, path, body, out)
+	return c.send(ctx, method, path, body, out)
 }
 
 type pageInfo struct {

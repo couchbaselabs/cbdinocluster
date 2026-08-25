@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,13 +18,18 @@ import (
 
 func newTestClient(t *testing.T, handler http.Handler) *Client {
 	t.Helper()
+	return newTestClientWithKeys(t, handler, "test-secret")
+}
+
+func newTestClientWithKeys(t *testing.T, handler http.Handler, secretKeys ...string) *Client {
+	t.Helper()
 
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
 	client, err := NewClient(&ClientOptions{
-		Endpoint:  srv.URL,
-		SecretKey: "test-secret",
+		Endpoint:   srv.URL,
+		SecretKeys: secretKeys,
 	})
 	require.NoError(t, err)
 
@@ -33,8 +40,116 @@ func TestNewClientRequiresSecret(t *testing.T) {
 	_, err := NewClient(&ClientOptions{})
 	require.Error(t, err)
 
+	_, err = NewClient(&ClientOptions{SecretKeys: []string{}})
+	require.Error(t, err)
+
+	_, err = NewClient(&ClientOptions{SecretKeys: []string{"", "  "}})
+	require.Error(t, err)
+
 	_, err = NewClient(nil)
 	require.Error(t, err)
+}
+
+func TestSendSwapsKeyOnRateLimit(t *testing.T) {
+	var gotAuth []string
+	client := newTestClientWithKeys(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = append(gotAuth, r.Header.Get("Authorization"))
+		if len(gotAuth) < 3 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"clus"}`))
+	}), "key-1", "key-2", "key-3")
+
+	cluster, err := client.GetCluster(context.Background(), "org", "proj", "clus")
+	require.NoError(t, err)
+
+	assert.Equal(t, "clus", cluster.ID)
+	assert.ElementsMatch(t, []string{"Bearer key-1", "Bearer key-2", "Bearer key-3"}, gotAuth)
+}
+
+func TestSendUsesEveryKeyWhenCallersRunConcurrently(t *testing.T) {
+	const concurrency = 8
+	secretKeys := []string{"key-1", "key-2", "key-3", "key-4"}
+
+	var mu sync.Mutex
+	cond := sync.NewCond(&mu)
+	gotAuth := make(map[string][]string)
+	arrived := 0
+	round := 0
+
+	client := newTestClientWithKeys(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotAuth[r.URL.Path] = append(gotAuth[r.URL.Path], r.Header.Get("Authorization"))
+
+		// Hold every caller until all of them arrived, so the attempts interleave
+		// the way concurrent project inspections do.
+		arrived++
+		if arrived == concurrency {
+			arrived = 0
+			round++
+			cond.Broadcast()
+		} else {
+			for myRound := round; round == myRound; {
+				cond.Wait()
+			}
+		}
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
+	}), secretKeys...)
+
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			path := fmt.Sprintf("/v4/caller-%d", i)
+			err := client.send(context.Background(), http.MethodGet, path, nil, nil)
+			assert.True(t, isRateLimit(err))
+		}()
+	}
+	wg.Wait()
+
+	var wantAuth []string
+	for _, secretKey := range secretKeys {
+		wantAuth = append(wantAuth, "Bearer "+secretKey)
+	}
+
+	require.Len(t, gotAuth, concurrency)
+	for path, auths := range gotAuth {
+		assert.ElementsMatch(t, wantAuth, auths, "caller %s did not try every key once", path)
+	}
+}
+
+func TestSendStopsOnNonRateLimitError(t *testing.T) {
+	var requests atomic.Int32
+	client := newTestClientWithKeys(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+	}), "key-1", "key-2", "key-3")
+
+	err := client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
+	require.Error(t, err)
+
+	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestSendReturnsRateLimitWhenEveryKeyIsLimited(t *testing.T) {
+	var requests atomic.Int32
+	client := newTestClientWithKeys(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
+	}), "key-1", "key-2")
+
+	err := client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
+	require.Error(t, err)
+
+	assert.True(t, isRateLimit(err))
+	assert.Equal(t, int32(2), requests.Load())
 }
 
 func TestClientSendsBearerSecret(t *testing.T) {
@@ -190,6 +305,30 @@ func TestReadDoesNotRetryRateLimit(t *testing.T) {
 	require.ErrorAs(t, err, &apiErr)
 	assert.Equal(t, http.StatusTooManyRequests, apiErr.HttpStatusCode)
 	assert.Equal(t, int32(1), requests.Load())
+}
+
+func TestReadFailsFastWhenEveryKeyIsRateLimited(t *testing.T) {
+	secretKeys := []string{"key-1", "key-2", "key-3"}
+
+	var requests atomic.Int32
+	client := newTestClientWithKeys(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
+	}), secretKeys...)
+
+	start := time.Now()
+	_, err := client.GetCluster(context.Background(), "org", "proj", "clus")
+	elapsed := time.Since(start)
+	require.Error(t, err)
+
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	assert.Equal(t, http.StatusTooManyRequests, apiErr.HttpStatusCode)
+
+	// One attempt per key, then the caller sees the 429 without a retry wait.
+	assert.Equal(t, int32(len(secretKeys)), requests.Load())
+	assert.Less(t, elapsed, 500*time.Millisecond)
 }
 
 func TestWriteIsNeverRetried(t *testing.T) {
