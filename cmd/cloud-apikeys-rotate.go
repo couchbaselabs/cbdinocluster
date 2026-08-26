@@ -22,6 +22,19 @@ var cloudApiKeysRotateCmd = &cobra.Command{
 			logger.Fatal("cannot access the capella api key pool", zap.Error(err))
 		}
 
+		remoteKeys, err := session.Client.ListApiKeys(ctx, session.OrgID)
+		if err != nil {
+			logger.Fatal("failed to list the capella api keys", zap.Error(err))
+		}
+
+		// Only a saved secret Capella still lists can serve a request, so the
+		// rotations spread over the pool instead of loading the primary key.
+		poolKeys := partitionCapellaPoolKeys(session.Prefix, session.PrimaryKeyID,
+			config.Capella.ApiKeys, remoteKeys)
+		for _, matchedKey := range poolKeys.Matched {
+			session.Client.AddSecretKey(matchedKey.Secret)
+		}
+
 		targetKeys, err := selectCapellaPoolConfigKeys(session.Prefix, session.PrimaryKeyID,
 			config.Capella.ApiKeys, args)
 		if err != nil {
@@ -40,6 +53,10 @@ var cloudApiKeysRotateCmd = &cobra.Command{
 				logger.Fatal("refused to rotate a capella api key", zap.Error(err))
 			}
 
+			// The rotation kills this secret, so it leaves the ring first. A
+			// failed rotation leaves it out too, its state is unknown.
+			session.Client.RemoveSecretKey(targetKey.Secret)
+
 			rotateResp, err := session.Client.RotateApiKey(ctx, session.OrgID, targetKey.Key)
 			if err != nil {
 				failed = true
@@ -47,6 +64,8 @@ var cloudApiKeysRotateCmd = &cobra.Command{
 					zap.String("keyId", targetKey.Key), zap.Error(err))
 				continue
 			}
+
+			session.Client.AddSecretKey(rotateResp.Token)
 
 			// The old secret stops working at once, so the new one is saved
 			// before the next key is rotated.

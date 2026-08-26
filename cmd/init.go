@@ -1346,9 +1346,9 @@ var initCmd = &cobra.Command{
 					poolPrefix := capellaPoolKeyPrefix(poolName)
 					primaryKeyID := capellaApiKeys[0].Key
 
-					// Key management must not run over the round robin pool, a
-					// rotation there could invalidate a secret another request is
-					// using at that moment.
+					// The ring starts with the primary key alone and grows with
+					// every pool secret this section verifies. A key's secret
+					// leaves the ring before that key is rotated or deleted.
 					poolClient, err := capellav4.NewClient(&capellav4.ClientOptions{
 						Logger:     logger,
 						Endpoint:   capellaV4Endpoint,
@@ -1424,6 +1424,8 @@ var initCmd = &cobra.Command{
 										orphanKey.ID, err)
 									continue
 								}
+
+								poolClient.AddSecretKey(rotateResp.Token)
 
 								capellaApiKeys = append(capellaApiKeys,
 									cbdcconfig.Config_CapellaApiKey{
@@ -1529,18 +1531,20 @@ var initCmd = &cobra.Command{
 									break
 								}
 
-								createResp, err := poolClient.CreateApiKey(ctx, capellaOid,
+								createResp, err := createCapellaPoolKey(ctx, poolClient, capellaOid,
 									&capellav4.CreateApiKeyRequest{
 										Name:              keyName,
 										Description:       capellaPoolKeyDescription(poolName),
 										Expiry:            poolExpiry,
 										OrganizationRoles: []string{capellav4.OrganizationRoleOwner},
-									})
+									}, capellaPoolKeySleep)
 								if err != nil {
 									fmt.Printf("Failed to create a Capella API key:\n  %s\n", err)
 									createFailed = true
 									break
 								}
+
+								poolClient.AddSecretKey(createResp.Token)
 
 								// Capella shows a secret once only, so it is saved
 								// before the next key is created.

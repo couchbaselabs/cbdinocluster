@@ -108,7 +108,7 @@ func TestSendUsesEveryKeyWhenCallersRunConcurrently(t *testing.T) {
 			defer wg.Done()
 			path := fmt.Sprintf("/v4/caller-%d", i)
 			err := client.send(context.Background(), http.MethodGet, path, nil, nil)
-			assert.True(t, isRateLimit(err))
+			assert.True(t, IsRateLimit(err))
 		}()
 	}
 	wg.Wait()
@@ -148,7 +148,7 @@ func TestSendReturnsRateLimitWhenEveryKeyIsLimited(t *testing.T) {
 	err := client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
 	require.Error(t, err)
 
-	assert.True(t, isRateLimit(err))
+	assert.True(t, IsRateLimit(err))
 	assert.Equal(t, int32(2), requests.Load())
 }
 
@@ -464,4 +464,93 @@ func TestUserHasPrivilege(t *testing.T) {
 			assert.Equal(t, tt.wantWrite, tt.user.HasPrivilege(PrivilegeDataWriter))
 		})
 	}
+}
+
+func TestAddAndRemoveSecretKeyChangeTheSweep(t *testing.T) {
+	client := newTestClientWithKeys(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "Bearer key-a" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"id":"clus"}`))
+	}), "key-a")
+
+	err := client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
+	require.Error(t, err)
+	assert.True(t, IsRateLimit(err))
+
+	client.AddSecretKey("key-b")
+	require.NoError(t, client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil))
+
+	// A second add of the same secret must not grow the ring.
+	client.AddSecretKey("key-b")
+	client.RemoveSecretKey("key-b")
+	err = client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
+	require.Error(t, err)
+	assert.True(t, IsRateLimit(err))
+
+	client.RemoveSecretKey("key-a")
+	err = client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
+	require.Error(t, err)
+	assert.False(t, IsRateLimit(err))
+	assert.Contains(t, err.Error(), "empty")
+}
+
+func TestRateLimitErrorExposesRetryAfter(t *testing.T) {
+	var retryAfter string
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if retryAfter != "" {
+			w.Header().Set("Retry-After", retryAfter)
+		}
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
+	}))
+
+	retryAfter = "7"
+	err := client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
+	require.Error(t, err)
+	secs, ok := RetryAfterSeconds(err)
+	assert.True(t, ok)
+	assert.Equal(t, 7, secs)
+
+	retryAfter = ""
+	err = client.send(context.Background(), http.MethodGet, "/v4/whatever", nil, nil)
+	require.Error(t, err)
+	_, ok = RetryAfterSeconds(err)
+	assert.False(t, ok)
+}
+
+func TestRingStaysUsableWhileItChanges(t *testing.T) {
+	const senders = 4
+	const changers = 2
+	const rounds = 20
+
+	client := newTestClientWithKeys(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"clus"}`))
+	}), "key-0")
+
+	var wg sync.WaitGroup
+	for i := 0; i < senders; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for round := 0; round < rounds; round++ {
+				assert.NoError(t, client.send(context.Background(),
+					http.MethodGet, "/v4/whatever", nil, nil))
+			}
+		}()
+	}
+	for i := 0; i < changers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for round := 0; round < rounds; round++ {
+				secret := fmt.Sprintf("key-%d-%d", i, round)
+				client.AddSecretKey(secret)
+				client.RemoveSecretKey(secret)
+			}
+		}()
+	}
+	wg.Wait()
 }

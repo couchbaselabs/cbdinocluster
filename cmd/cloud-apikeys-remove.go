@@ -30,6 +30,19 @@ var cloudApiKeysRemoveCmd = &cobra.Command{
 			logger.Fatal("failed to list the capella api keys", zap.Error(err))
 		}
 
+		// Only a saved secret Capella still lists can serve a request, so the
+		// deletions spread over the pool instead of loading the primary key.
+		poolKeys := partitionCapellaPoolKeys(session.Prefix, session.PrimaryKeyID,
+			config.Capella.ApiKeys, remoteKeys)
+		for _, matchedKey := range poolKeys.Matched {
+			session.Client.AddSecretKey(matchedKey.Secret)
+		}
+
+		savedSecrets := make(map[string]string, len(config.Capella.ApiKeys))
+		for _, savedKey := range config.Capella.ApiKeys {
+			savedSecrets[savedKey.Key] = savedKey.Secret
+		}
+
 		targetKeys, err := selectCapellaPoolRemoteKeys(session.Prefix, session.PrimaryKeyID,
 			remoteKeys, args)
 		if err != nil {
@@ -54,6 +67,10 @@ var cloudApiKeysRemoveCmd = &cobra.Command{
 					targetKey.ID, targetKey.Name)
 				continue
 			}
+
+			// A deleted key cannot authorize anything, so its secret leaves the
+			// ring before the request that kills it.
+			session.Client.RemoveSecretKey(savedSecrets[targetKey.ID])
 
 			err = session.Client.DeleteApiKey(ctx, session.OrgID, targetKey.ID)
 			if err != nil {

@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -31,8 +32,10 @@ type Client struct {
 	logger     *zap.Logger
 	httpClient *http.Client
 	endpoint   string
-	secretKeys []string
 	nextKey    atomic.Uint64
+
+	keysLock   sync.Mutex
+	secretKeys []string
 }
 
 type ClientOptions struct {
@@ -81,6 +84,53 @@ func NewClient(opts *ClientOptions) (*Client, error) {
 	}, nil
 }
 
+// AddSecretKey puts a secret at the end of the ring. A request already in
+// flight keeps the ring it started with, the new secret joins the next call.
+func (c *Client) AddSecretKey(secret string) {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return
+	}
+
+	c.keysLock.Lock()
+	defer c.keysLock.Unlock()
+
+	for _, secretKey := range c.secretKeys {
+		if secretKey == secret {
+			return
+		}
+	}
+	c.secretKeys = append(c.secretKeys, secret)
+}
+
+// RemoveSecretKey takes a secret out of the ring, keeping the order of the
+// rest. A key must leave the ring before it is rotated or deleted, otherwise a
+// later call could authorize itself with a secret that no longer works.
+func (c *Client) RemoveSecretKey(secret string) {
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return
+	}
+
+	c.keysLock.Lock()
+	defer c.keysLock.Unlock()
+
+	kept := c.secretKeys[:0]
+	for _, secretKey := range c.secretKeys {
+		if secretKey == secret {
+			continue
+		}
+		kept = append(kept, secretKey)
+	}
+	c.secretKeys = kept
+}
+
+func (c *Client) secretKeySnapshot() []string {
+	c.keysLock.Lock()
+	defer c.keysLock.Unlock()
+	return append([]string(nil), c.secretKeys...)
+}
+
 type Error struct {
 	Code           int    `json:"code"`
 	Hint           string `json:"hint"`
@@ -88,6 +138,9 @@ type Error struct {
 	Message        string `json:"message"`
 
 	FullText string `json:"-"`
+
+	retryAfterSecs int
+	hasRetryAfter  bool
 }
 
 var _ error = (*Error)(nil)
@@ -123,9 +176,20 @@ func isRetryable(err error) bool {
 	}
 }
 
-func isRateLimit(err error) bool {
+func IsRateLimit(err error) bool {
 	var apiErr *Error
 	return errors.As(err, &apiErr) && apiErr.HttpStatusCode == http.StatusTooManyRequests
+}
+
+// RetryAfterSeconds reports how long Capella asked the caller to wait. It
+// reports false when the answer carried no usable Retry-After header, so the
+// caller has to pick its own delay.
+func RetryAfterSeconds(err error) (int, bool) {
+	var apiErr *Error
+	if !errors.As(err, &apiErr) {
+		return 0, false
+	}
+	return apiErr.retryAfterSecs, apiErr.hasRetryAfter
 }
 
 func (c *Client) doOnce(ctx context.Context, secretKey, method, path string, body, out any) error {
@@ -166,6 +230,12 @@ func (c *Client) doOnce(ctx context.Context, secretKey, method, path string, bod
 		if apiErr.Message == "" {
 			apiErr.Message = string(respBytes)
 		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			if secs, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
+				apiErr.retryAfterSecs = secs
+				apiErr.hasRetryAfter = true
+			}
+		}
 
 		return apiErr
 	}
@@ -197,13 +267,18 @@ func (c *Client) doOnce(ctx context.Context, secretKey, method, path string, bod
 // send tries the request once per key, so a rate limited key costs a key swap
 // rather than a wait.
 func (c *Client) send(ctx context.Context, method, path string, body, out any) error {
+	secretKeys := c.secretKeySnapshot()
+	if len(secretKeys) == 0 {
+		return errors.New("the capella api key ring is empty, no secret key is left to send with")
+	}
+
 	start := c.nextKey.Add(1)
 
 	var err error
-	for i := range c.secretKeys {
-		secretKey := c.secretKeys[(start+uint64(i))%uint64(len(c.secretKeys))]
+	for i := range secretKeys {
+		secretKey := secretKeys[(start+uint64(i))%uint64(len(secretKeys))]
 		err = c.doOnce(ctx, secretKey, method, path, body, out)
-		if !isRateLimit(err) {
+		if !IsRateLimit(err) {
 			return err
 		}
 	}

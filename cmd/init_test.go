@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
@@ -107,11 +109,21 @@ type fakeCapellaApiKeys struct {
 	keys         []*capellav4.ApiKeyInfo
 	failCreateAt int
 
+	// rateLimitFirstCreates answers 429 to that many create requests, then lets
+	// the pool grow. rateLimitPastCreates answers 429 to every create request
+	// once that many creates succeeded. retryAfter is sent with each 429.
+	rateLimitFirstCreates int
+	rateLimitPastCreates  int
+	retryAfter            string
+
 	requests       int
 	creates        int
+	created        int
 	createExpiries []float64
+	createAuths    []string
 	rotated        []string
 	deleted        []string
+	deleteAuths    map[string]string
 }
 
 func (f *fakeCapellaApiKeys) start(t *testing.T) string {
@@ -139,6 +151,18 @@ func (f *fakeCapellaApiKeys) start(t *testing.T) string {
 
 		case r.Method == http.MethodPost && subPath == "":
 			f.creates++
+			f.createAuths = append(f.createAuths, r.Header.Get("Authorization"))
+
+			if f.creates <= f.rateLimitFirstCreates ||
+				(f.rateLimitPastCreates > 0 && f.created >= f.rateLimitPastCreates) {
+				if f.retryAfter != "" {
+					w.Header().Set("Retry-After", f.retryAfter)
+				}
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"code":1004,"httpStatusCode":429,"message":"rate limit"}`))
+				return
+			}
+
 			if f.creates == f.failCreateAt {
 				w.WriteHeader(http.StatusUnprocessableEntity)
 				_, _ = w.Write([]byte(`{"code":4000,"httpStatusCode":422,"message":"key limit reached"}`))
@@ -149,7 +173,8 @@ func (f *fakeCapellaApiKeys) start(t *testing.T) string {
 			require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 			f.createExpiries = append(f.createExpiries, req.Expiry)
 
-			keyID := fmt.Sprintf("created-%d", f.creates)
+			f.created++
+			keyID := fmt.Sprintf("created-%d", f.created)
 			f.keys = append(f.keys, &capellav4.ApiKeyInfo{ID: keyID, Name: req.Name})
 
 			w.WriteHeader(http.StatusCreated)
@@ -163,7 +188,12 @@ func (f *fakeCapellaApiKeys) start(t *testing.T) string {
 				"secretKey": keyID, "token": "rotated-" + keyID})
 
 		case r.Method == http.MethodDelete && subPath != "":
-			f.deleted = append(f.deleted, strings.TrimPrefix(subPath, "/"))
+			keyID := strings.TrimPrefix(subPath, "/")
+			f.deleted = append(f.deleted, keyID)
+			if f.deleteAuths == nil {
+				f.deleteAuths = make(map[string]string)
+			}
+			f.deleteAuths[keyID] = r.Header.Get("Authorization")
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
@@ -203,6 +233,18 @@ func (f *fakeCapellaApiKeys) deletedKeys() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.deleted...)
+}
+
+func (f *fakeCapellaApiKeys) createAuthorizations() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.createAuths...)
+}
+
+func (f *fakeCapellaApiKeys) deleteAuthorizations() map[string]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return maps.Clone(f.deleteAuths)
 }
 
 func writeTestConfig(t *testing.T, config *cbdcconfig.Config) string {
@@ -423,4 +465,175 @@ func TestInitRotatesPoolKeysWithNoSavedSecret(t *testing.T) {
 		{Key: "primary", Secret: "primary-secret"},
 		{Key: "pool-orphan", Secret: "rotated-pool-orphan", Name: "cbdino_pool_test_aaaaaaaa"},
 	}, savedConfig.Capella.ApiKeys)
+}
+
+// sleepRecorder stands in for the rate limit wait, so a test can check the
+// delay without spending it.
+type sleepRecorder struct {
+	mu    sync.Mutex
+	waits []time.Duration
+}
+
+func (s *sleepRecorder) sleep(wait time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.waits = append(s.waits, wait)
+}
+
+func (s *sleepRecorder) recorded() []time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]time.Duration(nil), s.waits...)
+}
+
+func recordCapellaPoolKeyWaits(t *testing.T) *sleepRecorder {
+	t.Helper()
+
+	recorder := &sleepRecorder{}
+	previousSleep := capellaPoolKeySleep
+	capellaPoolKeySleep = recorder.sleep
+	t.Cleanup(func() { capellaPoolKeySleep = previousSleep })
+
+	return recorder
+}
+
+// runTestCloudApiKeysRemove drives the real remove command against a throwaway
+// config, with the same isolation runTestInit uses.
+func runTestCloudApiKeysRemove(t *testing.T, configPath string, args ...string) {
+	t.Helper()
+
+	t.Setenv(cbdcconfig.EnvConfigPath, configPath)
+	for _, envName := range []string{
+		"CAPELLA_V4_ENDPOINT", "CAPELLA_API_KEY", "CAPELLA_API_SECRET",
+		"CAPELLA_ENDPOINT", "CAPELLA_USER", "CAPELLA_PASS",
+		"CAPELLA_OID", "CAPELLA_OVERRIDE_TOKEN", "CAPELLA_INTERNAL_SUPPORT_TOKEN",
+	} {
+		t.Setenv(envName, "")
+	}
+
+	t.Cleanup(func() {
+		cbdcconfig.SetConfigPathOverride("")
+		rootCmd.SetArgs(nil)
+	})
+
+	cmdArgs := []string{"cloud", "apikeys", "remove", "--config", configPath}
+	cmdArgs = append(cmdArgs, args...)
+
+	rootCmd.SetArgs(cmdArgs)
+	require.NoError(t, rootCmd.Execute())
+}
+
+// A created key joins the ring at once, so the creates that follow spread over
+// the pool instead of spending the primary key's whole rate budget.
+func TestInitGrowsTheRingOnCreate(t *testing.T) {
+	fake := &fakeCapellaApiKeys{}
+	endpoint := fake.start(t)
+
+	configPath := writeTestConfig(t, testCapellaConfig([]cbdcconfig.Config_CapellaApiKey{
+		{Key: "primary", Secret: "primary-secret"},
+	}, ""))
+
+	runTestInit(t, configPath, endpoint,
+		"--capella-create-pool=true",
+		"--capella-pool-name=test",
+		"--capella-pool-size=3")
+
+	createAuths := fake.createAuthorizations()
+	require.Len(t, createAuths, 3)
+
+	createdTokens := map[string]bool{
+		"Bearer secret-created-1": true,
+		"Bearer secret-created-2": true,
+	}
+	usedCreated := false
+	for _, auth := range createAuths[1:] {
+		if createdTokens[auth] {
+			usedCreated = true
+		}
+	}
+	assert.True(t, usedCreated,
+		"a create after the first must ride a created pool key, got %v", createAuths)
+}
+
+// Pool creation is the one call that waits, because a fresh machine holds the
+// primary key alone and a whole ring can be busy at the same time.
+func TestInitCreateWaitsOutARateLimitedRing(t *testing.T) {
+	recorder := recordCapellaPoolKeyWaits(t)
+
+	fake := &fakeCapellaApiKeys{rateLimitFirstCreates: 2, retryAfter: "7"}
+	endpoint := fake.start(t)
+
+	configPath := writeTestConfig(t, testCapellaConfig([]cbdcconfig.Config_CapellaApiKey{
+		{Key: "primary", Secret: "primary-secret"},
+	}, ""))
+
+	runTestInit(t, configPath, endpoint,
+		"--capella-create-pool=true",
+		"--capella-pool-name=test",
+		"--capella-pool-size=1")
+
+	assert.Equal(t, []time.Duration{7 * time.Second, 7 * time.Second}, recorder.recorded())
+	assert.Equal(t, 3, fake.createCount())
+
+	savedConfig := readTestConfig(t, configPath)
+	require.Len(t, savedConfig.Capella.ApiKeys, 2)
+	assert.Equal(t, "created-1", savedConfig.Capella.ApiKeys[1].Key)
+	assert.Equal(t, "secret-created-1", savedConfig.Capella.ApiKeys[1].Secret)
+}
+
+// A ring that stays rate limited must give up, so init cannot hang a job.
+func TestInitCreateFailsAfterThreeWaits(t *testing.T) {
+	recorder := recordCapellaPoolKeyWaits(t)
+
+	fake := &fakeCapellaApiKeys{rateLimitPastCreates: 1, retryAfter: "7"}
+	endpoint := fake.start(t)
+
+	configPath := writeTestConfig(t, testCapellaConfig([]cbdcconfig.Config_CapellaApiKey{
+		{Key: "primary", Secret: "primary-secret"},
+	}, ""))
+
+	runTestInit(t, configPath, endpoint,
+		"--capella-create-pool=true",
+		"--capella-pool-name=test",
+		"--capella-pool-size=2")
+
+	assert.Equal(t, []time.Duration{7 * time.Second, 7 * time.Second, 7 * time.Second},
+		recorder.recorded())
+	// One create succeeds, then the second one sweeps a two key ring four times.
+	assert.Equal(t, 9, fake.createCount())
+
+	savedConfig := readTestConfig(t, configPath)
+	require.Len(t, savedConfig.Capella.ApiKeys, 2)
+	assert.Equal(t, "primary", savedConfig.Capella.ApiKeys[0].Key)
+	assert.Equal(t, "created-1", savedConfig.Capella.ApiKeys[1].Key)
+	assert.Equal(t, "secret-created-1", savedConfig.Capella.ApiKeys[1].Secret)
+}
+
+// A deleted key cannot authorize anything, so its own secret must leave the
+// ring before the delete request goes out.
+func TestCloudApiKeysRemoveNeverSelfAuthorizesADelete(t *testing.T) {
+	fake := &fakeCapellaApiKeys{keys: []*capellav4.ApiKeyInfo{
+		{ID: "primary", Name: "a hand made key"},
+		{ID: "pool-one", Name: "cbdino_pool_test_aaaaaaaa"},
+		{ID: "pool-two", Name: "cbdino_pool_test_bbbbbbbb"},
+	}}
+	endpoint := fake.start(t)
+
+	config := testCapellaConfig([]cbdcconfig.Config_CapellaApiKey{
+		{Key: "primary", Secret: "primary-secret"},
+		{Key: "pool-one", Secret: "pool-one-secret", Name: "cbdino_pool_test_aaaaaaaa"},
+		{Key: "pool-two", Secret: "pool-two-secret", Name: "cbdino_pool_test_bbbbbbbb"},
+	}, "test")
+	config.Capella.V4Endpoint = endpoint
+	configPath := writeTestConfig(t, config)
+
+	runTestCloudApiKeysRemove(t, configPath)
+
+	assert.ElementsMatch(t, []string{"pool-one", "pool-two"}, fake.deletedKeys())
+
+	deleteAuths := fake.deleteAuthorizations()
+	require.Contains(t, deleteAuths, "pool-one")
+	require.Contains(t, deleteAuths, "pool-two")
+	assert.NotEqual(t, "Bearer pool-one-secret", deleteAuths["pool-one"])
+	assert.NotEqual(t, "Bearer pool-two-secret", deleteAuths["pool-two"])
 }

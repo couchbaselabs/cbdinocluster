@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"os"
@@ -17,6 +18,17 @@ const (
 	capellaPoolKeyUidLen      = 8
 	capellaPoolKeyUidAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 )
+
+const (
+	capellaPoolKeyMaxWaits  = 3
+	capellaPoolKeyMinWait   = 1 * time.Second
+	capellaPoolKeyMaxWait   = 60 * time.Second
+	capellaPoolKeyBlindWait = 60 * time.Second
+)
+
+// capellaPoolKeySleep is a variable so a test can record the waits instead of
+// spending them.
+var capellaPoolKeySleep = time.Sleep
 
 // capellaPoolKeyPrefix names the keys of one machine's pool. cbdinocluster only
 // ever creates, rotates or deletes a Capella API key whose name starts with it.
@@ -61,6 +73,38 @@ func capellaPoolKeyDescription(poolName string) string {
 	hostname, _ := os.Hostname()
 	return fmt.Sprintf("Created by cbdinocluster for %s on %s, %s.",
 		poolName, hostname, time.Now().Format("2006-01-02"))
+}
+
+// createCapellaPoolKey creates one pool key, and it is the only pool call that
+// waits out a rate limit. Every other call fails as soon as the whole key ring
+// is limited, but a pool that cannot grow leaves the machine short of keys for
+// the rest of the run.
+func createCapellaPoolKey(
+	ctx context.Context,
+	client *capellav4.Client,
+	orgID string,
+	req *capellav4.CreateApiKeyRequest,
+	sleep func(time.Duration),
+) (*capellav4.CreateApiKeyResponse, error) {
+	for waits := 0; ; waits++ {
+		createResp, err := client.CreateApiKey(ctx, orgID, req)
+		if err == nil || !capellav4.IsRateLimit(err) {
+			return createResp, err
+		}
+		if waits >= capellaPoolKeyMaxWaits {
+			return nil, err
+		}
+
+		sleep(capellaPoolKeyWait(err))
+	}
+}
+
+func capellaPoolKeyWait(err error) time.Duration {
+	wait := capellaPoolKeyBlindWait
+	if secs, ok := capellav4.RetryAfterSeconds(err); ok {
+		wait = time.Duration(secs) * time.Second
+	}
+	return min(max(wait, capellaPoolKeyMinWait), capellaPoolKeyMaxWait)
 }
 
 type capellaPoolPartition struct {
@@ -253,9 +297,11 @@ func capellaV4EndpointFor(config *cbdcconfig.Config) string {
 	return endpoint
 }
 
-// newCapellaPoolClient builds a client that uses the primary key alone. Key
-// management must not run over the round robin pool, a rotation there could
-// invalidate a secret another request is using at that moment.
+// newCapellaPoolClient builds a client that starts with the primary key alone.
+// The caller grows the ring with the pool secrets it has verified, so key
+// management shares the whole rate budget. A key's secret must leave the ring
+// before that key is rotated or deleted, a stale secret in the ring would fail
+// every call that draws it.
 func newCapellaPoolClient(config *cbdcconfig.Config, logger *zap.Logger) (*capellav4.Client, error) {
 	if !config.Capella.Enabled.Value() {
 		return nil, errors.New("capella is disabled, run `cbdinocluster init` to enable it")
