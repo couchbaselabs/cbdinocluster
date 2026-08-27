@@ -2005,7 +2005,7 @@ func init() {
 	initCmd.Flags().String("capella-api-secret", "", "Capella organization API secret to use")
 	initCmd.Flags().Bool("capella-create-pool", false, "Create the Capella API keys the key pool is missing")
 	initCmd.Flags().String("capella-pool-name", "", "Name that identifies this machine's Capella API key pool")
-	initCmd.Flags().Int("capella-pool-size", 10, "Number of Capella API keys the key pool should hold")
+	initCmd.Flags().Int("capella-pool-size", 3, "Number of Capella API keys the key pool should hold")
 	initCmd.Flags().Float64("capella-pool-expiry", 0.5,
 		"Days until a created pool key expires, -1 means never")
 	initCmd.Flags().String("capella-endpoint", "", "Capella v2 endpoint to use")
