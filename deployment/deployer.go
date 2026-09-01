@@ -180,3 +180,21 @@ type Deployer interface {
 	KillCouchbase(ctx context.Context, clusterID string, nodes []string) error
 	SetAutoFailover(ctx context.Context, clusterID string, enabled bool, timeout int) error
 }
+
+// RemoveAllOptions narrows what a scoped remove-all removes. The zero value
+// matches every cluster and performs the removal.
+type RemoveAllOptions struct {
+	// PurposePrefix keeps only the clusters whose purpose starts with it.
+	PurposePrefix string
+	// ExpiredOnly keeps only the clusters whose expiry has passed.
+	ExpiredOnly bool
+	// DryRun logs what would be removed and removes nothing.
+	DryRun bool
+}
+
+// ScopedRemoveAller is the optional interface of deployers that can restrict
+// remove-all. A deployer without it is skipped when a scope is requested, so
+// the removal never grows past what the user asked for.
+type ScopedRemoveAller interface {
+	RemoveAllScoped(ctx context.Context, opts RemoveAllOptions) error
+}
