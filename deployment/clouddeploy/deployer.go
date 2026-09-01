@@ -48,6 +48,7 @@ type Deployer struct {
 }
 
 var _ deployment.Deployer = (*Deployer)(nil)
+var _ deployment.ScopedRemoveAller = (*Deployer)(nil)
 
 type NewDeployerOptions struct {
 	Logger                   *zap.Logger
@@ -1779,12 +1780,55 @@ func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (
 	return failedProjects, errs
 }
 
+// removeAllShouldTake decides if a scoped remove-all takes the project. It is
+// pure so tests can cover the scope rules without API calls.
+func removeAllShouldTake(meta *stringclustermeta.MetaData, opts deployment.RemoveAllOptions, now time.Time) bool {
+	if opts.PurposePrefix != "" && !strings.HasPrefix(meta.Purpose, opts.PurposePrefix) {
+		return false
+	}
+	if opts.ExpiredOnly && (meta.Expiry.IsZero() || meta.Expiry.After(now)) {
+		return false
+	}
+	return true
+}
+
 func (p *Deployer) RemoveAll(ctx context.Context) error {
+	return p.removeAll(ctx, deployment.RemoveAllOptions{})
+}
+
+func (p *Deployer) RemoveAllScoped(ctx context.Context, opts deployment.RemoveAllOptions) error {
+	return p.removeAll(ctx, opts)
+}
+
+func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptions) error {
 	var errs error
 
-	projects, err := p.listCbdc2Projects(ctx)
+	allProjects, err := p.listCbdc2Projects(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to list projects")
+	}
+
+	now := time.Now()
+	var projects []cbdc2Project
+	for _, project := range allProjects {
+		if removeAllShouldTake(project.Meta, opts, now) {
+			projects = append(projects, project)
+		}
+	}
+
+	if opts.DryRun {
+		for _, project := range projects {
+			p.logger.Info("dry run, would remove the project and its clusters",
+				zap.String("project-id", project.Info.ID),
+				zap.String("project-name", project.Info.Name),
+				zap.String("purpose", project.Meta.Purpose),
+				zap.Time("expiry", project.Meta.Expiry))
+		}
+
+		p.logger.Info("dry run finished, nothing was removed",
+			zap.Int("projects-in-scope", len(projects)),
+			zap.Int("projects-total", len(allProjects)))
+		return nil
 	}
 
 	// A corrupted project can hold more than one cluster, which inspectProject

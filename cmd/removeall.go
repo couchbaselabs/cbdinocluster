@@ -8,12 +8,35 @@ import (
 )
 
 var removeAllCmd = &cobra.Command{
-	Use:   "remove-all [deployer-name]",
+	Use:   "remove-all [flags] [deployer-name]",
 	Short: "Removes all running clusters",
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
+
+		purpose, _ := cmd.Flags().GetString("purpose")
+		expiredOnly, _ := cmd.Flags().GetBool("expired-only")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		all, _ := cmd.Flags().GetBool("all")
+
+		if all && (purpose != "" || expiredOnly) {
+			logger.Fatal("--all cannot combine with --purpose or --expired-only")
+		}
+		// A dry run is not a scope, it only changes the action.
+		if !all && purpose == "" && !expiredOnly {
+			logger.Fatal("remove-all needs a scope. Pass --purpose or --expired-only to limit " +
+				"the removal, or pass --all to remove every cluster. Add --dry-run to preview, " +
+				"for example --all --dry-run previews everything")
+		}
+
+		// --all without --dry-run keeps the old unscoped behavior.
+		scoped := !all || dryRun
+		opts := deployment.RemoveAllOptions{
+			PurposePrefix: purpose,
+			ExpiredOnly:   expiredOnly,
+			DryRun:        dryRun,
+		}
 
 		var deployers map[string]deployment.Deployer
 		if len(args) >= 1 {
@@ -29,6 +52,24 @@ var removeAllCmd = &cobra.Command{
 		for deployerName, deployer := range deployers {
 			logger.Info("removing all clusters",
 				zap.String("deployer", deployerName))
+
+			if scoped {
+				scopedDeployer, ok := deployer.(deployment.ScopedRemoveAller)
+				if !ok {
+					logger.Warn("deployer does not support scoped remove-all, skipping it",
+						zap.String("deployer", deployerName))
+					continue
+				}
+
+				err := scopedDeployer.RemoveAllScoped(ctx, opts)
+				if err != nil {
+					logger.Fatal("failed to remove all clusters", zap.Error(err))
+				}
+
+				// The private DNS sweep below removes every entry, which a scoped
+				// removal must not do. Cleanup takes the stale entries later.
+				continue
+			}
 
 			err := deployer.RemoveAll(ctx)
 			if err != nil {
@@ -57,4 +98,9 @@ var removeAllCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(removeAllCmd)
+
+	removeAllCmd.Flags().String("purpose", "", "Only remove the clusters whose purpose starts with this prefix")
+	removeAllCmd.Flags().Bool("expired-only", false, "Only remove the clusters whose expiry has passed")
+	removeAllCmd.Flags().Bool("dry-run", false, "Print what would be removed and remove nothing")
+	removeAllCmd.Flags().Bool("all", false, "Remove every cluster the deployers own, without any scope")
 }
