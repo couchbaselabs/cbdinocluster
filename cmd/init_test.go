@@ -291,11 +291,13 @@ func runTestInit(t *testing.T, configPath, v4Endpoint string, poolArgs ...string
 	})
 
 	// Cobra flags are process globals, so a value set by one Execute leaks into
-	// the next. The expiry flag is the only pool flag the base args leave unset.
-	expiryFlag := initCmd.Flags().Lookup("capella-pool-expiry")
-	require.NotNil(t, expiryFlag)
-	require.NoError(t, expiryFlag.Value.Set(expiryFlag.DefValue))
-	expiryFlag.Changed = false
+	// the next. Reset the flags the base args leave unset.
+	for _, flagName := range []string{"capella-pool-expiry", "purpose-prefix"} {
+		flag := initCmd.Flags().Lookup(flagName)
+		require.NotNil(t, flag)
+		require.NoError(t, flag.Value.Set(flag.DefValue))
+		flag.Changed = false
+	}
 
 	args := []string{"init", "--auto",
 		"--config", configPath,
@@ -636,4 +638,40 @@ func TestCloudApiKeysRemoveNeverSelfAuthorizesADelete(t *testing.T) {
 	require.Contains(t, deleteAuths, "pool-two")
 	assert.NotEqual(t, "Bearer pool-one-secret", deleteAuths["pool-one"])
 	assert.NotEqual(t, "Bearer pool-two-secret", deleteAuths["pool-two"])
+}
+
+// A CI config sets the purpose prefix once at init, so every cluster a job
+// allocates carries the run stamp.
+func TestInitSavesThePurposePrefix(t *testing.T) {
+	fake := &fakeCapellaApiKeys{}
+	endpoint := fake.start(t)
+
+	configPath := writeTestConfig(t, testCapellaConfig([]cbdcconfig.Config_CapellaApiKey{
+		{Key: "primary", Secret: "primary-secret"},
+	}, "test"))
+
+	runTestInit(t, configPath, endpoint, "--purpose-prefix=fitcli-run42")
+
+	savedConfig := readTestConfig(t, configPath)
+	assert.Equal(t, "fitcli-run42", savedConfig.PurposePrefix)
+}
+
+// A human's local config must stay without a purpose prefix, so their manual
+// clusters keep the purpose they ask for.
+func TestInitLeavesThePurposePrefixUnset(t *testing.T) {
+	fake := &fakeCapellaApiKeys{}
+	endpoint := fake.start(t)
+
+	configPath := writeTestConfig(t, testCapellaConfig([]cbdcconfig.Config_CapellaApiKey{
+		{Key: "primary", Secret: "primary-secret"},
+	}, "test"))
+
+	runTestInit(t, configPath, endpoint)
+
+	savedConfig := readTestConfig(t, configPath)
+	assert.Empty(t, savedConfig.PurposePrefix)
+
+	savedBytes, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+	assert.NotContains(t, string(savedBytes), "purpose-prefix")
 }
