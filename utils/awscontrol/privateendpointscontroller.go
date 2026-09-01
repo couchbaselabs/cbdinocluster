@@ -3,6 +3,7 @@ package awscontrol
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -11,6 +12,9 @@ import (
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
+
+// deleteVpcEndpointsMaxBatchSize is AWS's limit on how many endpoints a single DeleteVpcEndpoints call accepts.
+const deleteVpcEndpointsMaxBatchSize = 25
 
 type PrivateEndpointsController struct {
 	Logger      *zap.Logger
@@ -203,11 +207,21 @@ func (c *PrivateEndpointsController) cleanupVpcEndpoints(ctx context.Context) er
 	if len(endpointIdsToRemove) > 0 {
 		c.Logger.Info("removing vpc endpoints", zap.Strings("endpoint-ids", endpointIdsToRemove))
 
-		_, err = ec2Client.DeleteVpcEndpoints(ctx, &ec2.DeleteVpcEndpointsInput{
-			VpcEndpointIds: endpointIdsToRemove,
-		})
-		if err != nil {
-			return errors.Wrap(err, "failed to remove endpoints")
+		// DeleteVpcEndpoints only accepts up to deleteVpcEndpointsMaxBatchSize ids per call,
+		// so we have to batch the removals.
+		var deleteErr error
+		for batch := range slices.Chunk(endpointIdsToRemove, deleteVpcEndpointsMaxBatchSize) {
+			_, err = ec2Client.DeleteVpcEndpoints(ctx, &ec2.DeleteVpcEndpointsInput{
+				VpcEndpointIds: batch,
+			})
+			if err != nil {
+				deleteErr = errors.Wrap(err, "failed to remove endpoints")
+				c.Logger.Error("failed to remove batch of vpc endpoints", zap.Strings("endpoint-ids", batch), zap.Error(err))
+				continue
+			}
+		}
+		if deleteErr != nil {
+			return deleteErr
 		}
 
 		c.Logger.Info("removed endpoints")
