@@ -306,7 +306,9 @@ func (p *Deployer) listClusters(ctx context.Context) ([]*clusterInfo, error) {
 	return p.findClusters(ctx, "")
 }
 
-func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterInfo, error) {
+// findClusterInfo returns the project whose meta ID matches, inspected, with
+// no check on its state, so it also finds an empty or a corrupted project.
+func (p *Deployer) findClusterInfo(ctx context.Context, clusterID string) (*clusterInfo, error) {
 	projects, err := p.listCbdc2Projects(ctx)
 	if err != nil {
 		return nil, err
@@ -323,7 +325,11 @@ func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterIn
 		return nil, errors.New("failed to find cluster")
 	}
 
-	foundCluster, err := p.inspectProject(ctx, *foundProject)
+	return p.inspectProject(ctx, *foundProject)
+}
+
+func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterInfo, error) {
+	foundCluster, err := p.findClusterInfo(ctx, clusterID)
 	if err != nil {
 		return nil, err
 	}
@@ -1301,7 +1307,19 @@ func (p *Deployer) deleteCloudCluster(ctx context.Context, projectID, clusterID 
 func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) error {
 	p.logger.Debug("deleting the cloud cluster", zap.String("cluster-id", clusterInfo.Meta.ID.String()))
 
-	if clusterInfo.Cluster != nil {
+	if clusterInfo.IsCorrupted {
+		// A corrupted project holds more than one cluster, and Capella refuses
+		// to delete a project that still holds any, so remove them all first.
+		targets, err := p.listRemovalTargets(ctx, clusterInfo.ProjectID)
+		if err != nil {
+			return errors.Wrap(err, "failed to list the clusters of the corrupted project")
+		}
+
+		_, err = p.removeTargets(ctx, targets)
+		if err != nil {
+			return err
+		}
+	} else if clusterInfo.Cluster != nil {
 		err := p.deleteCloudCluster(ctx, clusterInfo.ProjectID, clusterInfo.Cluster.ID)
 		if err != nil {
 			return errors.Wrap(err, "failed to delete cluster")
@@ -1344,8 +1362,10 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 	return nil
 }
 
+// RemoveCluster does not use getCluster on purpose, so it also removes an
+// empty project and a corrupted one.
 func (p *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
-	clusterInfo, err := p.getCluster(ctx, clusterID)
+	clusterInfo, err := p.findClusterInfo(ctx, clusterID)
 	if err != nil {
 		return err
 	}
@@ -1674,50 +1694,38 @@ type removalTarget struct {
 	isColumnar   bool
 }
 
-func (p *Deployer) RemoveAll(ctx context.Context) error {
+// listRemovalTargets returns every cluster the project holds, with the extra
+// lookup a columnar deletion wait needs. It can return targets next to an
+// error when only a part of the listing failed.
+func (p *Deployer) listRemovalTargets(ctx context.Context, projectID string) ([]removalTarget, error) {
 	var errs error
-
-	projects, err := p.listCbdc2Projects(ctx)
-	if err != nil {
-		return errors.Wrap(err, "failed to list projects")
-	}
-
-	// A corrupted project can hold more than one cluster, which inspectProject
-	// collapses into one.
 	var targets []removalTarget
-	failedProjects := make(map[string]bool)
-	for _, project := range projects {
-		clusters, err := p.v4.ListClusters(ctx, p.tenantID, project.Info.ID)
-		if err != nil {
-			errs = multierr.Append(errs, errors.Wrap(err, "failed to list clusters"))
-			failedProjects[project.Info.ID] = true
-			continue
-		}
 
+	clusters, err := p.v4.ListClusters(ctx, p.tenantID, projectID)
+	if err != nil {
+		errs = multierr.Append(errs, errors.Wrap(err, "failed to list clusters"))
+	} else {
 		for _, cluster := range clusters {
 			targets = append(targets, removalTarget{
-				projectID: project.Info.ID,
+				projectID: projectID,
 				clusterID: cluster.ID,
 			})
 		}
+	}
 
-		columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, project.Info.ID)
-		if err != nil {
-			errs = multierr.Append(errs, errors.Wrap(err, "failed to list analytics clusters"))
-			failedProjects[project.Info.ID] = true
-			continue
-		}
-
+	columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, projectID)
+	if err != nil {
+		errs = multierr.Append(errs, errors.Wrap(err, "failed to list analytics clusters"))
+	} else {
 		for _, columnar := range columnars {
 			detail, err := p.columnarV2DetailByID(ctx, columnar.ID)
 			if err != nil {
 				errs = multierr.Append(errs, err)
-				failedProjects[project.Info.ID] = true
 				continue
 			}
 
 			targets = append(targets, removalTarget{
-				projectID:    project.Info.ID,
+				projectID:    projectID,
 				clusterID:    columnar.ID,
 				underlyingID: detail.Config.Id,
 				isColumnar:   true,
@@ -1725,11 +1733,20 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		}
 	}
 
-	p.logger.Info("found clusters to remove", zap.Int("count", len(targets)))
+	return targets, errs
+}
+
+// removeTargets deletes the clusters first and waits after, so the deletions
+// run in parallel on the Capella side. It reports the projects that still
+// hold a cluster, which Capella refuses to delete.
+func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (map[string]bool, error) {
+	var errs error
+	failedProjects := make(map[string]bool)
 
 	for _, target := range targets {
 		p.logger.Info("removing a cluster", zap.String("cluster-id", target.clusterID))
 
+		var err error
 		if target.isColumnar {
 			err = p.client.DeleteColumnar(ctx, p.tenantID, target.projectID, target.clusterID)
 			if capellav4.IsNotFound(err) {
@@ -1747,6 +1764,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 	for _, target := range targets {
 		p.logger.Info("waiting for cluster removal to complete", zap.String("cluster-id", target.clusterID))
 
+		var err error
 		if target.isColumnar {
 			err = p.mgr.WaitForColumnarDeletion(ctx, p.tenantID, target.clusterID, target.underlyingID)
 		} else {
@@ -1756,6 +1774,41 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 			errs = multierr.Append(errs, errors.Wrap(err, "failed to wait for cluster to complete"))
 			failedProjects[target.projectID] = true
 		}
+	}
+
+	return failedProjects, errs
+}
+
+func (p *Deployer) RemoveAll(ctx context.Context) error {
+	var errs error
+
+	projects, err := p.listCbdc2Projects(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to list projects")
+	}
+
+	// A corrupted project can hold more than one cluster, which inspectProject
+	// collapses into one.
+	var targets []removalTarget
+	failedProjects := make(map[string]bool)
+	for _, project := range projects {
+		projectTargets, err := p.listRemovalTargets(ctx, project.Info.ID)
+		if err != nil {
+			errs = multierr.Append(errs, err)
+			failedProjects[project.Info.ID] = true
+		}
+
+		targets = append(targets, projectTargets...)
+	}
+
+	p.logger.Info("found clusters to remove", zap.Int("count", len(targets)))
+
+	removalFailed, err := p.removeTargets(ctx, targets)
+	if err != nil {
+		errs = multierr.Append(errs, err)
+	}
+	for projectID := range removalFailed {
+		failedProjects[projectID] = true
 	}
 
 	// Capella refuses to delete a project that still holds a cluster.
