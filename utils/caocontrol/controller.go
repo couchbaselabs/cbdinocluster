@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,7 +33,9 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	kyaml "k8s.io/apimachinery/pkg/util/yaml"
 )
 
@@ -1099,7 +1102,7 @@ func (c *Controller) CreateCbdcCngService(ctx context.Context, namespace string,
 		return errors.Wrap(err, "failed to create kubernetes client")
 	}
 
-	origSvcName := fmt.Sprintf("%s-cloud-native-gateway-service", clusterName)
+	origSvcName := cngServiceName(clusterName)
 	cngSvc, err := kubes.CoreV1().Services(namespace).Get(ctx, origSvcName, metav1.GetOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to find cng service")
@@ -1437,10 +1440,34 @@ func (c *Controller) CollectLogs(ctx context.Context, namespace string, clusterN
 		return nil, errors.New("namespace must be specified")
 	}
 
+	cngPaths, err := c.CollectCngLogs(ctx, namespace, clusterName, destPath)
+	if err != nil {
+		c.logger.Warn("failed to collect cng logs", zap.Error(err))
+	}
+
+	caoPaths, err := c.CollectCaoLogs(ctx, namespace, clusterName, destPath)
+	if err != nil {
+		if len(cngPaths) > 0 {
+			c.logger.Warn("cng logs were collected before cao collection failed",
+				zap.Strings("paths", cngPaths))
+		}
+
+		return nil, errors.Wrap(err, "failed to collect cao logs")
+	}
+
+	return append(cngPaths, caoPaths...), nil
+}
+
+func (c *Controller) CollectCaoLogs(ctx context.Context, namespace string, clusterName string, destPath string) ([]string, error) {
+	if namespace == "" {
+		return nil, errors.New("namespace must be specified")
+	}
+
 	tmpDir, err := os.MkdirTemp("", "caologs")
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create temporary logs directory")
 	}
+	defer os.RemoveAll(tmpDir)
 
 	c.logger.Info("executing log collection",
 		zap.String("namespace", namespace),
@@ -1457,20 +1484,32 @@ func (c *Controller) CollectLogs(ctx context.Context, namespace string, clusterN
 
 	err = c.caoExecAndPipe(ctx, c.logger, createArgs)
 	if err != nil {
+		partialPaths, moveErr := c.moveLogsToDest(tmpDir, destPath)
+		c.logger.Warn("preserving partially collected logs",
+			zap.Strings("paths", partialPaths),
+			zap.Error(moveErr))
+
 		return nil, errors.Wrap(err, "failed to execute collect-logs")
 	}
 
 	c.logger.Info("logs collected")
 
+	return c.moveLogsToDest(tmpDir, destPath)
+}
+
+func (c *Controller) moveLogsToDest(tmpDir string, destPath string) ([]string, error) {
 	files, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list collected log files")
 	}
 
+	if len(files) == 0 {
+		return nil, nil
+	}
+
 	var destPaths []string
 	for _, file := range files {
-		destFilePath := filepath.Join(destPath, file.Name())
-		destPaths = append(destPaths, destFilePath)
+		destPaths = append(destPaths, filepath.Join(destPath, file.Name()))
 	}
 
 	err = filehelper.MoveDir(tmpDir, destPath)
@@ -1479,4 +1518,181 @@ func (c *Controller) CollectLogs(ctx context.Context, namespace string, clusterN
 	}
 
 	return destPaths, nil
+}
+
+func cngServiceName(clusterName string) string {
+	return fmt.Sprintf("%s-cloud-native-gateway-service", clusterName)
+}
+
+func (c *Controller) clusterHasCng(ctx context.Context, namespace string, clusterName string) (bool, error) {
+	cluster, err := c.GetCouchbaseCluster(ctx, namespace, clusterName)
+	if err != nil {
+		return false, errors.Wrap(err, "failed to get couchbase cluster")
+	}
+
+	cngSpec, found, err := unstructured.NestedFieldNoCopy(cluster.Object, "spec", "networking", "cloudNativeGateway")
+	if err != nil {
+		return false, errors.Wrap(err, "failed to read cng cluster spec")
+	}
+
+	return found && cngSpec != nil, nil
+}
+
+func (c *Controller) CollectCngLogs(ctx context.Context, namespace string, clusterName string, destPath string) ([]string, error) {
+	if namespace == "" {
+		return nil, errors.New("namespace must be specified")
+	}
+
+	hasCng, err := c.clusterHasCng(ctx, namespace, clusterName)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to determine whether the cluster has a cng")
+	}
+
+	if !hasCng {
+		c.logger.Info("cluster has no cng configured, skipping cng log collection")
+		return nil, nil
+	}
+
+	service, err := c.GetService(ctx, namespace, cngServiceName(clusterName))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get cng service")
+	}
+
+	if len(service.Spec.Selector) == 0 {
+		return nil, errors.New("cng service has no selector")
+	}
+
+	kubes, err := kubernetes.NewForConfig(c.restConfig)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create kubernetes client")
+	}
+
+	pods, err := kubes.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.Set(service.Spec.Selector).String(),
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list cng pods")
+	}
+
+	if len(pods.Items) == 0 {
+		return nil, errors.Errorf("cng service '%s' selected no pods", service.Name)
+	}
+
+	tmpDir, err := os.MkdirTemp("", "cnglogs")
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to create temporary logs directory")
+	}
+	defer os.RemoveAll(tmpDir)
+
+	c.logger.Info("executing cng log collection",
+		zap.String("namespace", namespace),
+		zap.String("tmp-dir", tmpDir))
+
+	var collectErrs []error
+	for _, target := range c.cngLogTargets(pods.Items, service) {
+		destFilePath := filepath.Join(tmpDir, fmt.Sprintf("%s-%s.log", target.PodName, target.ContainerName))
+
+		err := c.writeCngLog(ctx, kubes, namespace, target.PodName, target.ContainerName, destFilePath)
+		if err != nil {
+			c.logger.Warn("failed to collect container logs",
+				zap.String("pod", target.PodName),
+				zap.String("container", target.ContainerName),
+				zap.Error(err))
+
+			collectErrs = append(collectErrs, err)
+		}
+	}
+
+	destPaths, err := c.moveLogsToDest(tmpDir, destPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(destPaths) == 0 && len(collectErrs) > 0 {
+		return nil, stderrors.Join(collectErrs...)
+	}
+
+	c.logger.Info("cng logs collected",
+		zap.Int("collected", len(destPaths)),
+		zap.Int("failed", len(collectErrs)),
+		zap.Error(stderrors.Join(collectErrs...)))
+
+	return destPaths, nil
+}
+
+func (c *Controller) writeCngLog(ctx context.Context, kubes *kubernetes.Clientset, namespace string, podName string, containerName string, destFilePath string) error {
+	logStream, err := kubes.CoreV1().Pods(namespace).GetLogs(podName, &corev1.PodLogOptions{
+		Container:  containerName,
+		Timestamps: true,
+	}).Stream(ctx)
+	if err != nil {
+		return errors.Wrap(err, "failed to open container log stream")
+	}
+	defer logStream.Close()
+
+	destFile, err := os.Create(destFilePath)
+	if err != nil {
+		return errors.Wrap(err, "failed to create container log file")
+	}
+
+	_, copyErr := io.Copy(destFile, logStream)
+	if err := stderrors.Join(copyErr, destFile.Close()); err != nil {
+		_ = os.Remove(destFilePath)
+
+		return errors.Wrap(err, "failed to write container logs")
+	}
+
+	return nil
+}
+
+func containerServesPort(container corev1.Container, servicePorts []corev1.ServicePort) bool {
+	for _, servicePort := range servicePorts {
+		targetPort := servicePort.TargetPort
+		if targetPort.Type == intstr.Int && targetPort.IntVal == 0 {
+			targetPort = intstr.FromInt32(servicePort.Port)
+		}
+
+		for _, containerPort := range container.Ports {
+			if targetPort.Type == intstr.String {
+				if containerPort.Name != "" && containerPort.Name == targetPort.StrVal {
+					return true
+				}
+			} else if containerPort.ContainerPort == targetPort.IntVal {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+type cngLogTarget struct{ PodName, ContainerName string }
+
+func (c *Controller) cngLogTargets(pods []corev1.Pod, service *corev1.Service) []cngLogTarget {
+	var targets []cngLogTarget
+
+	for _, pod := range pods {
+		var matched, all []cngLogTarget
+
+		for _, container := range pod.Spec.Containers {
+			target := cngLogTarget{pod.Name, container.Name}
+			all = append(all, target)
+
+			if containerServesPort(container, service.Spec.Ports) {
+				matched = append(matched, target)
+			}
+		}
+
+		if len(matched) == 0 && len(all) > 0 {
+			c.logger.Warn("no container declares the cng service target port, collecting every container in the pod",
+				zap.String("service", service.Name),
+				zap.String("pod", pod.Name))
+
+			matched = all
+		}
+
+		targets = append(targets, matched...)
+	}
+
+	return targets
 }
