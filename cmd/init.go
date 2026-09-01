@@ -1882,6 +1882,7 @@ var initCmd = &cobra.Command{
 		printBaseConfig := func() {
 			fmt.Printf("  Default Deployer: %s\n", curConfig.DefaultDeployer)
 			fmt.Printf("  Default Expiry: %s\n", curConfig.DefaultExpiry.String())
+			fmt.Printf("  Purpose Prefix: %s\n", curConfig.PurposePrefix)
 		}
 		{
 			fmt.Printf("-- Base Configuration\n")
@@ -1913,6 +1914,21 @@ var initCmd = &cobra.Command{
 					defaultExpiry)
 
 				curConfig.DefaultExpiry = defaultExpiry
+			}
+
+			{
+				flagPurposePrefix, _ := cmd.Flags().GetString("purpose-prefix")
+
+				purposePrefix := curConfig.PurposePrefix
+				if flagPurposePrefix != "" {
+					purposePrefix = flagPurposePrefix
+				}
+
+				purposePrefix = readString(
+					"What prefix should we add to the purpose of every cluster?",
+					purposePrefix, false)
+
+				curConfig.PurposePrefix = purposePrefix
 			}
 
 			saveConfig()
@@ -2031,4 +2047,5 @@ func init() {
 	initCmd.Flags().Bool("disable-dns", false, "Disable DNS")
 	initCmd.Flags().String("dns-hostname", "", "DNS hostname prefix to use")
 	initCmd.Flags().String("upload-server-logs-host-name", "", "Upload server logs host name")
+	initCmd.Flags().String("purpose-prefix", "", "Prefix added to the purpose of every cluster this config allocates")
 }
