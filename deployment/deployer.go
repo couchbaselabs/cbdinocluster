@@ -198,3 +198,9 @@ type RemoveAllOptions struct {
 type ScopedRemoveAller interface {
 	RemoveAllScoped(ctx context.Context, opts RemoveAllOptions) error
 }
+
+// DryRunCleaner is the optional interface of deployers that can report what
+// Cleanup would delete without deleting it.
+type DryRunCleaner interface {
+	CleanupDryRun(ctx context.Context) error
+}
