@@ -49,6 +49,7 @@ type Deployer struct {
 
 var _ deployment.Deployer = (*Deployer)(nil)
 var _ deployment.ScopedRemoveAller = (*Deployer)(nil)
+var _ deployment.DryRunCleaner = (*Deployer)(nil)
 
 type NewDeployerOptions struct {
 	Logger                   *zap.Logger
@@ -1927,6 +1928,14 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 }
 
 func (p *Deployer) Cleanup(ctx context.Context) error {
+	return p.cleanup(ctx, false)
+}
+
+func (p *Deployer) CleanupDryRun(ctx context.Context) error {
+	return p.cleanup(ctx, true)
+}
+
+func (p *Deployer) cleanup(ctx context.Context, dryRun bool) error {
 	// we just use our own commands to do this easily...
 	clusters, err := p.listClusters(ctx)
 	if err != nil {
@@ -1942,6 +1951,13 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 		// belong to a run still in flight.
 		if cluster.Cluster == nil && cluster.Columnar == nil && !cluster.IsCorrupted {
 			if !expired {
+				continue
+			}
+
+			if dryRun {
+				p.logger.Info("dry run, would remove the empty project, it is expired",
+					zap.String("project-id", cluster.ProjectID),
+					zap.String("project-name", cluster.ProjectName))
 				continue
 			}
 
@@ -1989,6 +2005,15 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 				}
 			}
 
+			if dryRun {
+				p.logger.Info("dry run, would remove the cluster and its project, it is expired",
+					zap.String("cluster-id", cluster.Meta.ID.String()),
+					zap.String("project-id", cluster.ProjectID),
+					zap.Bool("corrupted", cluster.IsCorrupted),
+					zap.Time("expiry", cluster.Meta.Expiry))
+				continue
+			}
+
 			p.logger.Info("removing cluster",
 				zap.String("cluster-id", cluster.Meta.ID.String()),
 				zap.String("current-state", currentState))
@@ -2004,6 +2029,10 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 
 	if allErr != nil {
 		return multierr.Combine(allErr)
+	}
+
+	if dryRun {
+		p.logger.Info("dry run finished, nothing was removed")
 	}
 
 	return nil

@@ -16,6 +16,12 @@ type cleanableTarget interface {
 	Cleanup(ctx context.Context) error
 }
 
+// dryRunCleanableTarget marks the cleaners that can report what a cleanup
+// would delete without deleting it. The others are skipped on a dry run.
+type dryRunCleanableTarget interface {
+	CleanupDryRun(ctx context.Context) error
+}
+
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup [flags] [deployer-name]",
 	Short: "Cleans up any expired resources for a deployer, or for every deployer",
@@ -25,6 +31,8 @@ var cleanupCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 		config := helper.GetConfig(ctx)
+
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
 
 		cleaners := make(map[string]cleanableTarget)
 
@@ -126,6 +134,26 @@ var cleanupCmd = &cobra.Command{
 		for _, cleanerName := range finalCleanupOrder {
 			cleaner := cleaners[cleanerName]
 
+			if dryRun {
+				dryRunCleaner, ok := cleaner.(dryRunCleanableTarget)
+				if !ok {
+					logger.Info("cleaner does not support dry-run, skipping it",
+						zap.String("cleaner", cleanerName))
+					continue
+				}
+
+				logger.Info("running cleanup dry run",
+					zap.String("cleaner", cleanerName))
+
+				err := dryRunCleaner.CleanupDryRun(ctx)
+				if err != nil {
+					failed = true
+					logger.Error("failed to inspect resources",
+						zap.String("cleaner", cleanerName), zap.Error(err))
+				}
+				continue
+			}
+
 			logger.Info("running cleanup",
 				zap.String("cleaner", cleanerName))
 
@@ -145,4 +173,6 @@ var cleanupCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(cleanupCmd)
+
+	cleanupCmd.Flags().Bool("dry-run", false, "Print what would be deleted and delete nothing")
 }
