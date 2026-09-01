@@ -601,6 +601,16 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 	cloudProjectID := newProject.ID
 
+	// A cluster that exists but never went healthy is kept with its project,
+	// the debris may be worth inspecting and cleanup takes it once it expires.
+	// Only a failure before the cluster exists deletes the project again.
+	projectIsEmpty := true
+	defer func() {
+		if projectIsEmpty {
+			p.deleteFailedProject(ctx, cloudProjectID, projectName)
+		}
+	}()
+
 	cloudProvider, cloudRegion, err := p.resolveCloudLocation(def)
 	if err != nil {
 		return nil, err
@@ -678,6 +688,7 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return nil, errors.Wrap(err, "failed to create cluster")
 	}
 
+	projectIsEmpty = false
 	cloudClusterID := newCluster.Id
 
 	p.logger.Debug("waiting for cluster creation to complete")
@@ -755,6 +766,16 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 	cloudProjectID := newProject.ID
 
+	// A cluster that exists but never went healthy is kept with its project,
+	// the debris may be worth inspecting and cleanup takes it once it expires.
+	// Only a failure before the cluster exists deletes the project again.
+	projectIsEmpty := true
+	defer func() {
+		if projectIsEmpty {
+			p.deleteFailedProject(ctx, cloudProjectID, projectName)
+		}
+	}()
+
 	p.logger.Debug("creating a new cloud cluster")
 
 	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
@@ -783,6 +804,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.Wrap(err, "failed to create cluster")
 		}
 
+		projectIsEmpty = false
 		cloudClusterID = newCluster.ID
 
 		p.logger.Debug("waiting for creation to complete")
@@ -821,6 +843,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.Wrap(err, "failed to create cluster")
 		}
 
+		projectIsEmpty = false
 		cloudClusterID = newCluster.ID
 
 		p.logger.Debug("waiting for creation to complete")
@@ -894,6 +917,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.Wrap(err, "failed to create columnar")
 		}
 
+		projectIsEmpty = false
 		cloudClusterID = newCluster.Id
 
 		p.logger.Debug("waiting for creation to complete")
@@ -1222,6 +1246,40 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 	return errors.New("clouddeploy does not support cluster node removal")
 }
 
+// canDeleteProjectName reports if cbdinocluster owns the project, which means
+// the project name parses as cbdc2 meta data. A later change can also refuse
+// a configured shared project here.
+func canDeleteProjectName(projectName string) bool {
+	meta, err := stringclustermeta.Parse(projectName)
+	return err == nil && meta != nil
+}
+
+// deleteProject is the only path that may delete a project, so the ownership
+// guard covers every caller.
+func (p *Deployer) deleteProject(ctx context.Context, projectID string, projectName string) error {
+	if !canDeleteProjectName(projectName) {
+		return errors.Errorf("refusing to delete project %s, the name %q is not owned by cbdinocluster",
+			projectID, projectName)
+	}
+
+	return p.v4.DeleteProject(ctx, p.tenantID, projectID)
+}
+
+// deleteFailedProject removes the project of a create that failed before it
+// held a cluster, so a failed allocate leaks nothing. Best effort, cleanup
+// removes the project once it expires when this fails.
+func (p *Deployer) deleteFailedProject(ctx context.Context, projectID string, projectName string) {
+	p.logger.Info("deleting the project of the failed allocate",
+		zap.String("project-id", projectID))
+
+	err := p.deleteProject(ctx, projectID, projectName)
+	if err != nil {
+		p.logger.Warn("failed to delete the project of the failed allocate",
+			zap.String("project-id", projectID),
+			zap.Error(err))
+	}
+}
+
 // A free tier cluster has its own delete endpoint, and the generic cluster
 // record does not identify the tier, so fall back to the free tier endpoint
 // when the generic delete is rejected.
@@ -1278,7 +1336,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 
 	p.logger.Debug("deleting the cloud project")
 
-	err := p.v4.DeleteProject(ctx, p.tenantID, clusterInfo.ProjectID)
+	err := p.deleteProject(ctx, clusterInfo.ProjectID, clusterInfo.ProjectName)
 	if err != nil && !capellav4.IsProjectNotFound(err) {
 		return errors.Wrap(err, "failed to delete project")
 	}
@@ -1710,7 +1768,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 
 		p.logger.Info("removing a project", zap.String("project-id", project.Info.ID))
 
-		err := p.v4.DeleteProject(ctx, p.tenantID, project.Info.ID)
+		err := p.deleteProject(ctx, project.Info.ID, project.Info.Name)
 		if err != nil && !capellav4.IsProjectNotFound(err) {
 			errs = multierr.Append(errs, errors.Wrap(err, "failed to remove project"))
 		}
@@ -1793,7 +1851,7 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 			p.logger.Info("removing empty project",
 				zap.String("project-id", cluster.ProjectID))
 
-			err := p.v4.DeleteProject(ctx, p.tenantID, cluster.ProjectID)
+			err := p.deleteProject(ctx, cluster.ProjectID, cluster.ProjectName)
 			if err != nil && !capellav4.IsProjectNotFound(err) {
 				allErr = multierr.Append(allErr, errors.Wrapf(err, "project_id: %s", cluster.ProjectID))
 			}
