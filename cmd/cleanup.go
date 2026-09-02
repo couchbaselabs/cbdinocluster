@@ -8,6 +8,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -17,7 +18,8 @@ type cleanableTarget interface {
 
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup [flags] [deployer-name]",
-	Short: "Cleans up any expired resources for a deployer",
+	Short: "Cleans up any expired resources for a deployer, or for every deployer",
+	Args:  cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
 		logger := helper.GetLogger()
@@ -86,6 +88,11 @@ var cleanupCmd = &cobra.Command{
 		if len(args) >= 1 {
 			selectedCleaner := args[0]
 			cleaner := cleaners[selectedCleaner]
+			if cleaner == nil {
+				logger.Fatal("the specified deployer is not available",
+					zap.String("deployer", selectedCleaner),
+					zap.Strings("available", maps.Keys(cleaners)))
+			}
 			cleaners = map[string]cleanableTarget{
 				selectedCleaner: cleaner,
 			}
@@ -114,6 +121,8 @@ var cleanupCmd = &cobra.Command{
 		logger.Info("identified cleaners and order",
 			zap.Strings("cleaners", finalCleanupOrder))
 
+		// Keep sweeping the other deployers, then report.
+		failed := false
 		for _, cleanerName := range finalCleanupOrder {
 			cleaner := cleaners[cleanerName]
 
@@ -122,8 +131,14 @@ var cleanupCmd = &cobra.Command{
 
 			err := cleaner.Cleanup(ctx)
 			if err != nil {
-				logger.Fatal("failed to cleanup resources", zap.Error(err))
+				failed = true
+				logger.Error("failed to cleanup resources",
+					zap.String("cleaner", cleanerName), zap.Error(err))
 			}
+		}
+
+		if failed {
+			logger.Fatal("one or more cleaners failed")
 		}
 	},
 }

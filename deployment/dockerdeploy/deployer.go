@@ -95,6 +95,15 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 	return out, nil
 }
 
+func (d *Deployer) FindClusters(ctx context.Context, idPrefix string) ([]deployment.ClusterInfo, error) {
+	clusters, err := d.ListClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return deployment.FilterClustersByPrefix(clusters, idPrefix), nil
+}
+
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
 	clusterInfo, err := d.newCluster(ctx, def)
 	if err != nil {

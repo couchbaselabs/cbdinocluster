@@ -62,6 +62,15 @@ func (d *Deployer) ListClusters(ctx context.Context) ([]deployment.ClusterInfo, 
 	}, nil
 }
 
+func (d *Deployer) FindClusters(ctx context.Context, idPrefix string) ([]deployment.ClusterInfo, error) {
+	clusters, err := d.ListClusters(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return deployment.FilterClustersByPrefix(clusters, idPrefix), nil
+}
+
 func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (deployment.ClusterInfo, error) {
 	if len(def.NodeGroups) != 1 || def.NodeGroups[0].Count != 1 {
 		return nil, errors.New("local deployment only supports a single node")

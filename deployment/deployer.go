@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
@@ -112,8 +113,27 @@ const (
 	DeltaRecovery RecoveryType = "delta"
 )
 
+// FilterClustersByPrefix keeps the clusters whose ID starts with idPrefix. An empty prefix keeps all.
+func FilterClustersByPrefix(clusters []ClusterInfo, idPrefix string) []ClusterInfo {
+	if idPrefix == "" {
+		return clusters
+	}
+
+	var out []ClusterInfo
+	for _, cluster := range clusters {
+		if strings.HasPrefix(cluster.GetID(), idPrefix) {
+			out = append(out, cluster)
+		}
+	}
+
+	return out
+}
+
 type Deployer interface {
 	ListClusters(ctx context.Context) ([]ClusterInfo, error)
+	// FindClusters returns the clusters whose ID starts with idPrefix, without
+	// listing everything the deployer owns where it can avoid it.
+	FindClusters(ctx context.Context, idPrefix string) ([]ClusterInfo, error)
 	NewCluster(ctx context.Context, def *clusterdef.Cluster) (ClusterInfo, error)
 	GetDefinition(ctx context.Context, clusterID string) (*clusterdef.Cluster, error)
 	UpdateClusterExpiry(ctx context.Context, clusterID string, newExpiryTime time.Time) error
