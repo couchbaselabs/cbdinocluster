@@ -1264,13 +1264,21 @@ func canDeleteProjectName(projectName string) bool {
 
 // deleteProject is the only path that may delete a project, so the ownership
 // guard covers every caller.
+//
+// Two sweeps can race on one project, so a not found answer counts as removed.
 func (p *Deployer) deleteProject(ctx context.Context, projectID string, projectName string) error {
 	if !canDeleteProjectName(projectName) {
 		return errors.Errorf("refusing to delete project %s, the name %q is not owned by cbdinocluster",
 			projectID, projectName)
 	}
 
-	return p.v4.DeleteProject(ctx, p.tenantID, projectID)
+	err := p.v4.DeleteProject(ctx, p.tenantID, projectID)
+	if capellav4.IsProjectNotFound(err) {
+		p.logger.Info("project already removed", zap.String("project-id", projectID))
+		return nil
+	}
+
+	return err
 }
 
 // deleteFailedProject removes the project of a create that failed before it
@@ -1357,7 +1365,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 	p.logger.Debug("deleting the cloud project")
 
 	err := p.deleteProject(ctx, clusterInfo.ProjectID, clusterInfo.ProjectName)
-	if err != nil && !capellav4.IsProjectNotFound(err) {
+	if err != nil {
 		return errors.Wrap(err, "failed to delete project")
 	}
 
@@ -1698,13 +1706,17 @@ type removalTarget struct {
 
 // listRemovalTargets returns every cluster the project holds, with the extra
 // lookup a columnar deletion wait needs. It can return targets next to an
-// error when only a part of the listing failed.
+// error when only a part of the listing failed. A gone project holds nothing,
+// so it returns no targets and no error.
 func (p *Deployer) listRemovalTargets(ctx context.Context, projectID string) ([]removalTarget, error) {
 	var errs error
 	var targets []removalTarget
 
 	clusters, err := p.v4.ListClusters(ctx, p.tenantID, projectID)
-	if err != nil {
+	if capellav4.IsProjectNotFound(err) {
+		p.logger.Info("project already removed", zap.String("project-id", projectID))
+		return nil, nil
+	} else if err != nil {
 		errs = multierr.Append(errs, errors.Wrap(err, "failed to list clusters"))
 	} else {
 		for _, cluster := range clusters {
@@ -1716,7 +1728,10 @@ func (p *Deployer) listRemovalTargets(ctx context.Context, projectID string) ([]
 	}
 
 	columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, projectID)
-	if err != nil {
+	if capellav4.IsProjectNotFound(err) {
+		p.logger.Info("project already removed", zap.String("project-id", projectID))
+		return nil, nil
+	} else if err != nil {
 		errs = multierr.Append(errs, errors.Wrap(err, "failed to list analytics clusters"))
 	} else {
 		for _, columnar := range columnars {
@@ -1867,7 +1882,7 @@ func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptio
 		p.logger.Info("removing a project", zap.String("project-id", project.Info.ID))
 
 		err := p.deleteProject(ctx, project.Info.ID, project.Info.Name)
-		if err != nil && !capellav4.IsProjectNotFound(err) {
+		if err != nil {
 			errs = multierr.Append(errs, errors.Wrap(err, "failed to remove project"))
 		}
 	}
@@ -1965,7 +1980,7 @@ func (p *Deployer) cleanup(ctx context.Context, dryRun bool) error {
 				zap.String("project-id", cluster.ProjectID))
 
 			err := p.deleteProject(ctx, cluster.ProjectID, cluster.ProjectName)
-			if err != nil && !capellav4.IsProjectNotFound(err) {
+			if err != nil {
 				allErr = multierr.Append(allErr, errors.Wrapf(err, "project_id: %s", cluster.ProjectID))
 			}
 			continue
