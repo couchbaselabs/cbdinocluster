@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"testing"
+	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
 	"github.com/spf13/cobra"
@@ -44,4 +45,27 @@ func TestConfigFlagSurvivesSubcommandPreRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, overridePath, got,
 		"root --config resolution must run even when a subcommand defines its own PersistentPreRunE")
+}
+
+// TestTimeoutFlagBoundsTheContext covers the wiring from the root --timeout
+// flag to the context every command hands to the deployers. Without a
+// deadline a Capella wait can run for hours.
+func TestTimeoutFlagBoundsTheContext(t *testing.T) {
+	t.Cleanup(func() {
+		require.NoError(t, rootCmd.PersistentFlags().Set("timeout", "0"))
+	})
+
+	helper := CmdHelper{}
+
+	_, ok := helper.GetContext().Deadline()
+	require.False(t, ok, "the default must leave the context unbounded")
+
+	require.NoError(t, rootCmd.PersistentFlags().Set("timeout", "30m"))
+
+	deadline, ok := helper.GetContext().Deadline()
+	require.True(t, ok, "--timeout must put a deadline on the context")
+	require.WithinDuration(t, time.Now().Add(30*time.Minute), deadline, time.Minute)
+
+	_, ok = contextWithTimeout(0).Deadline()
+	require.False(t, ok)
 }
