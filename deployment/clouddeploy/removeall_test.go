@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
+	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
 	"github.com/couchbaselabs/cbdinocluster/utils/cbdcuuid"
 	"github.com/couchbaselabs/cbdinocluster/utils/stringclustermeta"
 	"github.com/stretchr/testify/assert"
@@ -110,6 +111,28 @@ func TestRemoveAllShouldTake(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, removeAllShouldTake(&tt.meta, tt.opts, now))
+		})
+	}
+}
+
+func TestShouldSkipDestroyFailed(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+		skip  bool
+		want  bool
+	}{
+		{name: "cleanup skips destroyFailed", state: capellav4.StateDestroyFailed, skip: true, want: true},
+		{name: "cleanup takes healthy", state: capellav4.StateHealthy, skip: true, want: false},
+		{name: "cleanup takes destroying", state: capellav4.StateDestroying, skip: true, want: false},
+		{name: "cleanup takes an unknown state", state: "", skip: true, want: false},
+		{name: "remove-all takes destroyFailed", state: capellav4.StateDestroyFailed, skip: false, want: false},
+		{name: "remove-all takes healthy", state: capellav4.StateHealthy, skip: false, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, shouldSkipDestroyFailed(tt.state, tt.skip))
 		})
 	}
 }
