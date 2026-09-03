@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -39,7 +40,20 @@ type CmdHelper struct {
 }
 
 func (h *CmdHelper) GetContext() context.Context {
-	return context.Background()
+	timeout, _ := rootCmd.Flags().GetDuration("timeout")
+	return contextWithTimeout(timeout)
+}
+
+// contextWithTimeout bounds every wait the command runs. The cancel func is
+// dropped because the process exits when the command ends.
+func contextWithTimeout(d time.Duration) context.Context {
+	if d <= 0 {
+		return context.Background()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), d)
+	_ = cancel
+	return ctx
 }
 
 func (h *CmdHelper) GetLogger() *zap.Logger {
