@@ -206,11 +206,15 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	capellaInternalSupportToken := config.Capella.InternalSupportToken
 	uploadServerLogsHostName := config.Capella.UploadServerLogsHostName
 
-	capellaApiSecret := config.Capella.ApiSecret
-	if capellaApiSecret == "" {
-		capellaApiSecret = os.Getenv("CAPELLA_API_SECRET")
+	capellaApiKeys := appendApiKeys(nil, config.Capella.ApiKeys...)
+	if len(capellaApiKeys) == 0 {
+		capellaApiKeys = appendApiKeys(capellaApiKeys, cbdcconfig.Config_CapellaApiKey{
+			Secret: os.Getenv("CAPELLA_API_SECRET"),
+		})
 	}
-	if capellaApiSecret == "" {
+
+	capellaApiSecrets := capellaRequestSecrets(capellaApiKeys)
+	if len(capellaApiSecrets) == 0 {
 		return nil, errors.New("a capella api secret is required; run `cbdinocluster init` " +
 			"or set CAPELLA_API_SECRET")
 	}
@@ -224,9 +228,9 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	}
 
 	v4Client, err := capellav4.NewClient(&capellav4.ClientOptions{
-		Logger:    logger,
-		Endpoint:  v4Endpoint,
-		SecretKey: capellaApiSecret,
+		Logger:     logger,
+		Endpoint:   v4Endpoint,
+		SecretKeys: capellaApiSecrets,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create capella v4 client")

@@ -10,7 +10,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const Version = 7
+const Version = 8
 
 type StringBool string
 
@@ -105,12 +105,28 @@ type Config_Azure struct {
 	_DefaultRegion string `yaml:"default-region"`
 }
 
+type Config_CapellaApiKey struct {
+	Key    string `yaml:"key"`
+	Secret string `yaml:"secret"`
+
+	// Empty for a hand entered key. Set to the Capella key name for a key
+	// cbdinocluster created, which is what makes it safe to rotate or delete.
+	Name string `yaml:"name,omitempty"`
+}
+
 type Config_Capella struct {
 	Enabled StringBool `yaml:"enabled"`
 
-	V4Endpoint string `yaml:"v4-endpoint"`
-	ApiKey     string `yaml:"api-key"`
-	ApiSecret  string `yaml:"api-secret"`
+	V4Endpoint string                 `yaml:"v4-endpoint"`
+	ApiKeys    []Config_CapellaApiKey `yaml:"api-keys,omitempty"`
+
+	// Names the key pool this machine owns in Capella. It is part of every
+	// pool key name, so it decides which keys cbdinocluster may manage.
+	PoolKeyName string `yaml:"pool-key-name,omitempty"`
+
+	// Superseded by ApiKeys. Upgrade folds these in and clears them.
+	ApiKey    string `yaml:"api-key,omitempty"`
+	ApiSecret string `yaml:"api-secret,omitempty"`
 
 	// The internal v2 API is only needed where v4 has no equivalent.
 	// Authentication invalidates any other active session for the same user.
@@ -214,6 +230,18 @@ func Upgrade(config *Config) *Config {
 	if config.Version < 7 {
 		config.Capella.V4Endpoint = DEFAULT_CAPELLA_V4_ENDPOINT
 		config.Version = 7
+	}
+
+	if config.Version < 8 {
+		if config.Capella.ApiSecret != "" {
+			config.Capella.ApiKeys = append(config.Capella.ApiKeys, Config_CapellaApiKey{
+				Key:    config.Capella.ApiKey,
+				Secret: config.Capella.ApiSecret,
+			})
+		}
+		config.Capella.ApiKey = ""
+		config.Capella.ApiSecret = ""
+		config.Version = 8
 	}
 
 	return config

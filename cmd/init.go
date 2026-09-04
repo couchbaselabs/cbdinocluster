@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +28,13 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
+	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
 	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/google/go-github/v53/github"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2"
@@ -1135,8 +1139,11 @@ var initCmd = &cobra.Command{
 		printCapellaConfig := func() {
 			fmt.Printf("  Enabled: %t\n", curConfig.Capella.Enabled.Value())
 			fmt.Printf("  V4 Endpoint: %s\n", curConfig.Capella.V4Endpoint)
-			fmt.Printf("  API Key: %s\n", curConfig.Capella.ApiKey)
-			fmt.Printf("  API Secret: %s\n", strings.Repeat("*", len(curConfig.Capella.ApiSecret)))
+			fmt.Printf("  API Keys: %d\n", len(curConfig.Capella.ApiKeys))
+			for _, apiKey := range curConfig.Capella.ApiKeys {
+				fmt.Printf("    %s: %s\n", apiKey.Key, strings.Repeat("*", len(apiKey.Secret)))
+			}
+			fmt.Printf("  Key Pool Name: %s\n", curConfig.Capella.PoolKeyName)
 			fmt.Printf("  Endpoint: %s\n", curConfig.Capella.Endpoint)
 			fmt.Printf("  Username: %s\n", curConfig.Capella.Username)
 			fmt.Printf("  Password: %s\n", strings.Repeat("*", len(curConfig.Capella.Password)))
@@ -1154,6 +1161,10 @@ var initCmd = &cobra.Command{
 			flagCapellaV4Endpoint, _ := cmd.Flags().GetString("capella-v4-endpoint")
 			flagCapellaApiKey, _ := cmd.Flags().GetString("capella-api-key")
 			flagCapellaApiSecret, _ := cmd.Flags().GetString("capella-api-secret")
+			flagCapellaCreatePool, _ := cmd.Flags().GetBool("capella-create-pool")
+			flagCapellaPoolName, _ := cmd.Flags().GetString("capella-pool-name")
+			flagCapellaPoolSize, _ := cmd.Flags().GetInt("capella-pool-size")
+			flagCapellaPoolExpiry, _ := cmd.Flags().GetFloat64("capella-pool-expiry")
 			flagCapellaEndpoint, _ := cmd.Flags().GetString("capella-endpoint")
 			flagCapellaUser, _ := cmd.Flags().GetString("capella-user")
 			flagCapellaPass, _ := cmd.Flags().GetString("capella-pass")
@@ -1177,8 +1188,15 @@ var initCmd = &cobra.Command{
 
 			capellaEnabled := curConfig.Capella.Enabled.ValueOr(true)
 			capellaV4Endpoint := curConfig.Capella.V4Endpoint
-			capellaApiKey := curConfig.Capella.ApiKey
-			capellaApiSecret := curConfig.Capella.ApiSecret
+			existingApiKeys := curConfig.Capella.ApiKeys
+			var capellaApiKey, capellaApiSecret string
+			if len(existingApiKeys) > 0 {
+				capellaApiKey = existingApiKeys[0].Key
+				capellaApiSecret = existingApiKeys[0].Secret
+			}
+			// Seeded so an early break (Capella disabled) keeps the saved keys.
+			capellaApiKeys := existingApiKeys
+			capellaPoolKeyName := curConfig.Capella.PoolKeyName
 			capellaEndpoint := curConfig.Capella.Endpoint
 			capellaUser := curConfig.Capella.Username
 			capellaPass := curConfig.Capella.Password
@@ -1260,58 +1278,27 @@ var initCmd = &cobra.Command{
 					continue
 				}
 
-				if flagCapellaEndpoint != "" {
-					fmt.Printf("Capella endpoint specified via flags:\n  %s\n", flagCapellaEndpoint)
-					capellaEndpoint = flagCapellaEndpoint
+				capellaApiKeys = []cbdcconfig.Config_CapellaApiKey{{
+					Key:    capellaApiKey,
+					Secret: capellaApiSecret,
+				}}
+
+				// Capella limits requests per key, so extra keys raise the budget.
+				if flagCapellaApiSecret != "" {
+					// The flag names only the primary key, so keep the rest of the saved pool.
+					if len(existingApiKeys) > 1 {
+						capellaApiKeys = appendApiKeys(capellaApiKeys, existingApiKeys[1:]...)
+					}
 				} else {
-					if capellaEndpoint == "" && envCapellaEndpoint != "" {
-						fmt.Printf("Defaulting to capella endpoint from environment.\n")
-						capellaEndpoint = envCapellaEndpoint
+					for i := 1; i < len(existingApiKeys); i++ {
+						savedApiKey := existingApiKeys[i]
+						// A named key belongs to the pool, which the pool section
+						// reconciles against Capella instead of asking here.
+						if savedApiKey.Name == "" && !readBool(keepApiKeyQuestion(i, savedApiKey), true) {
+							continue
+						}
+						capellaApiKeys = appendApiKeys(capellaApiKeys, savedApiKey)
 					}
-					if capellaEndpoint == "" {
-						capellaEndpoint = cbdcconfig.DEFAULT_CAPELLA_ENDPOINT
-					}
-
-					capellaEndpoint = readString(
-						"What Capella endpoint should we use?",
-						capellaEndpoint, false)
-				}
-				if capellaEndpoint == "" {
-					fmt.Printf("Capella endpoint is required.\n")
-					capellaEnabled = false
-					continue
-				}
-
-				if flagCapellaUser != "" {
-					fmt.Printf("Capella user specified via flags:\n  %s\n", flagCapellaUser)
-					capellaUser = flagCapellaUser
-				} else {
-					if capellaUser == "" && envCapellaUser != "" {
-						fmt.Printf("Defaulting to capella user from environment.\n")
-						capellaUser = envCapellaUser
-					}
-
-					capellaUser = readString(
-						"What Capella user should we use? (optional)",
-						capellaUser, false)
-				}
-
-				if flagCapellaPass != "" {
-					fmt.Printf("Capella pass specified via flags.\n")
-					capellaPass = flagCapellaPass
-				} else {
-					if capellaPass == "" && envCapellaPass != "" {
-						fmt.Printf("Defaulting to capella pass from environment.\n")
-						capellaPass = envCapellaPass
-					}
-
-					capellaPass = readString(
-						"What Capella pass should we use? (optional)",
-						capellaPass, true)
-				}
-				if capellaUser == "" || capellaPass == "" {
-					fmt.Printf("No Capella username and password specified.  Custom server images " +
-						"and columnar clusters will not be supported.\n")
 				}
 
 				if flagCapellaOid != "" {
@@ -1331,6 +1318,314 @@ var initCmd = &cobra.Command{
 					fmt.Printf("Capella oid is required.\n")
 					capellaEnabled = false
 					continue
+				}
+
+				// `init --auto` must stay free of Capella API calls and of key
+				// creation unless the pool was asked for, fit-cli depends on that.
+				for !autoConfig || flagCapellaCreatePool {
+					fmt.Printf("-- Capella API Key Pool\n")
+
+					poolName := capellaPoolKeyName
+					if poolName == "" {
+						poolName = curConfig.GitHub.User
+					}
+					if flagCapellaPoolName != "" {
+						fmt.Printf("Capella key pool name specified via flags:\n  %s\n", flagCapellaPoolName)
+						poolName = flagCapellaPoolName
+					} else {
+						poolName = readString(
+							"What name should identify this machine's Capella key pool? (empty skips pool management)",
+							poolName, false)
+					}
+					if poolName == "" {
+						fmt.Printf("No pool name given, skipping Capella API key pool management.\n")
+						break
+					}
+					capellaPoolKeyName = poolName
+
+					poolPrefix := capellaPoolKeyPrefix(poolName)
+					primaryKeyID := capellaApiKeys[0].Key
+
+					// The ring starts with the primary key alone and grows with
+					// every pool secret this section verifies. A key's secret
+					// leaves the ring before that key is rotated or deleted.
+					poolClient, err := capellav4.NewClient(&capellav4.ClientOptions{
+						Logger:     logger,
+						Endpoint:   capellaV4Endpoint,
+						SecretKeys: []string{capellaApiKeys[0].Secret},
+					})
+					if err != nil {
+						fmt.Printf("Skipping Capella API key pool management: %s\n", err)
+						break
+					}
+
+					fmt.Printf("Looking up the `%s*` keys in Capella... ", poolPrefix)
+					remoteKeys, err := poolClient.ListApiKeys(ctx, capellaOid)
+					if err != nil {
+						fmt.Printf("failed.\n")
+						fmt.Printf("Skipping Capella API key pool management, "+
+							"failed to list the Capella API keys:\n  %s\n", err)
+
+						var apiErr *capellav4.Error
+						if errors.As(err, &apiErr) && apiErr.HttpStatusCode == http.StatusForbidden {
+							fmt.Printf("The primary Capella API key needs the %s role to manage keys.\n",
+								capellav4.OrganizationRoleOwner)
+						}
+						break
+					}
+
+					poolKeys := partitionCapellaPoolKeys(poolPrefix, primaryKeyID,
+						capellaApiKeys, remoteKeys)
+					fmt.Printf("found %d.\n", len(poolKeys.Matched)+len(poolKeys.Orphans))
+
+					if len(poolKeys.Missing) > 0 {
+						droppedKeys := make(map[string]bool, len(poolKeys.Missing))
+						for _, missingKey := range poolKeys.Missing {
+							fmt.Printf("Dropping the saved Capella API key %s (%s), "+
+								"it no longer exists in Capella.\n", missingKey.Key, missingKey.Name)
+							droppedKeys[missingKey.Key] = true
+						}
+
+						keptKeys := make([]cbdcconfig.Config_CapellaApiKey, 0, len(capellaApiKeys))
+						for _, savedKey := range capellaApiKeys {
+							if droppedKeys[savedKey.Key] {
+								continue
+							}
+							keptKeys = append(keptKeys, savedKey)
+						}
+
+						capellaApiKeys = keptKeys
+					}
+
+					// The other Capella fields catch up at the final save, so a
+					// crash in here still keeps every secret Capella handed over.
+					savePoolKeys := func() {
+						curConfig.Capella.ApiKeys = capellaApiKeys
+						curConfig.Capella.PoolKeyName = capellaPoolKeyName
+						saveConfig()
+					}
+
+					if len(poolKeys.Orphans) > 0 {
+						fmt.Printf("Found %d Capella pool keys this machine holds no secret for.\n",
+							len(poolKeys.Orphans))
+
+						if readBool("Rotate them so this machine can use them?", true) {
+							for _, orphanKey := range poolKeys.Orphans {
+								err := checkCapellaPoolKeyTarget(poolPrefix, primaryKeyID,
+									orphanKey.ID, orphanKey.Name)
+								if err != nil {
+									fmt.Printf("%s\n", err)
+									continue
+								}
+
+								rotateResp, err := poolClient.RotateApiKey(ctx, capellaOid, orphanKey.ID)
+								if err != nil {
+									fmt.Printf("Failed to rotate the Capella API key %s:\n  %s\n",
+										orphanKey.ID, err)
+									continue
+								}
+
+								poolClient.AddSecretKey(rotateResp.Token)
+
+								capellaApiKeys = append(capellaApiKeys,
+									cbdcconfig.Config_CapellaApiKey{
+										Key:    orphanKey.ID,
+										Secret: rotateResp.Token,
+										Name:   orphanKey.Name,
+									})
+								savePoolKeys()
+
+								fmt.Printf("Rotated the Capella API key %s (%s).\n",
+									orphanKey.ID, orphanKey.Name)
+							}
+						} else if readBool("Delete them from Capella instead?", false) {
+							for _, orphanKey := range poolKeys.Orphans {
+								err := checkCapellaPoolKeyTarget(poolPrefix, primaryKeyID,
+									orphanKey.ID, orphanKey.Name)
+								if err != nil {
+									fmt.Printf("%s\n", err)
+									continue
+								}
+
+								err = poolClient.DeleteApiKey(ctx, capellaOid, orphanKey.ID)
+								if err != nil {
+									fmt.Printf("Failed to delete the Capella API key %s:\n  %s\n",
+										orphanKey.ID, err)
+									continue
+								}
+
+								fmt.Printf("Deleted the Capella API key %s (%s).\n",
+									orphanKey.ID, orphanKey.Name)
+							}
+						} else {
+							fmt.Printf("Leaving those %d Capella pool keys as they are.\n",
+								len(poolKeys.Orphans))
+						}
+					}
+
+					shouldCreate := flagCapellaCreatePool
+					if shouldCreate {
+						fmt.Printf("Capella API key pool creation requested via flags.\n")
+					} else {
+						shouldCreate = readBool(
+							"Would you like cbdinocluster to create Capella API keys for the pool?",
+							false)
+					}
+
+					if shouldCreate {
+						poolExpiry := flagCapellaPoolExpiry
+						if cmd.Flags().Changed("capella-pool-expiry") {
+							fmt.Printf("Capella pool key expiry specified via flags:\n  %v days\n", poolExpiry)
+							// The API floors an expiry at 0.01 days, anything lower is a 422.
+							if poolExpiry != capellav4.ExpiryNever && poolExpiry < 0.01 {
+								fmt.Printf("Invalid Capella pool key expiry %v, it must be %d "+
+									"or at least 0.01 days.\n", poolExpiry, capellav4.ExpiryNever)
+								break
+							}
+						} else {
+							for {
+								expiryStr := readString(
+									"After how many days should a created pool key(s) expire? (-1 means never)",
+									strconv.FormatFloat(poolExpiry, 'f', -1, 64), false)
+
+								parsedExpiry, err := strconv.ParseFloat(expiryStr, 64)
+								if err != nil || (parsedExpiry != capellav4.ExpiryNever && parsedExpiry < 0.01) {
+									fmt.Printf("Invalid entry, it must be %d or at least 0.01 days, "+
+										"try again...\n", capellav4.ExpiryNever)
+									continue
+								}
+
+								poolExpiry = parsedExpiry
+								break
+							}
+						}
+
+						poolSize := flagCapellaPoolSize
+						for {
+							sizeStr := readString(
+								"How many Capella API keys should the pool hold?",
+								strconv.Itoa(poolSize), false)
+
+							parsedSize, err := strconv.Atoi(sizeStr)
+							if err != nil || parsedSize < 0 {
+								fmt.Printf("Invalid entry, try again...\n")
+								continue
+							}
+
+							poolSize = parsedSize
+							break
+						}
+
+						curPoolSize := countCapellaPoolKeys(poolPrefix, primaryKeyID, capellaApiKeys)
+						if curPoolSize >= poolSize {
+							fmt.Printf("The Capella API key pool already holds %d keys.\n", curPoolSize)
+						} else {
+							createFailed := false
+							createdKeys := 0
+
+							for curPoolSize+createdKeys < poolSize {
+								keyName, err := newCapellaPoolKeyName(poolName)
+								if err != nil {
+									fmt.Printf("Failed to name a Capella API key:\n  %s\n", err)
+									createFailed = true
+									break
+								}
+
+								createResp, err := createCapellaPoolKey(ctx, poolClient, capellaOid,
+									&capellav4.CreateApiKeyRequest{
+										Name:              keyName,
+										Description:       capellaPoolKeyDescription(poolName),
+										Expiry:            poolExpiry,
+										OrganizationRoles: []string{capellav4.OrganizationRoleOwner},
+									}, capellaPoolKeySleep)
+								if err != nil {
+									fmt.Printf("Failed to create a Capella API key:\n  %s\n", err)
+									createFailed = true
+									break
+								}
+
+								poolClient.AddSecretKey(createResp.Token)
+
+								// Capella shows a secret once only, so it is saved
+								// before the next key is created.
+								capellaApiKeys = append(capellaApiKeys,
+									cbdcconfig.Config_CapellaApiKey{
+										Key:    createResp.ID,
+										Secret: createResp.Token,
+										Name:   keyName,
+									})
+								savePoolKeys()
+								createdKeys++
+
+								fmt.Printf("Created the Capella API key %s (%s).\n",
+									createResp.ID, keyName)
+							}
+
+							if createFailed {
+								fmt.Printf("Created %d of the %d keys the pool was missing.\n",
+									createdKeys, poolSize-curPoolSize)
+								break
+							}
+						}
+					}
+
+					fmt.Printf("The Capella API key pool holds %d keys.\n",
+						countCapellaPoolKeys(poolPrefix, primaryKeyID, capellaApiKeys))
+					break
+				}
+
+				if flagCapellaEndpoint != "" {
+					fmt.Printf("Capella endpoint specified via flags:\n  %s\n", flagCapellaEndpoint)
+					capellaEndpoint = flagCapellaEndpoint
+				} else {
+					if capellaEndpoint == "" && envCapellaEndpoint != "" {
+						fmt.Printf("Defaulting to capella endpoint from environment.\n")
+						capellaEndpoint = envCapellaEndpoint
+					}
+					if capellaEndpoint == "" {
+						capellaEndpoint = cbdcconfig.DEFAULT_CAPELLA_ENDPOINT
+					}
+
+					capellaEndpoint = readString(
+						"What Capella v2 endpoint should we use?",
+						capellaEndpoint, false)
+				}
+				if capellaEndpoint == "" {
+					fmt.Printf("Capella endpoint is required.\n")
+					capellaEnabled = false
+					continue
+				}
+
+				if flagCapellaUser != "" {
+					fmt.Printf("Capella user specified via flags:\n  %s\n", flagCapellaUser)
+					capellaUser = flagCapellaUser
+				} else {
+					if capellaUser == "" && envCapellaUser != "" {
+						fmt.Printf("Defaulting to capella user from environment.\n")
+						capellaUser = envCapellaUser
+					}
+
+					capellaUser = readString(
+						"What Capella v2 user should we use? (optional)",
+						capellaUser, false)
+				}
+
+				if flagCapellaPass != "" {
+					fmt.Printf("Capella pass specified via flags.\n")
+					capellaPass = flagCapellaPass
+				} else {
+					if capellaPass == "" && envCapellaPass != "" {
+						fmt.Printf("Defaulting to capella pass from environment.\n")
+						capellaPass = envCapellaPass
+					}
+
+					capellaPass = readString(
+						"What Capella v2 pass should we use? (optional)",
+						capellaPass, true)
+				}
+				if capellaUser == "" || capellaPass == "" {
+					fmt.Printf("No Capella username and password specified.  Custom server images " +
+						"and columnar clusters will not be supported.\n")
 				}
 
 				if flagCapellaOverrideToken != "" {
@@ -1475,8 +1770,8 @@ var initCmd = &cobra.Command{
 
 			curConfig.Capella.Enabled.Set(capellaEnabled)
 			curConfig.Capella.V4Endpoint = capellaV4Endpoint
-			curConfig.Capella.ApiKey = capellaApiKey
-			curConfig.Capella.ApiSecret = capellaApiSecret
+			curConfig.Capella.ApiKeys = capellaApiKeys
+			curConfig.Capella.PoolKeyName = capellaPoolKeyName
 			curConfig.Capella.Endpoint = capellaEndpoint
 			curConfig.Capella.Username = capellaUser
 			curConfig.Capella.Password = capellaPass
@@ -1653,6 +1948,42 @@ var initCmd = &cobra.Command{
 	},
 }
 
+// appendApiKeys adds the keys whose secret is set and not already in the pool.
+func appendApiKeys(pool []cbdcconfig.Config_CapellaApiKey,
+	extra ...cbdcconfig.Config_CapellaApiKey) []cbdcconfig.Config_CapellaApiKey {
+	usedSecrets := make(map[string]bool, len(pool))
+	for _, apiKey := range pool {
+		usedSecrets[apiKey.Secret] = true
+	}
+
+	for _, apiKey := range extra {
+		if apiKey.Secret == "" || usedSecrets[apiKey.Secret] {
+			continue
+		}
+		usedSecrets[apiKey.Secret] = true
+
+		pool = append(pool, apiKey)
+	}
+
+	return pool
+}
+
+func keepApiKeyQuestion(index int, apiKey cbdcconfig.Config_CapellaApiKey) string {
+	var details []string
+	if apiKey.Key != "" {
+		details = append(details, apiKey.Key)
+	}
+	if apiKey.Name != "" {
+		details = append(details, apiKey.Name)
+	}
+
+	if len(details) == 0 {
+		return fmt.Sprintf("Keep the saved Capella API key #%d?", index+1)
+	}
+	return fmt.Sprintf("Keep the saved Capella API key #%d (%s)?",
+		index+1, strings.Join(details, ", "))
+}
+
 func init() {
 	rootCmd.AddCommand(initCmd)
 
@@ -1672,6 +2003,11 @@ func init() {
 	initCmd.Flags().String("capella-v4-endpoint", "", "Capella Management API v4 endpoint to use")
 	initCmd.Flags().String("capella-api-key", "", "Capella organization API key to use")
 	initCmd.Flags().String("capella-api-secret", "", "Capella organization API secret to use")
+	initCmd.Flags().Bool("capella-create-pool", false, "Create the Capella API keys the key pool is missing")
+	initCmd.Flags().String("capella-pool-name", "", "Name that identifies this machine's Capella API key pool")
+	initCmd.Flags().Int("capella-pool-size", 3, "Number of Capella API keys the key pool should hold")
+	initCmd.Flags().Float64("capella-pool-expiry", 0.5,
+		"Days until a created pool key expires, -1 means never")
 	initCmd.Flags().String("capella-endpoint", "", "Capella v2 endpoint to use")
 	initCmd.Flags().String("capella-user", "", "Capella v2 user to use, only needed for features the v4 api does not expose")
 	initCmd.Flags().String("capella-pass", "", "Capella v2 pass to use, only needed for features the v4 api does not expose")
