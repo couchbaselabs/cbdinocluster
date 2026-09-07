@@ -132,6 +132,8 @@ func (c *Client) secretKeySnapshot() []string {
 }
 
 type Error struct {
+	// Code includes the Capella API error code, as defined in
+	// https://docs.couchbase.com/cloud/management-api-guide/management-api-errors.html.
 	Code           int    `json:"code"`
 	Hint           string `json:"hint"`
 	HttpStatusCode int    `json:"httpStatusCode"`
@@ -154,6 +156,14 @@ func IsNotFound(err error) bool {
 	var apiErr *Error
 	if errors.As(err, &apiErr) {
 		return apiErr.HttpStatusCode == http.StatusNotFound
+	}
+	return false
+}
+
+func IsProjectNotFound(err error) bool {
+	var apiErr *Error
+	if errors.As(err, &apiErr) {
+		return apiErr.HttpStatusCode == http.StatusNotFound && apiErr.Code == 2000
 	}
 	return false
 }
