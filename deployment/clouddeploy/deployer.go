@@ -237,6 +237,10 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 	if len(matched) == 1 {
 		info, err := p.inspectProject(ctx, matched[0])
 		if err != nil {
+			if capellav4.IsProjectNotFound(err) {
+				// The project may have been deleted since the ListProjects call
+				return nil, nil
+			}
 			return nil, err
 		}
 
@@ -267,6 +271,11 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 
 			info, err := p.inspectProject(inspectCtx, project)
 			if err != nil {
+				if capellav4.IsProjectNotFound(err) {
+					// The project may have been deleted since the ListProjects call
+					results[i] = nil
+					return
+				}
 				errOnce.Do(func() {
 					firstErr = err
 					cancel()
