@@ -1277,7 +1277,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 	p.logger.Debug("deleting the cloud project")
 
 	err := p.v4.DeleteProject(ctx, p.tenantID, clusterInfo.ProjectID)
-	if err != nil {
+	if err != nil && !capellav4.IsProjectNotFound(err) {
 		return errors.Wrap(err, "failed to delete project")
 	}
 
@@ -1706,7 +1706,7 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 		p.logger.Info("removing a project", zap.String("project-id", project.Info.ID))
 
 		err := p.v4.DeleteProject(ctx, p.tenantID, project.Info.ID)
-		if err != nil {
+		if err != nil && !capellav4.IsProjectNotFound(err) {
 			errs = multierr.Append(errs, errors.Wrap(err, "failed to remove project"))
 		}
 	}
@@ -1789,7 +1789,7 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 				zap.String("project-id", cluster.ProjectID))
 
 			err := p.v4.DeleteProject(ctx, p.tenantID, cluster.ProjectID)
-			if err != nil {
+			if err != nil && !capellav4.IsProjectNotFound(err) {
 				allErr = multierr.Append(allErr, errors.Wrapf(err, "project_id: %s", cluster.ProjectID))
 			}
 			continue
