@@ -1235,6 +1235,9 @@ func (p *Deployer) deleteCloudCluster(ctx context.Context, projectID, clusterID 
 	if ftErr == nil {
 		return nil
 	}
+	if capellav4.IsNotFound(err) && capellav4.IsNotFound(ftErr) {
+		return nil
+	}
 	return multierr.Combine(err, ftErr)
 }
 
@@ -1262,7 +1265,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 		}
 
 		err = p.client.DeleteColumnar(ctx, p.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID)
-		if err != nil {
+		if err != nil && !capellav4.IsNotFound(err) {
 			return errors.Wrap(err, "failed to delete cluster")
 		}
 
@@ -1672,6 +1675,9 @@ func (p *Deployer) RemoveAll(ctx context.Context) error {
 
 		if target.isColumnar {
 			err = p.client.DeleteColumnar(ctx, p.tenantID, target.projectID, target.clusterID)
+			if capellav4.IsNotFound(err) {
+				err = nil
+			}
 		} else {
 			err = p.deleteCloudCluster(ctx, target.projectID, target.clusterID)
 		}
