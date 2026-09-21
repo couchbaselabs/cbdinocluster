@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )

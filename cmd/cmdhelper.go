@@ -24,7 +24,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellacontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
