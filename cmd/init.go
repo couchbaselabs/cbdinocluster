@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/exec"
 	"os/user"
@@ -31,9 +32,9 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/capellav4"
 	"github.com/couchbaselabs/cbdinocluster/utils/cloudinstancecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	"github.com/google/go-github/v53/github"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -450,7 +451,7 @@ var initCmd = &cobra.Command{
 					continue
 				}
 
-				_, err = dockerCli.Ping(ctx)
+				_, err = dockerCli.Ping(ctx, client.PingOptions{})
 				if err != nil {
 					fmt.Printf("Failed to ping docker:\n  %s\n", err)
 					dockerEnabled = false
@@ -464,13 +465,13 @@ var initCmd = &cobra.Command{
 					dockerNetwork = flagDockerNetwork
 				} else {
 					fmt.Printf("Listing docker networks:\n")
-					networks, _ := dockerCli.NetworkList(ctx, network.ListOptions{})
-					for _, network := range networks {
+					networks, _ := dockerCli.NetworkList(ctx, client.NetworkListOptions{})
+					for _, network := range networks.Items {
 						fmt.Printf("  %s\n", network.Name)
 					}
 
 					hasDinoNet := false
-					for _, network := range networks {
+					for _, network := range networks.Items {
 						if network.Name == "dinonet" {
 							hasDinoNet = true
 						}
@@ -491,16 +492,16 @@ var initCmd = &cobra.Command{
 							if colimaIP == nil {
 								fmt.Printf("Network identification failed, cannot auto-create dinonet network...")
 							} else {
-								subnet := fmt.Sprintf("%d.%d.%d.0/24", colimaIP[0], colimaIP[1], colimaIP[2])
-								ipRange := fmt.Sprintf("%d.%d.%d.128/25", colimaIP[0], colimaIP[1], colimaIP[2])
-								gateway := fmt.Sprintf("%d.%d.%d.1", colimaIP[0], colimaIP[1], colimaIP[2])
+								subnet := netip.PrefixFrom(netip.AddrFrom4([4]byte{colimaIP[0], colimaIP[1], colimaIP[2], 0}), 24)
+								ipRange := netip.PrefixFrom(netip.AddrFrom4([4]byte{colimaIP[0], colimaIP[1], colimaIP[2], 128}), 25)
+								gateway := netip.AddrFrom4([4]byte{colimaIP[0], colimaIP[1], colimaIP[2], 1})
 
 								shouldCreateDinoNet := readBool("Should we auto-create a colima dinonet network?", true)
 								if shouldCreateDinoNet {
 									fmt.Printf("Creating dinonet network (subnet: %s, %s, %s).\n",
 										subnet, ipRange, gateway)
 
-									_, err := dockerCli.NetworkCreate(ctx, "dinonet", network.CreateOptions{
+									_, err := dockerCli.NetworkCreate(ctx, "dinonet", client.NetworkCreateOptions{
 										Driver: "ipvlan",
 										IPAM: &network.IPAM{
 											Driver: "default",

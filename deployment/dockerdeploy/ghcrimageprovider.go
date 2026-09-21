@@ -8,9 +8,7 @@ import (
 	"strings"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -110,15 +108,15 @@ func (p *GhcrImageProvider) GetImageRaw(ctx context.Context, imagePath string) (
 }
 
 func (p *GhcrImageProvider) ListImages(ctx context.Context) ([]deployment.Image, error) {
-	dkrImages, err := p.DockerCli.ImageList(ctx, image.ListOptions{
-		Filters: filters.NewArgs(filters.Arg("reference", "ghcr.io/cb-vanilla/server")),
+	dkrImages, err := p.DockerCli.ImageList(ctx, client.ImageListOptions{
+		Filters: make(client.Filters).Add("reference", "ghcr.io/cb-vanilla/server"),
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list images")
 	}
 
 	var images []deployment.Image
-	for _, image := range dkrImages {
+	for _, image := range dkrImages.Items {
 		for _, repoTag := range image.RepoTags {
 			tagParts := strings.Split(repoTag, ":")
 			if len(tagParts) != 2 {

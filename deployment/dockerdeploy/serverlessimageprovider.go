@@ -9,9 +9,7 @@ import (
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/tarhelper"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"golang.org/x/exp/slices"
@@ -56,12 +54,12 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 	tagVersion := fmt.Sprintf("%s-%s", serverVariant, serverVersion)
 	fullTagPath := fmt.Sprintf("%s:%s", tagName, tagVersion)
 
-	images, err := p.DockerCli.ImageList(ctx, image.ListOptions{})
+	images, err := p.DockerCli.ImageList(ctx, client.ImageListOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to list images")
 	}
 
-	for _, image := range images {
+	for _, image := range images.Items {
 		if slices.Contains(image.RepoTags, fullTagPath) {
 			p.Logger.Debug("found existing image with this tag")
 
@@ -113,7 +111,7 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 
 	p.Logger.Debug("starting image build", zap.String("image", fullTagPath))
 
-	err = dockerBuildAndPipe(ctx, p.Logger, p.DockerCli, tmpRTarFile, types.ImageBuildOptions{
+	err = dockerBuildAndPipe(ctx, p.Logger, p.DockerCli, tmpRTarFile, client.ImageBuildOptions{
 		BuildArgs: map[string]*string{
 			"BASE_IMAGE": &baseImageRef.ImagePath,
 		},

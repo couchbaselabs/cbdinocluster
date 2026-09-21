@@ -12,11 +12,11 @@ import (
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
 	units "github.com/docker/go-units"
 	"github.com/google/uuid"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"k8s.io/utils/ptr"
@@ -66,6 +66,11 @@ func (c *Controller) parseContainerInfo(container container.Summary) *ContainerI
 		pickedNetwork = network
 	}
 
+	var ipAddress string
+	if pickedNetwork.IPAddress.IsValid() {
+		ipAddress = pickedNetwork.IPAddress.String()
+	}
+
 	// if the node type is unspecified, we default to server-node
 	if nodeType == "" {
 		nodeType = "server-node"
@@ -96,7 +101,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *ContainerI
 		Owner:                "",
 		Purpose:              purpose,
 		Expiry:               time.Time{},
-		IPAddress:            pickedNetwork.IPAddress,
+		IPAddress:            ipAddress,
 		InitialServerVersion: initialServerVersion,
 		UsingDinoCerts:       usingDinoCertsBool,
 	}
@@ -105,7 +110,7 @@ func (c *Controller) parseContainerInfo(container container.Summary) *ContainerI
 func (c *Controller) ListNodes(ctx context.Context) ([]*ContainerInfo, error) {
 	c.Logger.Debug("listing nodes")
 
-	containers, err := c.DockerCli.ContainerList(ctx, container.ListOptions{
+	containers, err := c.DockerCli.ContainerList(ctx, client.ContainerListOptions{
 		All: true,
 	})
 	if err != nil {
@@ -116,7 +121,7 @@ func (c *Controller) ListNodes(ctx context.Context) ([]*ContainerInfo, error) {
 
 	var nodes []*ContainerInfo
 
-	for _, container := range containers {
+	for _, container := range containers.Items {
 		node := c.parseContainerInfo(container)
 		if node != nil {
 			nodeState, err := c.ReadNodeState(ctx, node.ContainerID)
@@ -160,7 +165,10 @@ func (c *Controller) WriteNodeState(ctx context.Context, containerID string, sta
 	tarFile.Write(jsonBytes)
 	tarFile.Flush()
 
-	err = c.DockerCli.CopyToContainer(ctx, containerID, "/var/", tarBuf, container.CopyToContainerOptions{})
+	_, err = c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: "/var/",
+		Content:         tarBuf,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to write dyncluster node state")
 	}
@@ -171,14 +179,16 @@ func (c *Controller) WriteNodeState(ctx context.Context, containerID string, sta
 func (c *Controller) ReadNodeState(ctx context.Context, containerID string) (*DockerNodeState, error) {
 	c.Logger.Debug("reading node state", zap.String("container", containerID))
 
-	resp, _, err := c.DockerCli.CopyFromContainer(ctx, containerID, "/var/cbdyncluster")
+	resp, err := c.DockerCli.CopyFromContainer(ctx, containerID, client.CopyFromContainerOptions{
+		SourcePath: "/var/cbdyncluster",
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to read dyncluster node state")
 	}
 
 	var nodeStateJson *DockerNodeStateJson
 
-	tarRdr := tar.NewReader(resp)
+	tarRdr := tar.NewReader(resp.Content)
 	for {
 		tarHdr, err := tarRdr.Next()
 		if err != nil {
@@ -230,26 +240,30 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 
 	containerName := "cbdynnode-s3-" + clusterID
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
-		Image: "adobe/s3mock",
-		Labels: map[string]string{
-			"com.couchbase.dyncluster.cluster_id": clusterID,
-			"com.couchbase.dyncluster.type":       "s3mock",
-			"com.couchbase.dyncluster.purpose":    "s3mock backing for columnar",
-			"com.couchbase.dyncluster.node_id":    nodeID,
+	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image: "adobe/s3mock",
+			Labels: map[string]string{
+				"com.couchbase.dyncluster.cluster_id": clusterID,
+				"com.couchbase.dyncluster.type":       "s3mock",
+				"com.couchbase.dyncluster.purpose":    "s3mock backing for columnar",
+				"com.couchbase.dyncluster.node_id":    nodeID,
+			},
+			// same effect as ntp
+			Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
 		},
-		// same effect as ntp
-		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
-	}, &container.HostConfig{
-		AutoRemove:  true,
-		NetworkMode: container.NetworkMode(c.NetworkName),
-		CapAdd:      []string{"NET_ADMIN"},
-		Resources: container.Resources{
-			Ulimits: []*units.Ulimit{
-				{Name: "nofile", Soft: 200000, Hard: 200000},
+		HostConfig: &container.HostConfig{
+			AutoRemove:  true,
+			NetworkMode: container.NetworkMode(c.NetworkName),
+			CapAdd:      []string{"NET_ADMIN"},
+			Resources: container.Resources{
+				Ulimits: []*units.Ulimit{
+					{Name: "nofile", Soft: 200000, Hard: 200000},
+				},
 			},
 		},
-	}, nil, nil, containerName)
+		Name: containerName,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create container")
 	}
@@ -258,7 +272,7 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 
 	logger.Debug("container created, starting", zap.String("container", containerID))
 
-	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
+	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start container")
 	}
@@ -331,26 +345,30 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 
 	containerName := "cbdynnode-nginx-" + clusterID
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
-		Image: "nginx",
-		Labels: map[string]string{
-			"com.couchbase.dyncluster.cluster_id": clusterID,
-			"com.couchbase.dyncluster.type":       "nginx",
-			"com.couchbase.dyncluster.purpose":    "nginx backing for cluster",
-			"com.couchbase.dyncluster.node_id":    nodeID,
+	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image: "nginx",
+			Labels: map[string]string{
+				"com.couchbase.dyncluster.cluster_id": clusterID,
+				"com.couchbase.dyncluster.type":       "nginx",
+				"com.couchbase.dyncluster.purpose":    "nginx backing for cluster",
+				"com.couchbase.dyncluster.node_id":    nodeID,
+			},
+			// same effect as ntp
+			Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
 		},
-		// same effect as ntp
-		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
-	}, &container.HostConfig{
-		AutoRemove:  true,
-		NetworkMode: container.NetworkMode(c.NetworkName),
-		CapAdd:      []string{"NET_ADMIN"},
-		Resources: container.Resources{
-			Ulimits: []*units.Ulimit{
-				{Name: "nofile", Soft: 200000, Hard: 200000},
+		HostConfig: &container.HostConfig{
+			AutoRemove:  true,
+			NetworkMode: container.NetworkMode(c.NetworkName),
+			CapAdd:      []string{"NET_ADMIN"},
+			Resources: container.Resources{
+				Ulimits: []*units.Ulimit{
+					{Name: "nofile", Soft: 200000, Hard: 200000},
+				},
 			},
 		},
-	}, nil, nil, containerName)
+		Name: containerName,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create container")
 	}
@@ -359,7 +377,7 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 
 	logger.Debug("container created, starting", zap.String("container", containerID))
 
-	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
+	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start container")
 	}
@@ -427,26 +445,30 @@ func (c *Controller) DeployHaproxyNode(ctx context.Context, clusterID string, ex
 
 	containerName := "cbdynnode-haproxy-" + clusterID
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
-		Image: "haproxy",
-		Labels: map[string]string{
-			"com.couchbase.dyncluster.cluster_id": clusterID,
-			"com.couchbase.dyncluster.type":       "haproxy",
-			"com.couchbase.dyncluster.purpose":    "haproxy backing for cluster",
-			"com.couchbase.dyncluster.node_id":    nodeID,
+	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image: "haproxy",
+			Labels: map[string]string{
+				"com.couchbase.dyncluster.cluster_id": clusterID,
+				"com.couchbase.dyncluster.type":       "haproxy",
+				"com.couchbase.dyncluster.purpose":    "haproxy backing for cluster",
+				"com.couchbase.dyncluster.node_id":    nodeID,
+			},
+			// same effect as ntp
+			Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
 		},
-		// same effect as ntp
-		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
-	}, &container.HostConfig{
-		// AutoRemove:  true,
-		NetworkMode: container.NetworkMode(c.NetworkName),
-		CapAdd:      []string{"NET_ADMIN"},
-		Resources: container.Resources{
-			Ulimits: []*units.Ulimit{
-				{Name: "nofile", Soft: 200000, Hard: 200000},
+		HostConfig: &container.HostConfig{
+			// AutoRemove:  true,
+			NetworkMode: container.NetworkMode(c.NetworkName),
+			CapAdd:      []string{"NET_ADMIN"},
+			Resources: container.Resources{
+				Ulimits: []*units.Ulimit{
+					{Name: "nofile", Soft: 200000, Hard: 200000},
+				},
 			},
 		},
-	}, nil, nil, containerName)
+		Name: containerName,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create container")
 	}
@@ -467,14 +489,17 @@ func (c *Controller) DeployHaproxyNode(ctx context.Context, clusterID string, ex
 	tarFile.Write(configBytes)
 	tarFile.Flush()
 
-	err = c.DockerCli.CopyToContainer(ctx, containerID, "/usr/local/etc", tarBuf, container.CopyToContainerOptions{})
+	_, err = c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: "/usr/local/etc",
+		Content:         tarBuf,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to store base haproxy config")
 	}
 
 	logger.Debug("container config stored, starting", zap.String("container", containerID))
 
-	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
+	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start container")
 	}
@@ -543,7 +568,10 @@ func (c *Controller) UpdateHaproxyCertificates(ctx context.Context, containerID 
 	tarFile.Write(concatPem)
 	tarFile.Flush()
 
-	err := c.DockerCli.CopyToContainer(ctx, containerID, "/usr/local/etc/haproxy/", tarBuf, container.CopyToContainerOptions{})
+	_, err := c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: "/usr/local/etc/haproxy/",
+		Content:         tarBuf,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to write certificates")
 	}
@@ -681,12 +709,17 @@ func (c *Controller) UpdateHaproxyConfig(
 	tarFile.Write(confBytes)
 	tarFile.Flush()
 
-	err := c.DockerCli.CopyToContainer(ctx, containerID, "/usr/local/etc/haproxy/", tarBuf, container.CopyToContainerOptions{})
+	_, err := c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: "/usr/local/etc/haproxy/",
+		Content:         tarBuf,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to write nginx config")
 	}
 
-	err = c.DockerCli.ContainerKill(ctx, containerID, "HUP")
+	_, err = c.DockerCli.ContainerKill(ctx, containerID, client.ContainerKillOptions{
+		Signal: "HUP",
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to reload haproxy config")
 	}
@@ -719,7 +752,10 @@ func (c *Controller) UpdateNginxCertificates(ctx context.Context, containerID st
 	tarFile.Write(keyPem)
 	tarFile.Flush()
 
-	err = c.DockerCli.CopyToContainer(ctx, containerID, "/etc/nginx/ssl/", tarBuf, container.CopyToContainerOptions{})
+	_, err = c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: "/etc/nginx/ssl/",
+		Content:         tarBuf,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to write certificates")
 	}
@@ -814,7 +850,10 @@ func (c *Controller) UpdateNginxConfig(ctx context.Context, containerID string, 
 	tarFile.Write(confBytes)
 	tarFile.Flush()
 
-	err := c.DockerCli.CopyToContainer(ctx, containerID, "/etc/nginx/conf.d/", tarBuf, container.CopyToContainerOptions{})
+	_, err := c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: "/etc/nginx/conf.d/",
+		Content:         tarBuf,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to write nginx config")
 	}
@@ -889,7 +928,10 @@ func (c *Controller) UploadCertificates(
 	}
 	tarFile.Flush()
 
-	err = c.DockerCli.CopyToContainer(ctx, containerID, inboxPath, tarBuf, container.CopyToContainerOptions{})
+	_, err = c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+		DestinationPath: inboxPath,
+		Content:         tarBuf,
+	})
 	if err != nil {
 		return errors.Wrap(err, "failed to write certificates")
 	}
@@ -947,30 +989,34 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*C
 		usingDinoCerts = "true"
 	}
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), &container.Config{
-		Image: def.Image.ImagePath,
-		Labels: map[string]string{
-			"com.couchbase.dyncluster.cluster_id":             def.ClusterID,
-			"com.couchbase.dyncluster.type":                   nodeType,
-			"com.couchbase.dyncluster.dns_name":               dnsName,
-			"com.couchbase.dyncluster.purpose":                def.Purpose,
-			"com.couchbase.dyncluster.node_id":                nodeID,
-			"com.couchbase.dyncluster.initial_server_version": def.ImageServerVersion,
-			"com.couchbase.dyncluster.using_dino_certs":       usingDinoCerts,
+	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+		Config: &container.Config{
+			Image: def.Image.ImagePath,
+			Labels: map[string]string{
+				"com.couchbase.dyncluster.cluster_id":             def.ClusterID,
+				"com.couchbase.dyncluster.type":                   nodeType,
+				"com.couchbase.dyncluster.dns_name":               dnsName,
+				"com.couchbase.dyncluster.purpose":                def.Purpose,
+				"com.couchbase.dyncluster.node_id":                nodeID,
+				"com.couchbase.dyncluster.initial_server_version": def.ImageServerVersion,
+				"com.couchbase.dyncluster.using_dino_certs":       usingDinoCerts,
+			},
+			// same effect as ntp
+			Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
+			Env:     envVars,
 		},
-		// same effect as ntp
-		Volumes: map[string]struct{}{"/etc/localtime:/etc/localtime": {}},
-		Env:     envVars,
-	}, &container.HostConfig{
-		AutoRemove:  true,
-		NetworkMode: container.NetworkMode(c.NetworkName),
-		CapAdd:      []string{"NET_ADMIN"},
-		Resources: container.Resources{
-			Ulimits: []*units.Ulimit{
-				{Name: "nofile", Soft: 200000, Hard: 200000},
+		HostConfig: &container.HostConfig{
+			AutoRemove:  true,
+			NetworkMode: container.NetworkMode(c.NetworkName),
+			CapAdd:      []string{"NET_ADMIN"},
+			Resources: container.Resources{
+				Ulimits: []*units.Ulimit{
+					{Name: "nofile", Soft: 200000, Hard: 200000},
+				},
 			},
 		},
-	}, nil, nil, containerName)
+		Name: containerName,
+	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create container")
 	}
@@ -979,7 +1025,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*C
 
 	logger.Debug("container created, starting", zap.String("container", containerID))
 
-	err = c.DockerCli.ContainerStart(context.Background(), containerID, container.StartOptions{})
+	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start container")
 	}
@@ -1035,7 +1081,7 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 
 	logger.Debug("stopping container")
 
-	err := c.DockerCli.ContainerStop(ctx, containerID, container.StopOptions{
+	_, err := c.DockerCli.ContainerStop(ctx, containerID, client.ContainerStopOptions{
 		Timeout: ptr.To(0),
 	})
 	if err != nil {
@@ -1045,7 +1091,7 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 	logger.Debug("removing container")
 
 	// we try to call remove to force it to be removed
-	err = c.DockerCli.ContainerRemove(ctx, containerID, container.RemoveOptions{
+	_, err = c.DockerCli.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
 		Force: true,
 	})
 	if err != nil {
@@ -1167,20 +1213,26 @@ func (c *Controller) SetTrafficControl(
 		return nil
 	}
 
-	netInfo, err := c.DockerCli.NetworkInspect(ctx, c.NetworkName, network.InspectOptions{})
+	netInfo, err := c.DockerCli.NetworkInspect(ctx, c.NetworkName, client.NetworkInspectOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to inspect network")
 	}
 
-	if len(netInfo.IPAM.Config) < 1 {
+	if len(netInfo.Network.IPAM.Config) < 1 {
 		return errors.New("more than one ipam config, cannot identify node subnet")
 	}
-	ipamConfig := netInfo.IPAM.Config[0]
+	ipamConfig := netInfo.Network.IPAM.Config[0]
 
-	gatewayIP := ipamConfig.Gateway
-	ipRange := ipamConfig.Subnet
-	if ipamConfig.IPRange != "" {
-		ipRange = ipamConfig.IPRange
+	var gatewayIP string
+	if ipamConfig.Gateway.IsValid() {
+		gatewayIP = ipamConfig.Gateway.String()
+	}
+
+	var ipRange string
+	if ipamConfig.IPRange.IsValid() {
+		ipRange = ipamConfig.IPRange.String()
+	} else if ipamConfig.Subnet.IsValid() {
+		ipRange = ipamConfig.Subnet.String()
 	}
 
 	if ipRange == "" || gatewayIP == "" {

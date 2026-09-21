@@ -7,15 +7,12 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
-func dockerBuildAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, buildContext io.Reader, options types.ImageBuildOptions) error {
+func dockerBuildAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, buildContext io.Reader, options client.ImageBuildOptions) error {
 	buildResp, err := cli.ImageBuild(ctx, buildContext, options)
 	if err != nil {
 		return errors.Wrap(err, "failed to build image")
@@ -52,7 +49,7 @@ func dockerBuildAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Cli
 	return nil
 }
 
-func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, refStr string, options image.PullOptions) error {
+func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, refStr string, options client.ImagePullOptions) error {
 	pullResp, err := cli.ImagePull(ctx, refStr, options)
 	if err != nil {
 		return errors.Wrap(err, "failed to pull image")
@@ -83,18 +80,18 @@ func dockerPullAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 }
 
 func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Client, containerID string, cmd []string) error {
-	execID, err := cli.ContainerExecCreate(ctx, containerID, container.ExecOptions{
+	execID, err := cli.ExecCreate(ctx, containerID, client.ExecCreateOptions{
 		AttachStdout: true,
 		AttachStderr: true,
-		Tty:          true,
+		TTY:          true,
 		Cmd:          cmd,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to create exec")
 	}
 
-	resp, err := cli.ContainerExecAttach(ctx, execID.ID, container.ExecStartOptions{
-		Tty: true,
+	resp, err := cli.ExecAttach(ctx, execID.ID, client.ExecAttachOptions{
+		TTY: true,
 	})
 	if err != nil {
 		return errors.Wrap(err, "failed to start exec")
@@ -107,7 +104,7 @@ func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 		logger.Debug("docker exec output", zap.String("text", line))
 	}
 
-	res, err := cli.ContainerExecInspect(ctx, execID.ID)
+	res, err := cli.ExecInspect(ctx, execID.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return errors.Wrap(err, "failed to inspect exec")
 	}

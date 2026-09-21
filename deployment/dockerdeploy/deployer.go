@@ -10,8 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
+	"github.com/moby/moby/api/pkg/stdcopy"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/couchbase/gocbcorex"
@@ -19,7 +18,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/deployment/commondeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -976,13 +975,15 @@ func (d *Deployer) CollectLogs(ctx context.Context, clusterID string, destPath s
 				zap.String("destPath", destFilePath))
 		}
 
-		resp, _, err := d.dockerCli.CopyFromContainer(ctx, containerId, filePath)
+		resp, err := d.dockerCli.CopyFromContainer(ctx, containerId, client.CopyFromContainerOptions{
+			SourcePath: filePath,
+		})
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to copy from container")
 		}
-		defer resp.Close()
+		defer resp.Content.Close()
 
-		tarRdr := tar.NewReader(resp)
+		tarRdr := tar.NewReader(resp.Content)
 		_, err = tarRdr.Next()
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to parse transmitted file")
@@ -1034,7 +1035,7 @@ func (d *Deployer) PauseNode(ctx context.Context, clusterID string, nodeIDs []st
 	}
 
 	for _, nodeContainerID := range nodeContainerIDs {
-		err := d.dockerCli.ContainerPause(ctx, nodeContainerID)
+		_, err := d.dockerCli.ContainerPause(ctx, nodeContainerID, client.ContainerPauseOptions{})
 		if err != nil {
 			return errors.Wrap(err, "failed to pause node")
 		}
@@ -1065,7 +1066,7 @@ func (d *Deployer) UnpauseNode(ctx context.Context, clusterID string, nodeIDs []
 	}
 
 	for _, nodeContainerID := range nodeContainerIDs {
-		err := d.dockerCli.ContainerUnpause(ctx, nodeContainerID)
+		_, err := d.dockerCli.ContainerUnpause(ctx, nodeContainerID, client.ContainerUnpauseOptions{})
 		if err != nil {
 			return errors.Wrap(err, "failed to unpause node")
 		}
@@ -1178,22 +1179,22 @@ func (d *Deployer) getNodeOTP(ctx context.Context, clusterID string, nodeId stri
 }
 
 func (d *Deployer) execInContainer(ctx context.Context, containerID string, cmd []string) error {
-	execOpts := container.ExecOptions{
+	execOpts := client.ExecCreateOptions{
 		Cmd:          cmd,
 		AttachStdout: true,
 		AttachStderr: true,
-		Tty:          false,
+		TTY:          false,
 		Privileged:   false,
 	}
 
-	execResp, err := d.dockerCli.ContainerExecCreate(ctx, containerID, execOpts)
+	execResp, err := d.dockerCli.ExecCreate(ctx, containerID, execOpts)
 	if err != nil {
-		return fmt.Errorf("ContainerExecCreate failed: %w", err)
+		return fmt.Errorf("ExecCreate failed: %w", err)
 	}
 
-	attachResp, err := d.dockerCli.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+	attachResp, err := d.dockerCli.ExecAttach(ctx, execResp.ID, client.ExecAttachOptions{})
 	if err != nil {
-		return fmt.Errorf("ContainerExecAttach failed: %w", err)
+		return fmt.Errorf("ExecAttach failed: %w", err)
 	}
 	defer attachResp.Close()
 
