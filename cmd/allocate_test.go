@@ -31,24 +31,6 @@ func TestApplyPurposePrefix(t *testing.T) {
 			purpose:  "FIT-situational-cbDino",
 			expected: "fitcli-run42-embev-FIT-situational-cbDino",
 		},
-		{
-			name:     "a purpose equal to the prefix is not doubled",
-			prefix:   "fitcli-run42-embev",
-			purpose:  "fitcli-run42-embev",
-			expected: "fitcli-run42-embev",
-		},
-		{
-			name:     "a purpose that starts with the prefix is not doubled",
-			prefix:   "fitcli-run42-embev",
-			purpose:  "fitcli-run42-embev-FIT-situational-cbDino",
-			expected: "fitcli-run42-embev-FIT-situational-cbDino",
-		},
-		{
-			name:     "a purpose that only shares the first characters still gets the prefix",
-			prefix:   "fitcli-run42-embev",
-			purpose:  "fitcli-run42-embevx",
-			expected: "fitcli-run42-embev-fitcli-run42-embevx",
-		},
 	}
 
 	for _, test := range tests {

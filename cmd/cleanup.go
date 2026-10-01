@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+
+	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
@@ -16,12 +18,6 @@ type cleanableTarget interface {
 	Cleanup(ctx context.Context) error
 }
 
-// dryRunCleanableTarget marks the cleaners that can report what a cleanup
-// would delete without deleting it. The others are skipped on a dry run.
-type dryRunCleanableTarget interface {
-	CleanupDryRun(ctx context.Context) error
-}
-
 var cleanupCmd = &cobra.Command{
 	Use:   "cleanup [flags] [deployer-name]",
 	Short: "Cleans up any expired resources for a deployer, or for every deployer",
@@ -32,7 +28,14 @@ var cleanupCmd = &cobra.Command{
 		ctx := helper.GetContext()
 		config := helper.GetConfig(ctx)
 
+		purpose, _ := cmd.Flags().GetString("purpose")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		scoped := purpose != "" || dryRun
+		opts := deployment.CleanupOptions{
+			Purpose: purpose,
+			DryRun:  dryRun,
+		}
 
 		cleaners := make(map[string]cleanableTarget)
 
@@ -134,21 +137,23 @@ var cleanupCmd = &cobra.Command{
 		for _, cleanerName := range finalCleanupOrder {
 			cleaner := cleaners[cleanerName]
 
-			if dryRun {
-				dryRunCleaner, ok := cleaner.(dryRunCleanableTarget)
+			if scoped {
+				scopedCleaner, ok := cleaner.(deployment.ScopedCleaner)
 				if !ok {
-					logger.Info("cleaner does not support dry-run, skipping it",
+					logger.Info("cleaner cannot scope or dry run, skipping it",
 						zap.String("cleaner", cleanerName))
 					continue
 				}
 
-				logger.Info("running cleanup dry run",
-					zap.String("cleaner", cleanerName))
+				logger.Info("running scoped cleanup",
+					zap.String("cleaner", cleanerName),
+					zap.String("purpose", purpose),
+					zap.Bool("dry-run", dryRun))
 
-				err := dryRunCleaner.CleanupDryRun(ctx)
+				err := scopedCleaner.CleanupScoped(ctx, opts)
 				if err != nil {
 					failed = true
-					logger.Error("failed to inspect resources",
+					logger.Error("failed to cleanup resources",
 						zap.String("cleaner", cleanerName), zap.Error(err))
 				}
 				continue
@@ -174,5 +179,6 @@ var cleanupCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(cleanupCmd)
 
+	cleanupCmd.Flags().String("purpose", "", "Only clean up the expired clusters whose purpose equals this value or starts with it followed by a dash")
 	cleanupCmd.Flags().Bool("dry-run", false, "Print what would be deleted and delete nothing")
 }

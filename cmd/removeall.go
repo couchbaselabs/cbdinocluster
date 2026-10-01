@@ -16,26 +16,25 @@ var removeAllCmd = &cobra.Command{
 		ctx := helper.GetContext()
 
 		purpose, _ := cmd.Flags().GetString("purpose")
-		expiredOnly, _ := cmd.Flags().GetBool("expired-only")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		all, _ := cmd.Flags().GetBool("all")
 
-		if all && (purpose != "" || expiredOnly) {
-			logger.Fatal("--all cannot combine with --purpose or --expired-only")
+		if all && purpose != "" {
+			logger.Fatal("--all cannot combine with --purpose")
 		}
 		// A dry run is not a scope, it only changes the action.
-		if !all && purpose == "" && !expiredOnly {
-			logger.Fatal("remove-all needs a scope. Pass --purpose or --expired-only to limit " +
-				"the removal, or pass --all to remove every cluster. Add --dry-run to preview, " +
-				"for example --all --dry-run previews everything")
+		if !all && purpose == "" {
+			logger.Fatal("remove-all needs a scope. Pass --purpose to limit the removal, " +
+				"or pass --all to remove every cluster. Add --dry-run to preview, " +
+				"for example --all --dry-run previews everything. " +
+				"To remove only the expired clusters, use cleanup")
 		}
 
 		// --all without --dry-run keeps the old unscoped behavior.
 		scoped := !all || dryRun
 		opts := deployment.RemoveAllOptions{
-			PurposePrefix: purpose,
-			ExpiredOnly:   expiredOnly,
-			DryRun:        dryRun,
+			Purpose: purpose,
+			DryRun:  dryRun,
 		}
 
 		var deployers map[string]deployment.Deployer
@@ -99,8 +98,7 @@ var removeAllCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(removeAllCmd)
 
-	removeAllCmd.Flags().String("purpose", "", "Only remove the clusters whose purpose starts with this prefix")
-	removeAllCmd.Flags().Bool("expired-only", false, "Only remove the clusters whose expiry has passed")
+	removeAllCmd.Flags().String("purpose", "", "Only remove the clusters whose purpose equals this value or starts with it followed by a dash")
 	removeAllCmd.Flags().Bool("dry-run", false, "Print what would be removed and remove nothing")
 	removeAllCmd.Flags().Bool("all", false, "Remove every cluster the deployers own, without any scope")
 }

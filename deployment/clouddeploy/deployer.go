@@ -49,7 +49,7 @@ type Deployer struct {
 
 var _ deployment.Deployer = (*Deployer)(nil)
 var _ deployment.ScopedRemoveAller = (*Deployer)(nil)
-var _ deployment.DryRunCleaner = (*Deployer)(nil)
+var _ deployment.ScopedCleaner = (*Deployer)(nil)
 
 type NewDeployerOptions struct {
 	Logger                   *zap.Logger
@@ -1817,16 +1817,14 @@ func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (
 	return failedProjects, errs
 }
 
-// removeAllShouldTake decides if a scoped remove-all takes the project. It is
-// pure so tests can cover the scope rules without API calls.
-func removeAllShouldTake(meta *stringclustermeta.MetaData, opts deployment.RemoveAllOptions, now time.Time) bool {
-	if opts.PurposePrefix != "" && !strings.HasPrefix(meta.Purpose, opts.PurposePrefix) {
+// cleanupShouldTake decides if a cleanup takes the project. It is pure so tests
+// can cover the scope rules without API calls.
+func cleanupShouldTake(meta *stringclustermeta.MetaData, opts deployment.CleanupOptions, now time.Time) bool {
+	// A zero expiry means the project never expires.
+	if meta.Expiry.IsZero() || meta.Expiry.After(now) {
 		return false
 	}
-	if opts.ExpiredOnly && (meta.Expiry.IsZero() || meta.Expiry.After(now)) {
-		return false
-	}
-	return true
+	return deployment.PurposeMatches(meta.Purpose, opts.Purpose)
 }
 
 func (p *Deployer) RemoveAll(ctx context.Context) error {
@@ -1918,10 +1916,9 @@ func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptio
 		return errors.Wrap(err, "failed to list projects")
 	}
 
-	now := time.Now()
 	var projects []cbdc2Project
 	for _, project := range allProjects {
-		if removeAllShouldTake(project.Meta, opts, now) {
+		if deployment.PurposeMatches(project.Meta.Purpose, opts.Purpose) {
 			projects = append(projects, project)
 		}
 	}
@@ -1991,16 +1988,16 @@ func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deplo
 }
 
 func (p *Deployer) Cleanup(ctx context.Context) error {
-	return p.cleanup(ctx, false)
+	return p.cleanup(ctx, deployment.CleanupOptions{})
 }
 
-func (p *Deployer) CleanupDryRun(ctx context.Context) error {
-	return p.cleanup(ctx, true)
+func (p *Deployer) CleanupScoped(ctx context.Context, opts deployment.CleanupOptions) error {
+	return p.cleanup(ctx, opts)
 }
 
 // cleanup is a remove-all restricted to the expired projects, plus the skip of
 // a cluster Capella failed to destroy.
-func (p *Deployer) cleanup(ctx context.Context, dryRun bool) error {
+func (p *Deployer) cleanup(ctx context.Context, opts deployment.CleanupOptions) error {
 	allProjects, err := p.listCbdc2Projects(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to list projects")
@@ -2011,20 +2008,25 @@ func (p *Deployer) cleanup(ctx context.Context, dryRun bool) error {
 	now := time.Now()
 	var projects []cbdc2Project
 	for _, project := range allProjects {
-		if removeAllShouldTake(project.Meta, deployment.RemoveAllOptions{ExpiredOnly: true}, now) {
+		if cleanupShouldTake(project.Meta, opts, now) {
 			projects = append(projects, project)
 		}
 	}
 
-	err = p.removeProjects(ctx, projects, dryRun, true, "expired")
+	err = p.removeProjects(ctx, projects, opts.DryRun, true, "expired")
 	if err != nil {
 		return err
 	}
 
-	if dryRun {
-		p.logger.Info("dry run finished, nothing was removed",
+	if opts.DryRun {
+		fields := []zap.Field{
 			zap.Int("projects-expired", len(projects)),
-			zap.Int("projects-total", len(allProjects)))
+			zap.Int("projects-total", len(allProjects)),
+		}
+		if opts.Purpose != "" {
+			fields = append(fields, zap.String("purpose", opts.Purpose))
+		}
+		p.logger.Info("dry run finished, nothing was removed", fields...)
 	}
 
 	return nil

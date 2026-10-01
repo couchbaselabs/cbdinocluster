@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -147,10 +146,9 @@ var allocateCmd = &cobra.Command{
 }
 
 // applyPurposePrefix keeps the caller's purpose as a suffix, so the prefix
-// still marks who owns the cluster. A purpose that already carries the prefix
-// stays as it is.
+// still marks who owns the cluster.
 func applyPurposePrefix(prefix, purpose string) string {
-	if prefix == "" || purpose == prefix || strings.HasPrefix(purpose, prefix+"-") {
+	if prefix == "" {
 		return purpose
 	}
 	if purpose == "" {
