@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestRemoveAllShouldTake(t *testing.T) {
+func TestCleanupShouldTake(t *testing.T) {
 	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	expired := now.Add(-time.Hour)
 	live := now.Add(time.Hour)
@@ -19,98 +19,64 @@ func TestRemoveAllShouldTake(t *testing.T) {
 	tests := []struct {
 		name string
 		meta stringclustermeta.MetaData
-		opts deployment.RemoveAllOptions
+		opts deployment.CleanupOptions
 		want bool
 	}{
 		{
-			name: "no scope takes everything",
-			meta: stringclustermeta.MetaData{Purpose: "sdk-nightly", Expiry: live},
-			want: true,
-		},
-		{
-			name: "no scope takes the never expiring",
-			meta: stringclustermeta.MetaData{},
-			want: true,
-		},
-		{
-			name: "purpose prefix matches",
-			meta: stringclustermeta.MetaData{Purpose: "sdk-nightly"},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk"},
-			want: true,
-		},
-		{
-			name: "purpose matches itself",
-			meta: stringclustermeta.MetaData{Purpose: "sdk"},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk"},
-			want: true,
-		},
-		{
-			name: "purpose mismatch is kept",
-			meta: stringclustermeta.MetaData{Purpose: "perf"},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk"},
-			want: false,
-		},
-		{
-			name: "empty purpose never matches a prefix",
-			meta: stringclustermeta.MetaData{},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk"},
-			want: false,
-		},
-		{
-			name: "expired only takes the expired",
+			name: "takes the expired",
 			meta: stringclustermeta.MetaData{Expiry: expired},
-			opts: deployment.RemoveAllOptions{ExpiredOnly: true},
 			want: true,
 		},
 		{
 			name: "expiry equal to now counts as expired",
 			meta: stringclustermeta.MetaData{Expiry: now},
-			opts: deployment.RemoveAllOptions{ExpiredOnly: true},
 			want: true,
 		},
 		{
-			name: "expired only keeps the live",
+			name: "keeps the live",
 			meta: stringclustermeta.MetaData{Expiry: live},
-			opts: deployment.RemoveAllOptions{ExpiredOnly: true},
 			want: false,
 		},
 		{
-			// A zero expiry means the cluster never expires, see Cleanup.
-			name: "expired only keeps the never expiring",
+			name: "keeps the never expiring",
 			meta: stringclustermeta.MetaData{},
-			opts: deployment.RemoveAllOptions{ExpiredOnly: true},
 			want: false,
 		},
 		{
-			name: "both filters must match, live is kept",
-			meta: stringclustermeta.MetaData{Purpose: "sdk", Expiry: live},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk", ExpiredOnly: true},
-			want: false,
-		},
-		{
-			name: "both filters must match, wrong purpose is kept",
-			meta: stringclustermeta.MetaData{Purpose: "perf", Expiry: expired},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk", ExpiredOnly: true},
-			want: false,
-		},
-		{
-			name: "both filters match",
-			meta: stringclustermeta.MetaData{Purpose: "sdk", Expiry: expired},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk", ExpiredOnly: true},
+			name: "purpose scope takes the expired match",
+			meta: stringclustermeta.MetaData{Purpose: "sdk-nightly", Expiry: expired},
+			opts: deployment.CleanupOptions{Purpose: "sdk"},
 			want: true,
 		},
 		{
-			// A dry run only changes the action, never the scope.
+			name: "purpose scope keeps the live match",
+			meta: stringclustermeta.MetaData{Purpose: "sdk", Expiry: live},
+			opts: deployment.CleanupOptions{Purpose: "sdk"},
+			want: false,
+		},
+		{
+			name: "purpose scope keeps the expired mismatch",
+			meta: stringclustermeta.MetaData{Purpose: "sdkxyz", Expiry: expired},
+			opts: deployment.CleanupOptions{Purpose: "sdk"},
+			want: false,
+		},
+		{
+			name: "purpose scope keeps an expired empty purpose",
+			meta: stringclustermeta.MetaData{Expiry: expired},
+			opts: deployment.CleanupOptions{Purpose: "sdk"},
+			want: false,
+		},
+		{
 			name: "dry run does not change the scope",
-			meta: stringclustermeta.MetaData{Purpose: "perf"},
-			opts: deployment.RemoveAllOptions{PurposePrefix: "sdk", DryRun: true},
+			meta: stringclustermeta.MetaData{Purpose: "perf", Expiry: expired},
+			opts: deployment.CleanupOptions{Purpose: "sdk", DryRun: true},
 			want: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, removeAllShouldTake(&tt.meta, tt.opts, now))
+			assert.Equal(t, tt.want, cleanupShouldTake(&tt.meta, tt.opts, now))
 		})
 	}
 }

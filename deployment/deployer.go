@@ -181,13 +181,22 @@ type Deployer interface {
 	SetAutoFailover(ctx context.Context, clusterID string, enabled bool, timeout int) error
 }
 
+// PurposeMatches reports if a cluster purpose falls in the purpose scope. The
+// purpose must equal the scope or start with the scope followed by a dash, so
+// "alice" takes "alice-run1" but not "alicebob". An empty scope matches every
+// cluster.
+func PurposeMatches(clusterPurpose, scope string) bool {
+	if scope == "" {
+		return true
+	}
+	return clusterPurpose == scope || strings.HasPrefix(clusterPurpose, scope+"-")
+}
+
 // RemoveAllOptions narrows what a scoped remove-all removes. The zero value
 // matches every cluster and performs the removal.
 type RemoveAllOptions struct {
-	// PurposePrefix keeps only the clusters whose purpose starts with it.
-	PurposePrefix string
-	// ExpiredOnly keeps only the clusters whose expiry has passed.
-	ExpiredOnly bool
+	// Purpose keeps only the clusters that match it, see PurposeMatches.
+	Purpose string
 	// DryRun logs what would be removed and removes nothing.
 	DryRun bool
 }
@@ -199,8 +208,18 @@ type ScopedRemoveAller interface {
 	RemoveAllScoped(ctx context.Context, opts RemoveAllOptions) error
 }
 
-// DryRunCleaner is the optional interface of deployers that can report what
-// Cleanup would delete without deleting it.
-type DryRunCleaner interface {
-	CleanupDryRun(ctx context.Context) error
+// CleanupOptions narrows what a scoped cleanup removes. The zero value acts
+// like Cleanup.
+type CleanupOptions struct {
+	// Purpose keeps only the expired clusters that match it, see PurposeMatches.
+	Purpose string
+	// DryRun logs what would be removed and removes nothing.
+	DryRun bool
+}
+
+// ScopedCleaner is the optional interface of cleaners that can restrict a
+// cleanup or run it as a dry run. A cleaner without it is skipped when an
+// option is set.
+type ScopedCleaner interface {
+	CleanupScoped(ctx context.Context, opts CleanupOptions) error
 }
