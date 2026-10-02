@@ -36,11 +36,12 @@ func getReleaseIdFromServerImage(serverImage string) (string, error) {
 func getReleaseIdFromColumnarServerImage(serverImage string) (string, error) {
 	// Providers differ only in the separator, so normalising "-" to "." lets AWS and GCP share one rule:
 	//
+	//	aws: "operational-insights-3.0.0-1025-arm64-v1.0.0" has release ID "3.0.0"
 	//	aws: "enterprise-analytics-2.1.1-1469-arm64-v1.0.0" has release ID "2.1.1"
 	//	gcp: "enterprise-analytics-2-1-1-1469-arm64-v1-0-0" has release ID "2.1.1"
 	//	aws: "couchbase-columnar-1.1.2-1455-arm64-v1.0.12"  has release ID "1.1.2"
 	//	gcp: "couchbase-columnar-1-1-2-1455-arm64-v1-0-12"  has release ID "1.1.2"
-	for _, prefix := range []string{"enterprise-analytics-", "couchbase-columnar-"} {
+	for _, prefix := range []string{"operational-insights-", "enterprise-analytics-", "couchbase-columnar-"} {
 		if strings.HasPrefix(serverImage, prefix) {
 			version := strings.ReplaceAll(strings.TrimPrefix(serverImage, prefix), "-", ".")
 			parts := strings.Split(version, ".")
