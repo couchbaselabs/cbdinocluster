@@ -1838,26 +1838,12 @@ func (p *Deployer) RemoveAllScoped(ctx context.Context, opts deployment.RemoveAl
 // removeProjects deletes every cluster of every project first and waits after,
 // so the deletions overlap on the Capella side. It then deletes the projects
 // whose clusters all went. An empty project holds no target, so it goes
-// straight away. reason only labels the dry run output.
+// straight away.
 func (p *Deployer) removeProjects(
 	ctx context.Context,
 	projects []cbdc2Project,
-	dryRun bool,
 	skipDestroyFailed bool,
-	reason string,
 ) error {
-	if dryRun {
-		for _, project := range projects {
-			p.logger.Info("dry run, would remove the project and its clusters",
-				zap.String("project-id", project.Info.ID),
-				zap.String("project-name", project.Info.Name),
-				zap.String("purpose", project.Meta.Purpose),
-				zap.Time("expiry", project.Meta.Expiry),
-				zap.String("reason", reason))
-		}
-		return nil
-	}
-
 	var errs error
 
 	// A corrupted project can hold more than one cluster, which inspectProject
@@ -1910,6 +1896,54 @@ func (p *Deployer) removeProjects(
 	return nil
 }
 
+// dryRunRemoveProjects lists the clusters like removeProjects does, so it keeps
+// the same projects. It cannot predict a delete that fails during the real run.
+// reason only labels the output. It returns how many projects would be removed
+// and kept.
+func (p *Deployer) dryRunRemoveProjects(
+	ctx context.Context,
+	projects []cbdc2Project,
+	skipDestroyFailed bool,
+	reason string,
+) (int, int, error) {
+	var errs error
+	removed := 0
+	kept := 0
+
+	for _, project := range projects {
+		targets, keepProject, err := p.listRemovalTargets(ctx, project.Info.ID, skipDestroyFailed)
+		if err != nil {
+			errs = multierr.Append(errs, err)
+			kept++
+			p.logger.Warn("dry run, would keep the project, listing its clusters failed",
+				zap.String("project-id", project.Info.ID),
+				zap.String("project-name", project.Info.Name),
+				zap.String("purpose", project.Meta.Purpose),
+				zap.Error(err))
+			continue
+		}
+		if keepProject {
+			kept++
+			p.logger.Info("dry run, would keep the project, a cluster needs manual removal",
+				zap.String("project-id", project.Info.ID),
+				zap.String("project-name", project.Info.Name),
+				zap.String("purpose", project.Meta.Purpose))
+			continue
+		}
+
+		removed++
+		p.logger.Info("dry run, would remove the project and its clusters",
+			zap.String("project-id", project.Info.ID),
+			zap.String("project-name", project.Info.Name),
+			zap.String("purpose", project.Meta.Purpose),
+			zap.Time("expiry", project.Meta.Expiry),
+			zap.String("reason", reason),
+			zap.Int("clusters", len(targets)))
+	}
+
+	return removed, kept, errs
+}
+
 func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptions) error {
 	allProjects, err := p.listCbdc2Projects(ctx)
 	if err != nil {
@@ -1925,18 +1959,17 @@ func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptio
 
 	// A remove-all keeps trying a destroyFailed cluster. The delete fails, the
 	// project is kept and the error is reported.
-	err = p.removeProjects(ctx, projects, opts.DryRun, false, "in scope")
-	if err != nil {
+	if opts.DryRun {
+		removed, kept, err := p.dryRunRemoveProjects(ctx, projects, false, "in scope")
+		p.logger.Info("dry run finished, nothing was removed",
+			zap.Int("projects-in-scope", len(projects)),
+			zap.Int("projects-would-remove", removed),
+			zap.Int("projects-would-keep", kept),
+			zap.Int("projects-total", len(allProjects)))
 		return err
 	}
 
-	if opts.DryRun {
-		p.logger.Info("dry run finished, nothing was removed",
-			zap.Int("projects-in-scope", len(projects)),
-			zap.Int("projects-total", len(allProjects)))
-	}
-
-	return nil
+	return p.removeProjects(ctx, projects, false)
 }
 
 func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
@@ -2013,23 +2046,22 @@ func (p *Deployer) cleanup(ctx context.Context, opts deployment.CleanupOptions) 
 		}
 	}
 
-	err = p.removeProjects(ctx, projects, opts.DryRun, true, "expired")
-	if err != nil {
-		return err
-	}
-
 	if opts.DryRun {
+		removed, kept, err := p.dryRunRemoveProjects(ctx, projects, true, "expired")
 		fields := []zap.Field{
 			zap.Int("projects-expired", len(projects)),
+			zap.Int("projects-would-remove", removed),
+			zap.Int("projects-would-keep", kept),
 			zap.Int("projects-total", len(allProjects)),
 		}
 		if opts.Purpose != "" {
 			fields = append(fields, zap.String("purpose", opts.Purpose))
 		}
 		p.logger.Info("dry run finished, nothing was removed", fields...)
+		return err
 	}
 
-	return nil
+	return p.removeProjects(ctx, projects, true)
 }
 
 func (p *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
