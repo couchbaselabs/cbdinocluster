@@ -11,11 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/multierr"
-
 	"github.com/couchbase/gocbcorex"
 	"github.com/couchbaselabs/cbdinocluster/utils/webhelper"
 	"github.com/couchbaselabs/gocbconnstr/v2"
+	"go.uber.org/multierr"
 
 	"github.com/couchbaselabs/cbdinocluster/clusterdef"
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -1802,27 +1801,49 @@ func (p *Deployer) Cleanup(ctx context.Context) error {
 		}
 
 		if expired {
+			var currentState string
 			// Capella itself failed to destroy these, so asking again does nothing.
-			if cluster.Cluster != nil && cluster.Cluster.CurrentState == capellav4.StateDestroyFailed {
-				p.logger.Info("skipping expired cluster in destroyFailed state, it needs manual removal",
-					zap.String("cluster-id", cluster.Meta.ID.String()),
-					zap.String("project-id", cluster.ProjectID))
-				continue
+			if cluster.Cluster != nil {
+				currentState = cluster.Cluster.CurrentState
+				if currentState == capellav4.StateDestroyFailed {
+					p.logger.Info("skipping expired cluster in destroyFailed state, it needs manual removal",
+						zap.String("cluster-id", cluster.Meta.ID.String()),
+						zap.String("project-id", cluster.ProjectID))
+					continue
+				}
+				if currentState == capellav4.StateDestroying {
+					p.logger.Info("skipping expired cluster in destroying state",
+						zap.String("cluster-id", cluster.Meta.ID.String()),
+						zap.String("project-id", cluster.ProjectID))
+					continue
+				}
 			}
-			if cluster.Columnar != nil && cluster.Columnar.CurrentState == capellav4.StateDestroyFailed {
-				p.logger.Info("skipping expired columnar in destroyFailed state, it needs manual removal",
-					zap.String("cluster-id", cluster.Meta.ID.String()),
-					zap.String("project-id", cluster.ProjectID))
-				continue
+			if cluster.Columnar != nil {
+				currentState = cluster.Columnar.CurrentState
+				if currentState == capellav4.StateDestroyFailed {
+					p.logger.Info("skipping expired columnar cluster in destroyFailed state, it needs manual removal",
+						zap.String("cluster-id", cluster.Meta.ID.String()),
+						zap.String("project-id", cluster.ProjectID))
+					continue
+				}
+				if currentState == capellav4.StateDestroying {
+					p.logger.Info("skipping expired columnar cluster in destroying state",
+						zap.String("cluster-id", cluster.Meta.ID.String()),
+						zap.String("project-id", cluster.ProjectID))
+					continue
+				}
 			}
 
 			p.logger.Info("removing cluster",
-				zap.String("cluster-id", cluster.Meta.ID.String()))
+				zap.String("cluster-id", cluster.Meta.ID.String()),
+				zap.String("current-state", currentState))
 
-			err := p.removeCluster(ctx, cluster)
+			removeCtx, cancelFn := context.WithTimeout(ctx, 30*time.Minute)
+			err := p.removeCluster(removeCtx, cluster)
 			if err != nil {
 				allErr = multierr.Append(allErr, errors.Wrapf(err, "cluster_id: %s", cluster.Meta.ID.String()))
 			}
+			cancelFn()
 		}
 	}
 
