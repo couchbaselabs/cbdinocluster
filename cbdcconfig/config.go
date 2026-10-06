@@ -56,11 +56,6 @@ type Config struct {
 	DefaultDeployer string        `yaml:"default-deployer"`
 	DefaultExpiry   time.Duration `yaml:"default-expiry"`
 
-	// PurposePrefix goes in front of every purpose, even one the caller passes.
-	// A CI box sets it to its run stamp so every cluster it allocates carries
-	// the run in the project name. A human's local config leaves it unset.
-	PurposePrefix string `yaml:"purpose-prefix,omitempty"`
-
 	_DefaultCloud string `yaml:"default-cloud"`
 }
 

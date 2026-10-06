@@ -148,32 +148,6 @@ func TestUpgradeFoldsLegacyCapellaKey(t *testing.T) {
 	require.Contains(t, string(saved), "api-keys:")
 }
 
-// TestPurposePrefixRoundTrip proves the field persists, and that an unset
-// value writes nothing so a human's local config stays clean.
-func TestPurposePrefixRoundTrip(t *testing.T) {
-	ctx := context.Background()
-	setHomeDir(t, t.TempDir())
-	t.Setenv(cbdcconfig.EnvConfigPath, "")
-
-	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	cbdcconfig.SetConfigPathOverride(configPath)
-	t.Cleanup(func() { cbdcconfig.SetConfigPathOverride("") })
-
-	cfg := &cbdcconfig.Config{Version: cbdcconfig.Version}
-	require.NoError(t, cbdcconfig.Save(ctx, cfg))
-
-	saved, err := os.ReadFile(configPath)
-	require.NoError(t, err)
-	require.NotContains(t, string(saved), "purpose-prefix")
-
-	cfg.PurposePrefix = "fitcli-run42"
-	require.NoError(t, cbdcconfig.Save(ctx, cfg))
-
-	loaded, err := cbdcconfig.Load(ctx)
-	require.NoError(t, err)
-	require.Equal(t, "fitcli-run42", loaded.PurposePrefix)
-}
-
 func TestUpgradeWithoutLegacyCapellaKey(t *testing.T) {
 	cfg := cbdcconfig.Upgrade(&cbdcconfig.Config{Version: 7})
 	require.Equal(t, cbdcconfig.Version, cfg.Version)
