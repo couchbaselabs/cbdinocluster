@@ -45,6 +45,7 @@ type Deployer struct {
 	defaultAzureRegion       string
 	defaultGcpRegion         string
 	uploadServerLogsHostName string
+	projectID                string
 }
 
 var _ deployment.Deployer = (*Deployer)(nil)
@@ -64,11 +65,19 @@ type NewDeployerOptions struct {
 	DefaultAzureRegion       string
 	DefaultGcpRegion         string
 	UploadServerLogsHostName string
+	ProjectID                string
 }
 
 func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	if opts.V4Client == nil {
 		return nil, errors.New("a capella v4 client is required")
+	}
+
+	// Empty is valid. Reads and removal of old layout clusters need no project.
+	if opts.ProjectID != "" {
+		if err := CheckProjectID(opts.ProjectID); err != nil {
+			return nil, err
+		}
 	}
 
 	return &Deployer{
@@ -92,6 +101,7 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 		defaultAzureRegion:       opts.DefaultAzureRegion,
 		defaultGcpRegion:         opts.DefaultGcpRegion,
 		uploadServerLogsHostName: opts.UploadServerLogsHostName,
+		projectID:                opts.ProjectID,
 	}, nil
 }
 
@@ -113,14 +123,16 @@ func (p *Deployer) requireSupportToken(feature string) error {
 		"with `cbdinocluster init` or CAPELLA_INTERNAL_SUPPORT_TOKEN", feature)
 }
 
-// The v4 cluster object carries no project reference. cbdinocluster encodes the
-// cluster ID in the project name, so the project is the unit of ownership.
+// In the old layout each cluster has its own project, and the project name
+// carries the cluster meta data. In the shared layout all clusters live in one
+// project, and each cluster name carries its own meta data.
 type clusterInfo struct {
 	Meta        *stringclustermeta.MetaData
 	ProjectID   string
 	ProjectName string
 	Cluster     *capellav4.ClusterInfo
 	Columnar    *capellav4.AnalyticsClusterInfo
+	Legacy      bool
 	IsCorrupted bool
 }
 
@@ -131,40 +143,45 @@ type cbdc2Project struct {
 
 const maxProjectInspectConcurrency = 8
 
-// maxProjectNameLen is the limit the v4 api puts on a project name.
-const maxProjectNameLen = 128
-
-// projectNameFor encodes the cluster identity into the project name. A long
-// purpose is trimmed so the create cannot fail on length.
-func (p *Deployer) projectNameFor(meta stringclustermeta.MetaData) string {
-	name := meta.String()
-	if len(name) <= maxProjectNameLen {
-		return name
-	}
-
-	overflow := len(name) - maxProjectNameLen
-	meta.Purpose = meta.Purpose[:len(meta.Purpose)-overflow]
-	p.logger.Warn("trimmed the purpose to fit the project name limit",
-		zap.String("purpose", meta.Purpose))
-
-	return meta.String()
-}
-
-func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error) {
+// listProjects returns the configured project, nil when no project ID is set,
+// and the cbdc2 projects of the old layout. It lists the projects only once.
+func (p *Deployer) listProjects(ctx context.Context) (*capellav4.ProjectInfo, []cbdc2Project, error) {
 	p.logger.Debug("listing cloud projects")
 
 	projects, err := p.v4.ListProjects(ctx, p.tenantID)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list projects")
+		return nil, nil, errors.Wrap(err, "failed to list projects")
 	}
 
-	var out []cbdc2Project
+	shared, legacy := splitProjects(projects, p.projectID, p.logger)
+	return shared, legacy, nil
+}
+
+// splitProjects never treats the configured project as an old layout project,
+// even when its name parses as cbdc2 meta data. The configured project keeps
+// an empty name when the list does not hold it.
+func splitProjects(
+	projects []*capellav4.ProjectInfo,
+	sharedID string,
+	logger *zap.Logger,
+) (*capellav4.ProjectInfo, []cbdc2Project) {
+	var shared *capellav4.ProjectInfo
+	if sharedID != "" {
+		shared = &capellav4.ProjectInfo{ID: sharedID}
+	}
+
+	var legacy []cbdc2Project
 	for _, project := range projects {
+		if sharedID != "" && project.ID == sharedID {
+			shared = project
+			continue
+		}
+
 		meta, err := stringclustermeta.Parse(project.Name)
 		if err != nil {
 			// One malformed name in the shared org must not block the other
 			// projects, in particular during cleanup and remove-all.
-			p.logger.Warn("failed to parse meta-data from project name, skipping project",
+			logger.Warn("failed to parse meta-data from project name, skipping project",
 				zap.String("project-name", project.Name),
 				zap.Error(err))
 			continue
@@ -173,10 +190,10 @@ func (p *Deployer) listCbdc2Projects(ctx context.Context) ([]cbdc2Project, error
 			continue
 		}
 
-		out = append(out, cbdc2Project{Meta: meta, Info: project})
+		legacy = append(legacy, cbdc2Project{Meta: meta, Info: project})
 	}
 
-	return out, nil
+	return shared, legacy
 }
 
 func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*clusterInfo, error) {
@@ -186,6 +203,7 @@ func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*c
 		Meta:        project.Meta,
 		ProjectID:   projectID,
 		ProjectName: project.Info.Name,
+		Legacy:      true,
 	}
 
 	clusters, err := p.v4.ListClusters(ctx, p.tenantID, projectID)
@@ -212,10 +230,88 @@ func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*c
 	return base, nil
 }
 
+// listSharedClusters returns the cbdinocluster clusters of the configured
+// project. A missing project gives no clusters, so ps and cleanup still handle
+// the old layout.
+func (p *Deployer) listSharedClusters(ctx context.Context, project *capellav4.ProjectInfo) ([]*clusterInfo, error) {
+	clusters, err := p.v4.ListClusters(ctx, p.tenantID, project.ID)
+	if err != nil {
+		if capellav4.IsProjectNotFound(err) {
+			p.logSharedProjectNotFound(project.ID)
+			return nil, nil
+		}
+		return nil, errors.Wrap(err, "failed to list clusters for the shared project")
+	}
+
+	columnars, err := p.v4.ListAnalyticsClusters(ctx, p.tenantID, project.ID)
+	if err != nil {
+		if capellav4.IsProjectNotFound(err) {
+			p.logSharedProjectNotFound(project.ID)
+			return nil, nil
+		}
+		return nil, errors.Wrap(err, "failed to list analytics clusters for the shared project")
+	}
+
+	return sharedClusterInfos(project, clusters, columnars, p.logger), nil
+}
+
+func (p *Deployer) logSharedProjectNotFound(projectID string) {
+	p.logger.Warn("the configured capella project does not exist, skipping its clusters",
+		zap.String("project-id", projectID))
+}
+
+// sharedClusterInfos keeps only the clusters whose name parses as meta data.
+// Other users can own clusters in the shared project too.
+func sharedClusterInfos(
+	project *capellav4.ProjectInfo,
+	clusters []*capellav4.ClusterInfo,
+	columnars []*capellav4.AnalyticsClusterInfo,
+	logger *zap.Logger,
+) []*clusterInfo {
+	var out []*clusterInfo
+	for _, cluster := range clusters {
+		meta := parseClusterNameMeta(cluster.Name, logger)
+		if meta == nil {
+			continue
+		}
+		out = append(out, &clusterInfo{
+			Meta:        meta,
+			ProjectID:   project.ID,
+			ProjectName: project.Name,
+			Cluster:     cluster,
+		})
+	}
+	for _, columnar := range columnars {
+		meta := parseClusterNameMeta(columnar.Name, logger)
+		if meta == nil {
+			continue
+		}
+		out = append(out, &clusterInfo{
+			Meta:        meta,
+			ProjectID:   project.ID,
+			ProjectName: project.Name,
+			Columnar:    columnar,
+		})
+	}
+	return out
+}
+
+func parseClusterNameMeta(name string, logger *zap.Logger) *stringclustermeta.MetaData {
+	meta, err := stringclustermeta.Parse(name)
+	if err != nil {
+		logger.Warn("failed to parse meta-data from cluster name, skipping cluster",
+			zap.String("cluster-name", name),
+			zap.Error(err))
+		return nil
+	}
+	return meta
+}
+
 // findClusters inspects only the cbdc2 projects whose cluster ID matches, so a
-// single lookup costs one project listing instead of one per project.
+// single lookup costs one project listing instead of one per project. It lists
+// clusters only in those projects and in the shared project.
 func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*clusterInfo, error) {
-	projects, err := p.listCbdc2Projects(ctx)
+	shared, projects, err := p.listProjects(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -227,19 +323,43 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 		}
 	}
 
+	var sharedMatched []*clusterInfo
+	if shared != nil {
+		sharedClusters, err := p.listSharedClusters(ctx, shared)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, cluster := range sharedClusters {
+			if strings.HasPrefix(cluster.Meta.ID.String(), idPrefix) {
+				sharedMatched = append(sharedMatched, cluster)
+			}
+		}
+	}
+
 	p.logger.Debug("listing cloud clusters",
 		zap.Int("projects", len(projects)),
-		zap.Int("matched-projects", len(matched)))
+		zap.Int("matched-projects", len(matched)),
+		zap.Int("matched-shared-clusters", len(sharedMatched)))
 
-	if len(matched) == 0 {
+	legacy, err := p.inspectProjects(ctx, matched)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(legacy, sharedMatched...), nil
+}
+
+// inspectProjects skips a project deleted since the ListProjects call.
+func (p *Deployer) inspectProjects(ctx context.Context, projects []cbdc2Project) ([]*clusterInfo, error) {
+	if len(projects) == 0 {
 		return nil, nil
 	}
 
-	if len(matched) == 1 {
-		info, err := p.inspectProject(ctx, matched[0])
+	if len(projects) == 1 {
+		info, err := p.inspectProject(ctx, projects[0])
 		if err != nil {
 			if capellav4.IsProjectNotFound(err) {
-				// The project may have been deleted since the ListProjects call
 				return nil, nil
 			}
 			return nil, err
@@ -255,10 +375,10 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 	var errOnce sync.Once
 	var firstErr error
 
-	results := make([]*clusterInfo, len(matched))
+	results := make([]*clusterInfo, len(projects))
 	sem := make(chan struct{}, maxProjectInspectConcurrency)
 
-	for i, project := range matched {
+	for i, project := range projects {
 		wg.Add(1)
 		go func(i int, project cbdc2Project) {
 			defer wg.Done()
@@ -273,7 +393,6 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 			info, err := p.inspectProject(inspectCtx, project)
 			if err != nil {
 				if capellav4.IsProjectNotFound(err) {
-					// The project may have been deleted since the ListProjects call
 					results[i] = nil
 					return
 				}
@@ -306,26 +425,35 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 
 var errClusterNotFound = errors.New("failed to find cluster")
 
-// findClusterInfo returns the project whose meta ID matches, inspected, with
-// no check on its state, so it also finds an empty or a corrupted project.
+// findClusterInfo returns the cluster whose meta ID matches, with no check on
+// its state. In the old layout it also finds an empty or a corrupted project.
+// The old layout is checked first because it needs no extra call.
 func (p *Deployer) findClusterInfo(ctx context.Context, clusterID string) (*clusterInfo, error) {
-	projects, err := p.listCbdc2Projects(ctx)
+	shared, projects, err := p.listProjects(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	var foundProject *cbdc2Project
 	for _, project := range projects {
 		if project.Meta.ID.String() == clusterID {
-			foundProject = &project
-			break
+			return p.inspectProject(ctx, project)
 		}
 	}
-	if foundProject == nil {
-		return nil, errClusterNotFound
+
+	if shared != nil {
+		sharedClusters, err := p.listSharedClusters(ctx, shared)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, cluster := range sharedClusters {
+			if cluster.Meta.ID.String() == clusterID {
+				return cluster, nil
+			}
+		}
 	}
 
-	return p.inspectProject(ctx, *foundProject)
+	return nil, errClusterNotFound
 }
 
 func (p *Deployer) getCluster(ctx context.Context, clusterID string) (*clusterInfo, error) {
@@ -582,6 +710,11 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return nil, err
 	}
 
+	cloudProjectID, err := p.requireProjectID()
+	if err != nil {
+		return nil, err
+	}
+
 	clusterID := cbdcuuid.New()
 
 	expiryTime := time.Time{}
@@ -594,35 +727,12 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		Expiry:  expiryTime,
 		Purpose: def.Purpose,
 	}
-	projectName := p.projectNameFor(metaData)
-
-	p.logger.Debug("creating a new cloud project")
-
-	newProject, err := p.v4.CreateProject(ctx, p.tenantID, &capellav4.CreateProjectRequest{
-		Name: projectName,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create project")
-	}
-
-	cloudProjectID := newProject.ID
-
-	// A cluster that exists but never went healthy is kept with its project,
-	// the debris may be worth inspecting and cleanup takes it once it expires.
-	// Only a failure before the cluster exists deletes the project again.
-	projectIsEmpty := true
-	defer func() {
-		if projectIsEmpty {
-			p.deleteFailedProject(ctx, cloudProjectID, projectName)
-		}
-	}()
+	clusterName, purpose := p.clusterNameFor(metaData)
 
 	cloudProvider, cloudRegion, err := p.resolveCloudLocation(def)
 	if err != nil {
 		return nil, err
 	}
-
-	clusterCidr := def.Cloud.Cidr
 
 	deploymentProvider := ""
 	clusterProvider := ""
@@ -651,13 +761,8 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	if clusterVersion == "" {
 		clusterVersion = deploymentOpts.ServerVersions.DefaultOptionKey
 	}
-	if clusterCidr == "" {
-		clusterCidr = deploymentOpts.CIDR.SuggestedBlock
-	}
 
 	p.logger.Debug("creating a new cloud cluster")
-
-	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
 
 	specs, err := p.buildDeploySpecs(
 		ctx,
@@ -668,7 +773,8 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	}
 
 	createReq := &capellacontrol.DeployClusterRequest{
-		CIDR:        clusterCidr,
+		// An empty CIDR makes Capella allocate a free block.
+		CIDR:        def.Cloud.Cidr,
 		Description: "",
 		Name:        clusterName,
 		Package:     "developerPro",
@@ -694,11 +800,12 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return nil, errors.Wrap(err, "failed to create cluster")
 	}
 
-	projectIsEmpty = false
 	cloudClusterID := newCluster.Id
 
 	p.logger.Debug("waiting for cluster creation to complete")
 
+	// A cluster that never goes healthy stays in place, so the debris can be
+	// inspected. Cleanup takes it once it expires.
 	err = p.mgr.WaitForClusterState(ctx, p.tenantID, cloudClusterID, "healthy", false)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to wait for cluster deployment")
@@ -707,7 +814,7 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	// The deployment already waited for the healthy state, so a read back adds nothing.
 	return &ClusterInfo{
 		ClusterID:      clusterID.String(),
-		Purpose:        metaData.Purpose,
+		Purpose:        purpose,
 		Type:           deployment.ClusterTypeServer,
 		CloudProjectID: cloudProjectID,
 		CloudClusterID: cloudClusterID,
@@ -716,6 +823,22 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		Expiry:         metaData.Expiry,
 		State:          capellav4.StateHealthy,
 	}, nil
+}
+
+// requireProjectID returns the project every new cluster goes into.
+// cbdinocluster never creates this project on allocate.
+func (p *Deployer) requireProjectID() (string, error) {
+	if p.projectID == "" {
+		return "", errors.New(`a capella project id is required, run "cbdinocluster init" to find or create the CBDC2_SHARED project, or run "cbdinocluster cloud projects create <name>" and set the id with "cbdinocluster init --capella-project-id <id>"`)
+	}
+	return p.projectID, nil
+}
+
+func (p *Deployer) wrapCreateError(err error) error {
+	if capellav4.IsProjectNotFound(err) {
+		return errors.Wrapf(err, "the configured capella project %s does not exist", p.projectID)
+	}
+	return errors.Wrap(err, "failed to create cluster")
 }
 
 func (p *Deployer) resolveCloudLocation(def *clusterdef.Cluster) (string, string, error) {
@@ -742,6 +865,11 @@ func (p *Deployer) resolveCloudLocation(def *clusterdef.Cluster) (string, string
 }
 
 func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster, clusterVersion string) (deployment.ClusterInfo, error) {
+	cloudProjectID, err := p.requireProjectID()
+	if err != nil {
+		return nil, err
+	}
+
 	clusterID := cbdcuuid.New()
 
 	expiryTime := time.Time{}
@@ -754,37 +882,14 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		Expiry:  expiryTime,
 		Purpose: def.Purpose,
 	}
-	projectName := p.projectNameFor(metaData)
+	clusterName, purpose := p.clusterNameFor(metaData)
 
 	cloudProvider, cloudRegion, err := p.resolveCloudLocation(def)
 	if err != nil {
 		return nil, err
 	}
 
-	p.logger.Debug("creating a new cloud project")
-
-	newProject, err := p.v4.CreateProject(ctx, p.tenantID, &capellav4.CreateProjectRequest{
-		Name: projectName,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to create project")
-	}
-
-	cloudProjectID := newProject.ID
-
-	// A cluster that exists but never went healthy is kept with its project,
-	// the debris may be worth inspecting and cleanup takes it once it expires.
-	// Only a failure before the cluster exists deletes the project again.
-	projectIsEmpty := true
-	defer func() {
-		if projectIsEmpty {
-			p.deleteFailedProject(ctx, cloudProjectID, projectName)
-		}
-	}()
-
 	p.logger.Debug("creating a new cloud cluster")
-
-	clusterName := fmt.Sprintf("cbdc2_%s", clusterID)
 
 	// An empty CIDR makes Capella allocate a free block.
 	cloudProviderSpec := capellav4.CloudProvider{
@@ -793,6 +898,8 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 		Cidr:   def.Cloud.Cidr,
 	}
 
+	// A cluster that never goes healthy stays in place, so the debris can be
+	// inspected. Cleanup takes it once it expires.
 	cloudClusterID := ""
 	if def.Cloud.FreeTier {
 		if len(def.NodeGroups) != 0 {
@@ -807,10 +914,9 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 		newCluster, err := p.v4.CreateFreeTierCluster(ctx, p.tenantID, cloudProjectID, createReq)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to create cluster")
+			return nil, p.wrapCreateError(err)
 		}
 
-		projectIsEmpty = false
 		cloudClusterID = newCluster.ID
 
 		p.logger.Debug("waiting for creation to complete")
@@ -846,10 +952,9 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 		newCluster, err := p.v4.CreateCluster(ctx, p.tenantID, cloudProjectID, createReq)
 		if err != nil {
-			return nil, errors.Wrap(err, "failed to create cluster")
+			return nil, p.wrapCreateError(err)
 		}
 
-		projectIsEmpty = false
 		cloudClusterID = newCluster.ID
 
 		p.logger.Debug("waiting for creation to complete")
@@ -923,7 +1028,6 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 			return nil, errors.Wrap(err, "failed to create columnar")
 		}
 
-		projectIsEmpty = false
 		cloudClusterID = newCluster.Id
 
 		p.logger.Debug("waiting for creation to complete")
@@ -942,7 +1046,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 	// Every branch above waited for the healthy state, so a read back adds nothing.
 	return &ClusterInfo{
 		ClusterID:      clusterID.String(),
-		Purpose:        metaData.Purpose,
+		Purpose:        purpose,
 		Type:           clusterType,
 		CloudProjectID: cloudProjectID,
 		CloudClusterID: cloudClusterID,
@@ -991,8 +1095,14 @@ func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, ne
 		return err
 	}
 
-	metaData := clusterInfo.Meta
+	metaData := *clusterInfo.Meta
 	metaData.Expiry = newExpiryTime
+
+	if !clusterInfo.Legacy {
+		newName, _ := d.clusterNameFor(metaData)
+		return d.renameSharedCluster(ctx, clusterInfo, newName)
+	}
+
 	newProjectName := metaData.String()
 
 	err = d.v4.UpdateProject(
@@ -1007,6 +1117,53 @@ func (d *Deployer) UpdateClusterExpiry(ctx context.Context, clusterID string, ne
 	}
 
 	return nil
+}
+
+// renameSharedCluster changes only the cluster name and never the project. The
+// rename sends the current spec back so the cluster does not scale.
+func (d *Deployer) renameSharedCluster(ctx context.Context, clusterInfo *clusterInfo, newName string) error {
+	if clusterInfo.Columnar != nil {
+		if err := d.requireLegacy("renaming a columnar cluster"); err != nil {
+			return err
+		}
+
+		err := d.client.UpdateColumnarSpecs(ctx, d.tenantID, clusterInfo.ProjectID, clusterInfo.Columnar.ID,
+			&capellacontrol.UpdateColumnarInstanceRequest{
+				Name:        newName,
+				Description: clusterInfo.Columnar.Description,
+				Nodes:       clusterInfo.Columnar.Nodes,
+			})
+		if err != nil {
+			return errors.Wrap(err, "failed to rename the columnar cluster")
+		}
+
+		return nil
+	}
+
+	cluster := clusterInfo.Cluster
+	err := d.v4.UpdateCluster(ctx, d.tenantID, clusterInfo.ProjectID, cluster.ID,
+		&capellav4.UpdateClusterRequest{
+			Name:          newName,
+			Description:   cluster.Description,
+			Support:       cluster.Support,
+			ServiceGroups: cluster.ServiceGroups,
+		})
+	if err == nil {
+		return nil
+	}
+
+	// A free tier cluster has its own update endpoint, and the generic cluster
+	// record does not identify the tier, so fall back to the free tier endpoint.
+	ftErr := d.v4.UpdateFreeTierCluster(ctx, d.tenantID, clusterInfo.ProjectID, cluster.ID,
+		&capellav4.UpdateFreeTierClusterRequest{
+			Name:        newName,
+			Description: cluster.Description,
+		})
+	if ftErr == nil {
+		return nil
+	}
+
+	return errors.Wrap(multierr.Combine(err, ftErr), "failed to rename the cluster")
 }
 
 func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clusterdef.Cluster) error {
@@ -1264,6 +1421,12 @@ func canDeleteProjectName(projectName string) bool {
 //
 // Two sweeps can race on one project, so a not found answer counts as removed.
 func (p *Deployer) deleteProject(ctx context.Context, projectID string, projectName string) error {
+	// The configured project holds the clusters of other users. A name that
+	// parses as cbdc2 meta data does not make it an old layout project.
+	if p.projectID != "" && projectID == p.projectID {
+		return errors.Errorf("refusing to delete project %s, it is the configured capella project",
+			projectID)
+	}
 	if !canDeleteProjectName(projectName) {
 		return errors.Errorf("refusing to delete project %s, the name %q is not owned by cbdinocluster",
 			projectID, projectName)
@@ -1276,21 +1439,6 @@ func (p *Deployer) deleteProject(ctx context.Context, projectID string, projectN
 	}
 
 	return err
-}
-
-// deleteFailedProject removes the project of a create that failed before it
-// held a cluster, so a failed allocate leaks nothing. Best effort, cleanup
-// removes the project once it expires when this fails.
-func (p *Deployer) deleteFailedProject(ctx context.Context, projectID string, projectName string) {
-	p.logger.Info("deleting the project of the failed allocate",
-		zap.String("project-id", projectID))
-
-	err := p.deleteProject(context.WithoutCancel(ctx), projectID, projectName)
-	if err != nil {
-		p.logger.Warn("failed to delete the project of the failed allocate",
-			zap.String("project-id", projectID),
-			zap.Error(err))
-	}
 }
 
 // A free tier cluster has its own delete endpoint, and the generic cluster
@@ -1359,6 +1507,11 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 		}
 	}
 
+	// The shared project holds other clusters, so only the old layout drops it.
+	if !clusterInfo.Legacy {
+		return nil
+	}
+
 	p.logger.Debug("deleting the cloud project")
 
 	err := p.deleteProject(ctx, clusterInfo.ProjectID, clusterInfo.ProjectName)
@@ -1369,8 +1522,8 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 	return nil
 }
 
-// RemoveCluster does not use getCluster on purpose, so it also removes an
-// empty project and a corrupted one.
+// RemoveCluster does not use getCluster on purpose, so in the old layout it
+// also removes an empty project and a corrupted one.
 func (p *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	clusterInfo, err := p.findClusterInfo(ctx, clusterID)
 	// A sweep can remove the cluster after the caller found it.
@@ -1842,9 +1995,10 @@ func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (
 	return failedProjects, errs
 }
 
-// cleanupShouldTake decides if a cleanup takes the project.
+// cleanupShouldTake decides if a cleanup takes a shared cluster or an old
+// layout project.
 func cleanupShouldTake(meta *stringclustermeta.MetaData, opts deployment.CleanupOptions, now time.Time) bool {
-	// A zero expiry means the project never expires.
+	// A zero expiry means the cluster never expires.
 	if meta.Expiry.IsZero() || meta.Expiry.After(now) {
 		return false
 	}
@@ -1859,13 +2013,102 @@ func (p *Deployer) RemoveAllScoped(ctx context.Context, opts deployment.RemoveAl
 	return p.removeAll(ctx, opts)
 }
 
-// removeProjects deletes every cluster of every project first and waits after,
-// so the deletions overlap on the Capella side. It then deletes the projects
-// whose clusters all went. An empty project holds no target, so it goes
-// straight away.
-func (p *Deployer) removeProjects(
+// selectSharedClusters picks the shared clusters a removal takes. inScope is
+// the cleanup or remove-all scope rule. keep holds the clusters in scope that
+// skipReason leaves alone, which a cleanup does not delete or wait on. It is
+// pure so tests can cover the rules without API calls.
+func selectSharedClusters(
+	clusters []*clusterInfo,
+	inScope func(meta *stringclustermeta.MetaData) bool,
+	skipStuck bool,
+) (take []*clusterInfo, keep []*clusterInfo) {
+	for _, cluster := range clusters {
+		if !inScope(cluster.Meta) {
+			continue
+		}
+		if skipReason(sharedClusterState(cluster), skipStuck) != "" {
+			keep = append(keep, cluster)
+			continue
+		}
+		take = append(take, cluster)
+	}
+	return take, keep
+}
+
+func sharedClusterState(cluster *clusterInfo) string {
+	if cluster.Columnar != nil {
+		return cluster.Columnar.CurrentState
+	}
+	return cluster.Cluster.CurrentState
+}
+
+func sharedCloudClusterID(cluster *clusterInfo) string {
+	if cluster.Columnar != nil {
+		return cluster.Columnar.ID
+	}
+	return cluster.Cluster.ID
+}
+
+func sharedClusterName(cluster *clusterInfo) string {
+	if cluster.Columnar != nil {
+		return cluster.Columnar.Name
+	}
+	return cluster.Cluster.Name
+}
+
+// sharedRemovalTarget adds the lookup a columnar deletion wait needs.
+func (p *Deployer) sharedRemovalTarget(ctx context.Context, cluster *clusterInfo) (removalTarget, error) {
+	if cluster.Columnar == nil {
+		return removalTarget{
+			projectID: cluster.ProjectID,
+			clusterID: cluster.Cluster.ID,
+		}, nil
+	}
+
+	detail, err := p.columnarV2DetailByID(ctx, cluster.Columnar.ID)
+	if err != nil {
+		return removalTarget{}, err
+	}
+
+	return removalTarget{
+		projectID:    cluster.ProjectID,
+		clusterID:    cluster.Columnar.ID,
+		underlyingID: detail.Config.Id,
+		isColumnar:   true,
+	}, nil
+}
+
+// listSharedForRemoval returns no clusters when no project ID is set.
+func (p *Deployer) listSharedForRemoval(ctx context.Context, shared *capellav4.ProjectInfo) ([]*clusterInfo, error) {
+	if shared == nil {
+		return nil, nil
+	}
+
+	clusters, err := p.listSharedClusters(ctx, shared)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to list the clusters of the shared project")
+	}
+
+	return clusters, nil
+}
+
+func (p *Deployer) logSkippedSharedClusters(clusters []*clusterInfo) {
+	for _, cluster := range clusters {
+		p.logger.Info(skipReason(sharedClusterState(cluster), true),
+			zap.String("cluster-id", sharedCloudClusterID(cluster)),
+			zap.String("project-id", cluster.ProjectID))
+	}
+}
+
+// removeClusters deletes every cluster of the old layout projects and every
+// taken shared cluster first, and waits after, so the deletions overlap on the
+// Capella side. It then deletes the old layout projects whose clusters all
+// went. An empty old layout project holds no target, so it goes straight away.
+// The shared project is never deleted, because it is not in projects.
+func (p *Deployer) removeClusters(
 	ctx context.Context,
 	projects []cbdc2Project,
+	sharedClusters []*clusterInfo,
 	skipStuck bool,
 ) error {
 	var errs error
@@ -1883,6 +2126,16 @@ func (p *Deployer) removeProjects(
 		}
 
 		targets = append(targets, projectTargets...)
+	}
+
+	for _, cluster := range sharedClusters {
+		target, err := p.sharedRemovalTarget(ctx, cluster)
+		if err != nil {
+			errs = multierr.Append(errs, err)
+			continue
+		}
+
+		targets = append(targets, target)
 	}
 
 	p.logger.Info("found clusters to remove", zap.Int("count", len(targets)))
@@ -1918,10 +2171,10 @@ func (p *Deployer) removeProjects(
 	return nil
 }
 
-// dryRunRemoveProjects lists the clusters like removeProjects does, so it keeps
-// the same projects. It cannot predict a delete that fails during the real run.
-// reason only labels the output. It returns how many projects would be removed
-// and kept.
+// dryRunRemoveProjects lists the clusters of the old layout projects like
+// removeClusters does, so it keeps the same projects. It cannot predict a
+// delete that fails during the real run. reason only labels the output. It
+// returns how many projects would be removed and kept.
 func (p *Deployer) dryRunRemoveProjects(
 	ctx context.Context,
 	projects []cbdc2Project,
@@ -1967,11 +2220,61 @@ func (p *Deployer) dryRunRemoveProjects(
 	return removed, kept, errs
 }
 
+// dryRunRemoveSharedClusters does the same lookups as removeClusters for the
+// taken shared clusters, so it reports the same results. keep holds the
+// clusters a cleanup skips. It returns how many clusters would be removed and
+// kept.
+func (p *Deployer) dryRunRemoveSharedClusters(
+	ctx context.Context,
+	take []*clusterInfo,
+	keep []*clusterInfo,
+	reason string,
+) (int, int, error) {
+	var errs error
+	removed := 0
+	kept := len(keep)
+
+	for _, cluster := range keep {
+		p.logger.Info("dry run, would keep the cluster, it is skipped",
+			zap.String("cluster-name", sharedClusterName(cluster)),
+			zap.String("cloud-cluster-id", sharedCloudClusterID(cluster)),
+			zap.String("purpose", cluster.Meta.Purpose),
+			zap.String("reason", skipReason(sharedClusterState(cluster), true)))
+	}
+
+	for _, cluster := range take {
+		_, err := p.sharedRemovalTarget(ctx, cluster)
+		if err != nil {
+			errs = multierr.Append(errs, err)
+			kept++
+			p.logger.Warn("dry run, would keep the cluster, its lookup failed",
+				zap.String("cluster-name", sharedClusterName(cluster)),
+				zap.String("cloud-cluster-id", sharedCloudClusterID(cluster)),
+				zap.String("purpose", cluster.Meta.Purpose),
+				zap.Error(err))
+			continue
+		}
+
+		removed++
+		p.logger.Info("dry run, would remove the cluster",
+			zap.String("cluster-name", sharedClusterName(cluster)),
+			zap.String("cloud-cluster-id", sharedCloudClusterID(cluster)),
+			zap.String("purpose", cluster.Meta.Purpose),
+			zap.Time("expiry", cluster.Meta.Expiry),
+			zap.String("reason", reason))
+	}
+
+	return removed, kept, errs
+}
+
 func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptions) error {
-	allProjects, err := p.listCbdc2Projects(ctx)
+	shared, allProjects, err := p.listProjects(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to list projects")
 	}
+
+	// A failed shared listing must not block the old layout projects.
+	allShared, sharedListErr := p.listSharedForRemoval(ctx, shared)
 
 	var projects []cbdc2Project
 	for _, project := range allProjects {
@@ -1980,20 +2283,29 @@ func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptio
 		}
 	}
 
-	// A remove-all keeps trying a destroyFailed cluster. The delete fails, the
-	// project is kept and the error is reported. It also waits on a destroying
-	// cluster, up to the --timeout limit.
+	// A remove-all keeps trying a destroyFailed cluster. The delete fails, an
+	// old layout project is kept and the error is reported. It also waits on a
+	// destroying cluster, up to the --timeout limit.
+	sharedTake, _ := selectSharedClusters(allShared, func(meta *stringclustermeta.MetaData) bool {
+		return deployment.PurposeMatches(meta.Purpose, opts.Purpose)
+	}, false)
+
 	if opts.DryRun {
 		removed, kept, err := p.dryRunRemoveProjects(ctx, projects, false, "in scope")
+		sharedRemoved, sharedKept, sharedErr := p.dryRunRemoveSharedClusters(ctx, sharedTake, nil, "in scope")
 		p.logger.Info("dry run finished, nothing was removed",
 			zap.Int("projects-in-scope", len(projects)),
 			zap.Int("projects-would-remove", removed),
 			zap.Int("projects-would-keep", kept),
-			zap.Int("projects-total", len(allProjects)))
-		return err
+			zap.Int("projects-total", len(allProjects)),
+			zap.Int("shared-clusters-in-scope", len(sharedTake)),
+			zap.Int("shared-clusters-would-remove", sharedRemoved),
+			zap.Int("shared-clusters-would-keep", sharedKept),
+			zap.Int("shared-clusters-total", len(allShared)))
+		return multierr.Combine(sharedListErr, err, sharedErr)
 	}
 
-	return p.removeProjects(ctx, projects, false)
+	return multierr.Combine(sharedListErr, p.removeClusters(ctx, projects, sharedTake, false))
 }
 
 func (p *Deployer) GetConnectInfo(ctx context.Context, clusterID string) (*deployment.ConnectInfo, error) {
@@ -2052,16 +2364,20 @@ func (p *Deployer) CleanupScoped(ctx context.Context, opts deployment.CleanupOpt
 	return p.cleanup(ctx, opts)
 }
 
-// cleanup is a remove-all restricted to the expired projects, plus the skip of
-// a cluster Capella failed to destroy or already destroys.
+// cleanup is a remove-all restricted to the expired shared clusters and old
+// layout projects, plus the skip of a cluster Capella failed to destroy or
+// already destroys.
 func (p *Deployer) cleanup(ctx context.Context, opts deployment.CleanupOptions) error {
-	allProjects, err := p.listCbdc2Projects(ctx)
+	shared, allProjects, err := p.listProjects(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to list projects")
 	}
 
-	// An allocate creates the project first, so an unexpired empty project may
-	// belong to a run still in flight. Only the expired go.
+	// A failed shared listing must not block the old layout projects.
+	allShared, sharedListErr := p.listSharedForRemoval(ctx, shared)
+
+	// In the old layout an allocate creates the project first, so an unexpired
+	// empty project may belong to a run still in flight. Only the expired go.
 	now := time.Now()
 	var projects []cbdc2Project
 	for _, project := range allProjects {
@@ -2070,22 +2386,33 @@ func (p *Deployer) cleanup(ctx context.Context, opts deployment.CleanupOptions) 
 		}
 	}
 
+	sharedTake, sharedKeep := selectSharedClusters(allShared, func(meta *stringclustermeta.MetaData) bool {
+		return cleanupShouldTake(meta, opts, now)
+	}, true)
+
 	if opts.DryRun {
 		removed, kept, err := p.dryRunRemoveProjects(ctx, projects, true, "expired")
+		sharedRemoved, sharedKept, sharedErr := p.dryRunRemoveSharedClusters(ctx, sharedTake, sharedKeep, "expired")
 		fields := []zap.Field{
 			zap.Int("projects-expired", len(projects)),
 			zap.Int("projects-would-remove", removed),
 			zap.Int("projects-would-keep", kept),
 			zap.Int("projects-total", len(allProjects)),
+			zap.Int("shared-clusters-expired", len(sharedTake)+len(sharedKeep)),
+			zap.Int("shared-clusters-would-remove", sharedRemoved),
+			zap.Int("shared-clusters-would-keep", sharedKept),
+			zap.Int("shared-clusters-total", len(allShared)),
 		}
 		if opts.Purpose != "" {
 			fields = append(fields, zap.String("purpose", opts.Purpose))
 		}
 		p.logger.Info("dry run finished, nothing was removed", fields...)
-		return err
+		return multierr.Combine(sharedListErr, err, sharedErr)
 	}
 
-	return p.removeProjects(ctx, projects, true)
+	p.logSkippedSharedClusters(sharedKeep)
+
+	return multierr.Combine(sharedListErr, p.removeClusters(ctx, projects, sharedTake, true))
 }
 
 func (p *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
