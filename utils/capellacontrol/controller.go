@@ -653,7 +653,7 @@ type CreateClusterRequest_Spec struct {
 }
 
 type DeployClusterRequest struct {
-	CIDR        string                      `json:"cidr"`
+	CIDR        string                      `json:"cidr,omitempty"`
 	Description string                      `json:"description"`
 	Name        string                      `json:"name"`
 	Package     string                      `json:"package"`

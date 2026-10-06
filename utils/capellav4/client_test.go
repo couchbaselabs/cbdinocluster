@@ -401,6 +401,27 @@ func TestCreateClusterSendsServerVersionWhenSet(t *testing.T) {
 	assert.Equal(t, "10.0.1.0/24", provider["cidr"])
 }
 
+func TestUpdateFreeTierClusterSendsNameAndDescription(t *testing.T) {
+	var method, path string
+	var body map[string]any
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, path = r.Method, r.URL.Path
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	err := client.UpdateFreeTierCluster(context.Background(), "org", "proj", "clus", &UpdateFreeTierClusterRequest{
+		Name:        "new-name",
+		Description: "",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, http.MethodPut, method)
+	assert.Equal(t, "/v4/organizations/org/projects/proj/clusters/freeTier/clus", path)
+	// Both fields are required, so an empty description is still sent.
+	assert.Equal(t, map[string]any{"name": "new-name", "description": ""}, body)
+}
+
 func TestListAnalyticsPrivateEndpointsNormalizesIDs(t *testing.T) {
 	// The analytics API reports endpoint IDs as endpointId, not id.
 	var gotPath string
