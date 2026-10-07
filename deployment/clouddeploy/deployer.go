@@ -2411,8 +2411,36 @@ func (p *Deployer) cleanup(ctx context.Context, opts deployment.CleanupOptions) 
 	}
 
 	p.logSkippedSharedClusters(sharedKeep)
+	p.logCleanupScope(opts.Purpose, shared, projects, len(sharedTake))
 
 	return multierr.Combine(sharedListErr, p.removeClusters(ctx, projects, sharedTake, true))
+}
+
+func (p *Deployer) logCleanupScope(purpose string, shared *capellav4.ProjectInfo, projects []cbdc2Project, sharedCount int) {
+	var purposeFields []zap.Field
+	if purpose != "" {
+		purposeFields = append(purposeFields, zap.String("purpose", purpose))
+	}
+
+	if len(projects) > 0 {
+		projectIDs := make([]string, 0, len(projects))
+		for _, project := range projects {
+			projectIDs = append(projectIDs, project.Info.ID)
+		}
+		p.logger.Info("found expired legacy cbdc2 projects, removing them with their clusters",
+			append([]zap.Field{
+				zap.Int("count", len(projects)),
+				zap.Strings("project-ids", projectIDs),
+			}, purposeFields...)...)
+	}
+
+	if shared != nil {
+		p.logger.Info("found expired clusters in the configured project",
+			append([]zap.Field{
+				zap.String("project-id", shared.ID),
+				zap.Int("count", sharedCount),
+			}, purposeFields...)...)
+	}
 }
 
 func (p *Deployer) ListUsers(ctx context.Context, clusterID string) ([]deployment.UserInfo, error) {
