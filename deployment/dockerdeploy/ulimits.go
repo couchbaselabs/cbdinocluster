@@ -5,7 +5,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	units "github.com/docker/go-units"
 	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
@@ -116,6 +118,7 @@ func (c *Controller) createAndStartContainer(
 		if preStart != nil {
 			err = preStart(containerID)
 			if err != nil {
+				c.cleanupFailedContainer(ctx, logger, containerID)
 				return "", err
 			}
 		}
@@ -128,9 +131,11 @@ func (c *Controller) createAndStartContainer(
 		}
 
 		if !isRlimitError(err) {
+			c.cleanupFailedContainer(ctx, logger, containerID)
 			return "", errors.Wrap(err, "failed to start container")
 		}
 		if !canFallback {
+			c.cleanupFailedContainer(ctx, logger, containerID)
 			return "", errors.Wrapf(err,
 				"failed to start container (docker could not apply the nofile limit, adjust %s)",
 				EnvDockerNofile)
@@ -140,9 +145,9 @@ func (c *Controller) createAndStartContainer(
 			zap.Error(err),
 			zap.String("hint", "set "+EnvDockerNofile+" to choose a specific limit"))
 
-		_, removeErr := c.DockerCli.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
-			Force: true,
-		})
+		// The replacement container reuses the same name, so the old one must
+		// be completely gone before we recreate it.
+		removeErr := c.removeContainerAndWait(ctx, containerID)
 		if removeErr != nil {
 			return "", errors.Wrap(removeErr, "failed to remove container after nofile limit failure")
 		}
@@ -150,5 +155,45 @@ func (c *Controller) createAndStartContainer(
 		c.nofileUnsupported.Store(true)
 		ulimits = nil
 		canFallback = false
+	}
+}
+
+// removeContainerAndWait force-removes a container and waits for it to no
+// longer exist.  Containers created with AutoRemove are removed by the daemon
+// itself when they fail to start, so a container which is already gone (or
+// whose removal is already in progress) is not treated as an error.
+func (c *Controller) removeContainerAndWait(ctx context.Context, containerID string) error {
+	_, err := c.DockerCli.ContainerRemove(ctx, containerID, client.ContainerRemoveOptions{
+		Force: true,
+	})
+	if err != nil && !cerrdefs.IsNotFound(err) &&
+		!strings.Contains(strings.ToLower(err.Error()), "already in progress") {
+		return err
+	}
+
+	for {
+		_, err := c.DockerCli.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+		if cerrdefs.IsNotFound(err) {
+			return nil
+		} else if err != nil {
+			return errors.Wrap(err, "failed to check container removal")
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// cleanupFailedContainer best-effort removes a container that was created but
+// could not be started, so that failed deployments do not leave it behind.
+func (c *Controller) cleanupFailedContainer(ctx context.Context, logger *zap.Logger, containerID string) {
+	err := c.removeContainerAndWait(ctx, containerID)
+	if err != nil {
+		logger.Warn("failed to remove container after failed start",
+			zap.String("container", containerID),
+			zap.Error(err))
 	}
 }
