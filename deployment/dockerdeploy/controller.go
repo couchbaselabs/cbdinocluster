@@ -9,10 +9,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/utils/clustercontrol"
-	units "github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
@@ -26,6 +26,11 @@ type Controller struct {
 	Logger      *zap.Logger
 	DockerCli   *client.Client
 	NetworkName string
+
+	// nofileUnsupported is set once the docker daemon has refused to apply
+	// the default nofile limit, so later containers skip straight to the
+	// fallback.
+	nofileUnsupported atomic.Bool
 }
 
 type ContainerInfo struct {
@@ -240,7 +245,7 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 
 	containerName := "cbdynnode-s3-" + clusterID
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+	containerID, err := c.createAndStartContainer(context.Background(), logger, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: "adobe/s3mock",
 			Labels: map[string]string{
@@ -256,25 +261,11 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 			AutoRemove:  true,
 			NetworkMode: container.NetworkMode(c.NetworkName),
 			CapAdd:      []string{"NET_ADMIN"},
-			Resources: container.Resources{
-				Ulimits: []*units.Ulimit{
-					{Name: "nofile", Soft: 200000, Hard: 200000},
-				},
-			},
 		},
 		Name: containerName,
-	})
+	}, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create container")
-	}
-
-	containerID := createResult.ID
-
-	logger.Debug("container created, starting", zap.String("container", containerID))
-
-	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to start container")
+		return nil, err
 	}
 
 	expiryTime := time.Time{}
@@ -345,7 +336,7 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 
 	containerName := "cbdynnode-nginx-" + clusterID
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+	containerID, err := c.createAndStartContainer(context.Background(), logger, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: "nginx",
 			Labels: map[string]string{
@@ -361,25 +352,11 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 			AutoRemove:  true,
 			NetworkMode: container.NetworkMode(c.NetworkName),
 			CapAdd:      []string{"NET_ADMIN"},
-			Resources: container.Resources{
-				Ulimits: []*units.Ulimit{
-					{Name: "nofile", Soft: 200000, Hard: 200000},
-				},
-			},
 		},
 		Name: containerName,
-	})
+	}, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create container")
-	}
-
-	containerID := createResult.ID
-
-	logger.Debug("container created, starting", zap.String("container", containerID))
-
-	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to start container")
+		return nil, err
 	}
 
 	expiryTime := time.Time{}
@@ -445,7 +422,7 @@ func (c *Controller) DeployHaproxyNode(ctx context.Context, clusterID string, ex
 
 	containerName := "cbdynnode-haproxy-" + clusterID
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+	containerID, err := c.createAndStartContainer(context.Background(), logger, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: "haproxy",
 			Labels: map[string]string{
@@ -461,47 +438,35 @@ func (c *Controller) DeployHaproxyNode(ctx context.Context, clusterID string, ex
 			// AutoRemove:  true,
 			NetworkMode: container.NetworkMode(c.NetworkName),
 			CapAdd:      []string{"NET_ADMIN"},
-			Resources: container.Resources{
-				Ulimits: []*units.Ulimit{
-					{Name: "nofile", Soft: 200000, Hard: 200000},
-				},
-			},
 		},
 		Name: containerName,
+	}, func(containerID string) error {
+		logger.Debug("container created, creating base config", zap.String("container", containerID))
+
+		configBytes := []byte("frontend myfrontend\n  mode http\n  bind :80\n")
+
+		tarBuf := bytes.NewBuffer(nil)
+		tarFile := tar.NewWriter(tarBuf)
+		tarFile.WriteHeader(&tar.Header{
+			Name: "haproxy/haproxy.cfg",
+			Size: int64(len(configBytes)),
+			Mode: 0666,
+		})
+		tarFile.Write(configBytes)
+		tarFile.Flush()
+
+		_, err := c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
+			DestinationPath: "/usr/local/etc",
+			Content:         tarBuf,
+		})
+		if err != nil {
+			return errors.Wrap(err, "failed to store base haproxy config")
+		}
+
+		return nil
 	})
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create container")
-	}
-
-	containerID := createResult.ID
-
-	logger.Debug("container created, creating base config", zap.String("container", containerID))
-
-	configBytes := []byte("frontend myfrontend\n  mode http\n  bind :80\n")
-
-	tarBuf := bytes.NewBuffer(nil)
-	tarFile := tar.NewWriter(tarBuf)
-	tarFile.WriteHeader(&tar.Header{
-		Name: "haproxy/haproxy.cfg",
-		Size: int64(len(configBytes)),
-		Mode: 0666,
-	})
-	tarFile.Write(configBytes)
-	tarFile.Flush()
-
-	_, err = c.DockerCli.CopyToContainer(ctx, containerID, client.CopyToContainerOptions{
-		DestinationPath: "/usr/local/etc",
-		Content:         tarBuf,
-	})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to store base haproxy config")
-	}
-
-	logger.Debug("container config stored, starting", zap.String("container", containerID))
-
-	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to start container")
+		return nil, err
 	}
 
 	expiryTime := time.Time{}
@@ -986,7 +951,7 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*C
 		usingDinoCerts = "true"
 	}
 
-	createResult, err := c.DockerCli.ContainerCreate(context.Background(), client.ContainerCreateOptions{
+	containerID, err := c.createAndStartContainer(context.Background(), logger, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: def.Image.ImagePath,
 			Labels: map[string]string{
@@ -1006,25 +971,11 @@ func (c *Controller) DeployNode(ctx context.Context, def *DeployNodeOptions) (*C
 			AutoRemove:  true,
 			NetworkMode: container.NetworkMode(c.NetworkName),
 			CapAdd:      []string{"NET_ADMIN"},
-			Resources: container.Resources{
-				Ulimits: []*units.Ulimit{
-					{Name: "nofile", Soft: 200000, Hard: 200000},
-				},
-			},
 		},
 		Name: containerName,
-	})
+	}, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to create container")
-	}
-
-	containerID := createResult.ID
-
-	logger.Debug("container created, starting", zap.String("container", containerID))
-
-	_, err = c.DockerCli.ContainerStart(context.Background(), containerID, client.ContainerStartOptions{})
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to start container")
+		return nil, err
 	}
 
 	expiryTime := time.Time{}

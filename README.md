@@ -129,6 +129,23 @@ CI agents running multiple SDK pipelines — and each needs its own
 configuration (a distinct Docker network, deployer, or credentials) without
 clobbering the others' `~/.cbdinocluster`.
 
+#### Container file descriptor limits
+
+Containers deployed via Docker request a `nofile` ulimit of 200000. Some
+environments (sandboxed or rootless Docker daemons, cloud development
+containers, etc.) run the Docker daemon with a lower limit than this and
+cannot grant it. By default cbdinocluster detects this and falls back to
+letting the containers inherit the Docker daemon's own limit, the most it is
+able to grant. The behaviour can be overridden with the
+`CBDINOCLUSTER_DOCKER_NOFILE` environment variable:
+
+```
+# request a specific limit (fails if the daemon cannot grant it)
+CBDINOCLUSTER_DOCKER_NOFILE=20000 cbdinocluster allocate simple:7.6.0
+# do not request a limit, inherit the Docker daemon's limit
+CBDINOCLUSTER_DOCKER_NOFILE=none cbdinocluster allocate simple:7.6.0
+```
+
 #### Resetting Colima
 
 In the case that your colima docker instance becomes corrupted, or stops working
