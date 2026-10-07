@@ -1,6 +1,9 @@
 package clouddeploy
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
 	"testing"
 	"time"
 
@@ -9,6 +12,7 @@ import (
 	"github.com/couchbaselabs/cbdinocluster/utils/cbdcuuid"
 	"github.com/couchbaselabs/cbdinocluster/utils/stringclustermeta"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCleanupShouldTake(t *testing.T) {
@@ -81,26 +85,94 @@ func TestCleanupShouldTake(t *testing.T) {
 	}
 }
 
-func TestShouldSkipDestroyFailed(t *testing.T) {
+func TestSkipReason(t *testing.T) {
 	tests := []struct {
 		name  string
 		state string
 		skip  bool
-		want  bool
+		want  string
 	}{
-		{name: "cleanup skips destroyFailed", state: capellav4.StateDestroyFailed, skip: true, want: true},
-		{name: "cleanup takes healthy", state: capellav4.StateHealthy, skip: true, want: false},
-		{name: "cleanup takes destroying", state: capellav4.StateDestroying, skip: true, want: false},
-		{name: "cleanup takes an unknown state", state: "", skip: true, want: false},
-		{name: "remove-all takes destroyFailed", state: capellav4.StateDestroyFailed, skip: false, want: false},
-		{name: "remove-all takes healthy", state: capellav4.StateHealthy, skip: false, want: false},
+		{name: "cleanup skips destroyFailed", state: capellav4.StateDestroyFailed, skip: true,
+			want: "skipping cluster in destroyFailed state, it needs manual removal"},
+		{name: "cleanup skips destroying", state: capellav4.StateDestroying, skip: true,
+			want: "skipping expired cluster in destroying state"},
+		{name: "cleanup takes healthy", state: capellav4.StateHealthy, skip: true, want: ""},
+		{name: "cleanup takes an unknown state", state: "", skip: true, want: ""},
+		{name: "remove-all takes destroyFailed", state: capellav4.StateDestroyFailed, skip: false, want: ""},
+		{name: "remove-all takes destroying", state: capellav4.StateDestroying, skip: false, want: ""},
+		{name: "remove-all takes healthy", state: capellav4.StateHealthy, skip: false, want: ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, shouldSkipDestroyFailed(tt.state, tt.skip))
+			assert.Equal(t, tt.want, skipReason(tt.state, tt.skip))
 		})
 	}
+}
+
+// newSingleClusterHandler serves one project that holds one cloud cluster in
+// the given state. Any other call fails the test, so a cleanup that tries a
+// delete is caught.
+func newSingleClusterHandler(t *testing.T, projectID, clusterID, state string) http.Handler {
+	t.Helper()
+
+	writeJson := func(w http.ResponseWriter, body any) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(body))
+	}
+
+	projectPath := "/v4/organizations/" + testTenantID + "/projects/" + projectID
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+projectPath+"/clusters", func(w http.ResponseWriter, _ *http.Request) {
+		writeJson(w, map[string]any{"data": []any{
+			map[string]any{"id": clusterID, "currentState": state},
+		}})
+	})
+	mux.HandleFunc("GET "+projectPath+"/analyticsClusters", func(w http.ResponseWriter, _ *http.Request) {
+		writeJson(w, map[string]any{})
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %q", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotImplemented)
+	})
+
+	return mux
+}
+
+func TestListRemovalTargetsDestroying(t *testing.T) {
+	deployer := newTestDeployer(t, newSingleClusterHandler(t, "p-1", "c-1", capellav4.StateDestroying))
+
+	targets, keepReason, err := deployer.listRemovalTargets(context.Background(), "p-1", true)
+	require.NoError(t, err)
+	assert.Empty(t, targets, "cleanup must not delete or wait on a destroying cluster")
+	assert.Equal(t, "skipping expired cluster in destroying state", keepReason)
+
+	targets, keepReason, err = deployer.listRemovalTargets(context.Background(), "p-1", false)
+	require.NoError(t, err)
+	assert.Equal(t, []removalTarget{{projectID: "p-1", clusterID: "c-1"}}, targets,
+		"remove-all must still take a destroying cluster")
+	assert.Empty(t, keepReason)
+}
+
+// A cleanup keeps the project of a destroying cluster, as Capella refuses to
+// delete a project that still holds a cluster. The handler fails the test on
+// any delete call.
+func TestRemoveProjectsKeepsProjectOfDestroyingCluster(t *testing.T) {
+	deployer := newTestDeployer(t, newSingleClusterHandler(t, "p-1", "c-1", capellav4.StateDestroying))
+
+	meta := stringclustermeta.MetaData{ID: cbdcuuid.New(), Expiry: time.Now().Add(-time.Hour)}
+	projects := []cbdc2Project{{
+		Meta: &meta,
+		Info: &capellav4.ProjectInfo{ID: "p-1", Name: meta.String()},
+	}}
+
+	require.NoError(t, deployer.removeProjects(context.Background(), projects, true))
+
+	removed, kept, err := deployer.dryRunRemoveProjects(context.Background(), projects, true, "expired")
+	require.NoError(t, err)
+	assert.Equal(t, 0, removed)
+	assert.Equal(t, 1, kept)
 }
 
 // Every project delete goes through the ownership guard, so it must accept
