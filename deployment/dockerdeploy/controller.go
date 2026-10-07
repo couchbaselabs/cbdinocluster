@@ -880,25 +880,22 @@ func (c *Controller) UploadCertificates(
 		zap.Int("numCaPems", len(caPems)))
 
 	var installLocation string
-	// Check for /opt/couchbase directory
-	err := c.execCmd(ctx, containerID, []string{"test", "-d", "/opt/couchbase"})
-	if err == nil {
-		installLocation = "couchbase"
-	} else {
-		// Check for /opt/enterprise-analytics directory
-		err := c.execCmd(ctx, containerID, []string{"test", "-d", "/opt/enterprise-analytics"})
+	for _, location := range []string{"couchbase", "enterprise-analytics", "operational-insights"} {
+		err := c.execCmd(ctx, containerID, []string{"test", "-d", "/opt/" + location})
 		if err == nil {
-			installLocation = "enterprise-analytics"
-		} else {
-			return errors.New("neither /opt/couchbase nor /opt/enterprise-analytics directory found")
+			installLocation = location
+			break
 		}
+	}
+	if installLocation == "" {
+		return errors.New("none of /opt/couchbase, /opt/enterprise-analytics or /opt/operational-insights directories found")
 	}
 
 	c.Logger.Debug("detected installation location", zap.String("location", installLocation))
 
 	inboxPath := fmt.Sprintf("/opt/%s/var/lib/couchbase/inbox/", installLocation)
 
-	err = c.execCmd(ctx, containerID, []string{"mkdir", "-p", inboxPath})
+	err := c.execCmd(ctx, containerID, []string{"mkdir", "-p", inboxPath})
 	if err != nil {
 		return errors.Wrapf(err, "failed to mkdir inbox directory at %s", inboxPath)
 	}

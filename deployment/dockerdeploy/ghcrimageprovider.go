@@ -82,8 +82,13 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 
 			return p.tryImagePaths(ctx, imagePaths)
 		} else {
-			// For newer versions, use enterprise-analytics
-			ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/enterprise-analytics:%s", serverVersion)
+			// For 2.x versions use enterprise-analytics, for 3.x+ use operational-insights
+			imageName := "enterprise-analytics"
+			if isColumnarVersionOperationalInsights(serverVersion) {
+				imageName = "operational-insights"
+			}
+
+			ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/%s:%s", imageName, serverVersion)
 			return MultiArchImagePuller{
 				Logger:       p.Logger,
 				DockerCli:    p.DockerCli,

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 
 	"github.com/moby/moby/client"
 	"github.com/pkg/errors"
@@ -116,9 +118,22 @@ func dockerExecAndPipe(ctx context.Context, logger *zap.Logger, cli *client.Clie
 	return nil
 }
 
+// isColumnarVersionEA returns true for Enterprise Analytics versions (2.x+),
+// which includes Operational Insights (3.x+), the renamed Enterprise Analytics.
 func isColumnarVersionEA(version string) bool {
 	if len(version) > 0 && (version[0] == '0' || version[0] == '1') {
 		return false
 	}
 	return true
+}
+
+// isColumnarVersionOperationalInsights returns true for versions released under
+// the Operational Insights name (3.x+), previously known as Enterprise Analytics.
+func isColumnarVersionOperationalInsights(version string) bool {
+	majorStr, _, _ := strings.Cut(version, ".")
+	major, err := strconv.Atoi(majorStr)
+	if err != nil {
+		return false
+	}
+	return major >= 3
 }
