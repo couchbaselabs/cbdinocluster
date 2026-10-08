@@ -1284,7 +1284,7 @@ func (p *Deployer) deleteFailedProject(ctx context.Context, projectID string, pr
 	p.logger.Info("deleting the project of the failed allocate",
 		zap.String("project-id", projectID))
 
-	err := p.deleteProject(ctx, projectID, projectName)
+	err := p.deleteProject(context.WithoutCancel(ctx), projectID, projectName)
 	if err != nil {
 		p.logger.Warn("failed to delete the project of the failed allocate",
 			zap.String("project-id", projectID),

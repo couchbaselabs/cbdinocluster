@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
@@ -25,7 +26,8 @@ var cleanupCmd = &cobra.Command{
 	Use:   "cleanup [flags] [deployer-name]",
 	Short: "Cleans up any expired resources for a deployer, or for every deployer",
 	Long: "Cleans up any expired resources for a deployer, or for every deployer.\n\n" +
-		"Gives up after 30 minutes by default. Set --timeout to change this, or --timeout 0 for no limit.",
+		fmt.Sprintf("Gives up after %d minutes by default. ", int(cleanupDefaultTimeout.Minutes())) +
+		"The limit covers the whole run, not each deployer. Set --timeout to change this, or --timeout 0 for no limit.",
 	Args: cobra.MaximumNArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		helper := CmdHelper{}
