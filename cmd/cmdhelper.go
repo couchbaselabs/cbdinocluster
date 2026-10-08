@@ -539,8 +539,7 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 
 			clusters, err := deployer.FindClusters(cancelCtx, userInput)
 			if err != nil {
-				// ignore errors if the context is cancelled
-				if cancelCtx.Err() != nil {
+				if cancelCtx.Err() != nil && ctx.Err() == nil {
 					return
 				}
 
