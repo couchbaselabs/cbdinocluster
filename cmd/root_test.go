@@ -69,3 +69,30 @@ func TestTimeoutFlagBoundsTheContext(t *testing.T) {
 	_, ok = contextWithTimeout(0).Deadline()
 	require.False(t, ok)
 }
+
+// TestCleanupDefaultTimeout covers the cleanup rule. An unset --timeout gives
+// the default. A value the user sets wins, and 0 means no limit.
+func TestCleanupDefaultTimeout(t *testing.T) {
+	flag := rootCmd.PersistentFlags().Lookup("timeout")
+	reset := func() {
+		require.NoError(t, flag.Value.Set("0"))
+		flag.Changed = false
+	}
+	reset()
+	t.Cleanup(reset)
+
+	helper := CmdHelper{}
+
+	deadline, ok := helper.GetContextWithDefaultTimeout(cleanupDefaultTimeout).Deadline()
+	require.True(t, ok, "an unset --timeout must use the default")
+	require.WithinDuration(t, time.Now().Add(30*time.Minute), deadline, time.Minute)
+
+	require.NoError(t, rootCmd.PersistentFlags().Set("timeout", "5m"))
+	deadline, ok = helper.GetContextWithDefaultTimeout(cleanupDefaultTimeout).Deadline()
+	require.True(t, ok)
+	require.WithinDuration(t, time.Now().Add(5*time.Minute), deadline, time.Minute)
+
+	require.NoError(t, rootCmd.PersistentFlags().Set("timeout", "0"))
+	_, ok = helper.GetContextWithDefaultTimeout(cleanupDefaultTimeout).Deadline()
+	require.False(t, ok, "an explicit --timeout 0 must mean no limit")
+}

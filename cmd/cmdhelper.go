@@ -40,7 +40,19 @@ type CmdHelper struct {
 }
 
 func (h *CmdHelper) GetContext() context.Context {
-	timeout, _ := rootCmd.Flags().GetDuration("timeout")
+	timeout, _ := rootCmd.PersistentFlags().GetDuration("timeout")
+	return contextWithTimeout(timeout)
+}
+
+// GetContextWithDefaultTimeout works like GetContext, but uses def when the
+// user does not pass --timeout. A value the user passes wins, and 0 still
+// means no limit.
+func (h *CmdHelper) GetContextWithDefaultTimeout(def time.Duration) context.Context {
+	if !rootCmd.PersistentFlags().Changed("timeout") {
+		return contextWithTimeout(def)
+	}
+
+	timeout, _ := rootCmd.PersistentFlags().GetDuration("timeout")
 	return contextWithTimeout(timeout)
 }
 
