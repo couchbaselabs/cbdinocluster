@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -153,6 +154,42 @@ func TestListRemovalTargetsDestroying(t *testing.T) {
 	assert.Equal(t, []removalTarget{{projectID: "p-1", clusterID: "c-1"}}, targets,
 		"remove-all must still take a destroying cluster")
 	assert.Empty(t, keepReason)
+}
+
+// A wait on a cluster whose delete failed runs until the deadline. The handler
+// fails the test if the wait polls that cluster.
+func TestRemoveTargetsSkipsWaitOnFailedDelete(t *testing.T) {
+	projectsPath := "/v4/organizations/" + testTenantID + "/projects"
+	failDelete := func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}
+	var waitedOnDeleted atomic.Bool
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE "+projectsPath+"/p-1/clusters/c-bad", failDelete)
+	mux.HandleFunc("DELETE "+projectsPath+"/p-1/clusters/freeTier/c-bad", failDelete)
+	mux.HandleFunc("DELETE "+projectsPath+"/p-2/clusters/c-ok", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	})
+	mux.HandleFunc("GET "+projectsPath+"/p-2/clusters/c-ok", func(w http.ResponseWriter, _ *http.Request) {
+		waitedOnDeleted.Store(true)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %q", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+
+	deployer := newTestDeployer(t, mux)
+
+	failedProjects, err := deployer.removeTargets(context.Background(), []removalTarget{
+		{projectID: "p-1", clusterID: "c-bad"},
+		{projectID: "p-2", clusterID: "c-ok"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to remove cluster")
+	assert.Equal(t, map[string]bool{"p-1": true}, failedProjects)
+	assert.True(t, waitedOnDeleted.Load(), "the cluster whose delete worked must still be waited on")
 }
 
 // A cleanup keeps the project of a destroying cluster, as Capella refuses to
