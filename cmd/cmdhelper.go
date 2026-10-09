@@ -9,6 +9,7 @@ import (
 	"os/user"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -516,8 +517,31 @@ func (h *CmdHelper) IdentifyCurrentUser() string {
 	return osUser.Username
 }
 
+var (
+	errClusterNotFound     = errors.New("failed to identify cluster using specified identifier")
+	errClusterLookupFailed = errors.New("cluster lookup failed or timed out, the cluster may still exist")
+)
+
 func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (string, deployment.Deployer, deployment.ClusterInfo) {
 	logger := h.GetLogger()
+
+	deployerName, deployer, cluster, err := findCluster(ctx, logger, h.GetAllDeployers(ctx), userInput)
+	if err != nil {
+		logger.Fatal(err.Error(), zap.String("identifier", userInput))
+	}
+
+	return deployerName, deployer, cluster
+}
+
+// findCluster returns errClusterNotFound only when every deployer listed its
+// clusters. When a deployer fails to list or the lookup times out, it returns
+// errClusterLookupFailed, as the cluster may still exist.
+func findCluster(
+	ctx context.Context,
+	logger *zap.Logger,
+	allDeployers map[string]deployment.Deployer,
+	userInput string,
+) (string, deployment.Deployer, deployment.ClusterInfo, error) {
 	logger.Info("attempting to identify cluster", zap.String("input", userInput))
 
 	type clusterWithDeployer struct {
@@ -529,9 +553,9 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 	cancelCtx, cancel := context.WithCancel(ctx)
 
 	var wg sync.WaitGroup
+	var listFailed atomic.Bool
 	identifiedCluster := make(chan *clusterWithDeployer, 1)
 
-	allDeployers := h.GetAllDeployers(cancelCtx)
 	for deployerName, deployer := range allDeployers {
 		wg.Add(1)
 		go func(deployerName string, deployer deployment.Deployer) {
@@ -546,6 +570,7 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 				logger.Warn("failed to list clusters",
 					zap.Error(err),
 					zap.String("deployer", deployerName))
+				listFailed.Store(true)
 				return
 			}
 
@@ -570,13 +595,14 @@ func (h *CmdHelper) IdentifyCluster(ctx context.Context, userInput string) (stri
 		// once we find a cluster, we can cancel everyone else who is searching
 		cancel()
 
-		return ident.DeployerName, ident.Deployer, ident.Cluster
+		return ident.DeployerName, ident.Deployer, ident.Cluster, nil
 	}
 
 	cancel()
-	logger.Fatal("failed to identify cluster using specified identifier",
-		zap.String("identifier", userInput))
-	return "", nil, nil
+	if listFailed.Load() {
+		return "", nil, nil, errClusterLookupFailed
+	}
+	return "", nil, nil, errClusterNotFound
 }
 
 func (h *CmdHelper) IdentifyNode(
