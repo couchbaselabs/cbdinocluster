@@ -77,7 +77,7 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	// with that list.
 	projectID := strings.ToLower(opts.ProjectID)
 
-	// Empty is valid. Reads and removal of old layout clusters need no project.
+	// Empty is valid. Reads and removal of legacy clusters need no project.
 	if projectID != "" {
 		if err := CheckProjectID(projectID); err != nil {
 			return nil, err
@@ -127,9 +127,8 @@ func (p *Deployer) requireSupportToken(feature string) error {
 		"with `cbdinocluster init` or CAPELLA_INTERNAL_SUPPORT_TOKEN", feature)
 }
 
-// In the old layout each cluster has its own project, and the project name
-// carries the cluster meta data. In the shared layout all clusters live in one
-// project, and each cluster name carries its own meta data.
+// A legacy project holds one cluster and its name carries the meta data. In
+// the configured project each cluster name carries its own meta data.
 type clusterInfo struct {
 	Meta        *stringclustermeta.MetaData
 	ProjectID   string
@@ -148,7 +147,7 @@ type cbdc2Project struct {
 const maxProjectInspectConcurrency = 8
 
 // listProjects returns the configured project, nil when no project ID is set,
-// and the cbdc2 projects of the old layout. It lists the projects only once.
+// and the legacy cbdc2 projects. It lists the projects only once.
 func (p *Deployer) listProjects(ctx context.Context) (*capellav4.ProjectInfo, []cbdc2Project, error) {
 	p.logger.Debug("listing cloud projects")
 
@@ -161,9 +160,9 @@ func (p *Deployer) listProjects(ctx context.Context) (*capellav4.ProjectInfo, []
 	return shared, legacy, nil
 }
 
-// splitProjects never treats the configured project as an old layout project,
-// even when its name parses as cbdc2 meta data. The configured project keeps
-// an empty name when the list does not hold it.
+// splitProjects never treats the configured project as a legacy project, even
+// when its name parses as cbdc2 meta data. The configured project keeps an
+// empty name when the list does not hold it.
 func splitProjects(
 	projects []*capellav4.ProjectInfo,
 	sharedID string,
@@ -235,8 +234,8 @@ func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*c
 }
 
 // listSharedClusters returns the cbdinocluster clusters of the configured
-// project. A missing project gives no clusters, so ps and cleanup still handle
-// the old layout.
+// project. A missing project gives no clusters, so ps and cleanup go on with
+// the legacy projects.
 func (p *Deployer) listSharedClusters(ctx context.Context, project *capellav4.ProjectInfo) ([]*clusterInfo, error) {
 	clusters, err := p.v4.ListClusters(ctx, p.tenantID, project.ID)
 	if err != nil {
@@ -430,8 +429,8 @@ func (p *Deployer) inspectProjects(ctx context.Context, projects []cbdc2Project)
 var errClusterNotFound = errors.New("failed to find cluster")
 
 // findClusterInfo returns the cluster whose meta ID matches, with no check on
-// its state. In the old layout it also finds an empty or a corrupted project.
-// The old layout is checked first because it needs no extra call.
+// its state. It also finds an empty or a corrupted legacy project. It checks
+// the legacy projects first because they need no extra call.
 func (p *Deployer) findClusterInfo(ctx context.Context, clusterID string) (*clusterInfo, error) {
 	shared, projects, err := p.listProjects(ctx)
 	if err != nil {
@@ -1426,7 +1425,7 @@ func canDeleteProjectName(projectName string) bool {
 // Two sweeps can race on one project, so a not found answer counts as removed.
 func (p *Deployer) deleteProject(ctx context.Context, projectID string, projectName string) error {
 	// The configured project holds the clusters of other users. A name that
-	// parses as cbdc2 meta data does not make it an old layout project.
+	// parses as cbdc2 meta data does not make it a legacy project.
 	if p.projectID != "" && projectID == p.projectID {
 		return errors.Errorf("refusing to delete project %s, it is the configured capella project",
 			projectID)
@@ -1512,7 +1511,7 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 		}
 	}
 
-	// The shared project holds other clusters, so only the old layout drops it.
+	// The shared project holds other clusters, so only a legacy project is deleted.
 	if !clusterInfo.Legacy {
 		return nil
 	}
@@ -1527,8 +1526,8 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 	return nil
 }
 
-// RemoveCluster does not use getCluster on purpose, so in the old layout it
-// also removes an empty project and a corrupted one.
+// RemoveCluster does not use getCluster on purpose, so it also removes an
+// empty or a corrupted legacy project.
 func (p *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	clusterInfo, err := p.findClusterInfo(ctx, clusterID)
 	// A sweep can remove the cluster after the caller found it.
@@ -2000,8 +1999,8 @@ func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (
 	return failedProjects, errs
 }
 
-// cleanupShouldTake decides if a cleanup takes a shared cluster or an old
-// layout project.
+// cleanupShouldTake decides if a cleanup takes a shared cluster or a legacy
+// project.
 func cleanupShouldTake(meta *stringclustermeta.MetaData, opts deployment.CleanupOptions, now time.Time) bool {
 	// A zero expiry means the cluster never expires.
 	if meta.Expiry.IsZero() || meta.Expiry.After(now) {
@@ -2020,8 +2019,7 @@ func (p *Deployer) RemoveAllScoped(ctx context.Context, opts deployment.RemoveAl
 
 // selectSharedClusters picks the shared clusters a removal takes. inScope is
 // the cleanup or remove-all scope rule. keep holds the clusters in scope that
-// skipReason leaves alone, which a cleanup does not delete or wait on. It is
-// pure so tests can cover the rules without API calls.
+// skipReason leaves alone, which a cleanup does not delete or wait on.
 func selectSharedClusters(
 	clusters []*clusterInfo,
 	inScope func(meta *stringclustermeta.MetaData) bool,
@@ -2105,11 +2103,11 @@ func (p *Deployer) logSkippedSharedClusters(clusters []*clusterInfo) {
 	}
 }
 
-// removeClusters deletes every cluster of the old layout projects and every
-// taken shared cluster first, and waits after, so the deletions overlap on the
-// Capella side. It then deletes the old layout projects whose clusters all
-// went. An empty old layout project holds no target, so it goes straight away.
-// The shared project is never deleted, because it is not in projects.
+// removeClusters deletes every cluster of the legacy projects and every taken
+// shared cluster first, and waits after, so the deletions overlap on the
+// Capella side. It then deletes the legacy projects whose clusters all went.
+// An empty legacy project holds no target, so it goes straight away. The
+// shared project is never deleted, because it is not in projects.
 func (p *Deployer) removeClusters(
 	ctx context.Context,
 	projects []cbdc2Project,
@@ -2176,7 +2174,7 @@ func (p *Deployer) removeClusters(
 	return nil
 }
 
-// dryRunRemoveProjects lists the clusters of the old layout projects like
+// dryRunRemoveProjects lists the clusters of the legacy projects like
 // removeClusters does, so it keeps the same projects. It cannot predict a
 // delete that fails during the real run. reason only labels the output. It
 // returns how many projects would be removed and kept.
@@ -2278,7 +2276,7 @@ func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptio
 		return errors.Wrap(err, "failed to list projects")
 	}
 
-	// A failed shared listing must not block the old layout projects.
+	// A failed shared listing must not block the legacy projects.
 	allShared, sharedListErr := p.listSharedForRemoval(ctx, shared)
 
 	var projects []cbdc2Project
@@ -2288,8 +2286,8 @@ func (p *Deployer) removeAll(ctx context.Context, opts deployment.RemoveAllOptio
 		}
 	}
 
-	// A remove-all keeps trying a destroyFailed cluster. The delete fails, an
-	// old layout project is kept and the error is reported. It also waits on a
+	// A remove-all keeps trying a destroyFailed cluster. The delete fails, a
+	// legacy project is kept and the error is reported. It also waits on a
 	// destroying cluster, up to the --timeout limit.
 	sharedTake, _ := selectSharedClusters(allShared, func(meta *stringclustermeta.MetaData) bool {
 		return deployment.PurposeMatches(meta.Purpose, opts.Purpose)
@@ -2369,20 +2367,20 @@ func (p *Deployer) CleanupScoped(ctx context.Context, opts deployment.CleanupOpt
 	return p.cleanup(ctx, opts)
 }
 
-// cleanup is a remove-all restricted to the expired shared clusters and old
-// layout projects, plus the skip of a cluster Capella failed to destroy or
-// already destroys.
+// cleanup is a remove-all restricted to the expired shared clusters and legacy
+// projects, plus the skip of a cluster Capella failed to destroy or already
+// destroys.
 func (p *Deployer) cleanup(ctx context.Context, opts deployment.CleanupOptions) error {
 	shared, allProjects, err := p.listProjects(ctx)
 	if err != nil {
 		return errors.Wrap(err, "failed to list projects")
 	}
 
-	// A failed shared listing must not block the old layout projects.
+	// A failed shared listing must not block the legacy projects.
 	allShared, sharedListErr := p.listSharedForRemoval(ctx, shared)
 
-	// In the old layout an allocate creates the project first, so an unexpired
-	// empty project may belong to a run still in flight. Only the expired go.
+	// A legacy project exists before its cluster, so an unexpired empty project
+	// may belong to a run still in flight. Only the expired go.
 	now := time.Now()
 	var projects []cbdc2Project
 	for _, project := range allProjects {

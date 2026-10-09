@@ -173,7 +173,7 @@ func TestCreateProjectBadNameMakesNoCall(t *testing.T) {
 	assert.Empty(t, srv.creates)
 }
 
-// The shared project must never look like an old layout project, because
+// The shared project must never look like a legacy project, because
 // cbdinocluster deletes those.
 func TestSharedProjectName(t *testing.T) {
 	assert.NoError(t, CheckNewProjectName(SharedProjectName))

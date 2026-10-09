@@ -566,7 +566,7 @@ func TestFindClustersWithoutProjectID(t *testing.T) {
 	require.ErrorContains(t, err, "failed to find cluster")
 }
 
-// A configured project that is gone must not block the old layout.
+// A configured project that is gone must not block the legacy projects.
 func TestFindClustersConfiguredProjectNotFound(t *testing.T) {
 	legacyID := cbdcuuid.New()
 
