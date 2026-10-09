@@ -73,9 +73,13 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 		return nil, errors.New("a capella v4 client is required")
 	}
 
+	// Capella lists project IDs in lower case, and the deployer compares them
+	// with that list.
+	projectID := strings.ToLower(opts.ProjectID)
+
 	// Empty is valid. Reads and removal of old layout clusters need no project.
-	if opts.ProjectID != "" {
-		if err := CheckProjectID(opts.ProjectID); err != nil {
+	if projectID != "" {
+		if err := CheckProjectID(projectID); err != nil {
 			return nil, err
 		}
 	}
@@ -101,7 +105,7 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 		defaultAzureRegion:       opts.DefaultAzureRegion,
 		defaultGcpRegion:         opts.DefaultGcpRegion,
 		uploadServerLogsHostName: opts.UploadServerLogsHostName,
-		projectID:                opts.ProjectID,
+		projectID:                projectID,
 	}, nil
 }
 
