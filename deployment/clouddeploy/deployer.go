@@ -1792,8 +1792,9 @@ func (p *Deployer) listRemovalTargets(ctx context.Context, projectID string, ski
 func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (map[string]bool, error) {
 	var errs error
 	failedProjects := make(map[string]bool)
+	deleteFailed := make([]bool, len(targets))
 
-	for _, target := range targets {
+	for i, target := range targets {
 		p.logger.Info("removing a cluster", zap.String("cluster-id", target.clusterID))
 
 		var err error
@@ -1808,10 +1809,17 @@ func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (
 		if err != nil {
 			errs = multierr.Append(errs, errors.Wrap(err, "failed to remove cluster"))
 			failedProjects[target.projectID] = true
+			deleteFailed[i] = true
 		}
 	}
 
-	for _, target := range targets {
+	for i, target := range targets {
+		// A cluster whose delete failed never reaches the deleted state, so a
+		// wait on it runs until the deadline.
+		if deleteFailed[i] {
+			continue
+		}
+
 		p.logger.Info("waiting for cluster removal to complete", zap.String("cluster-id", target.clusterID))
 
 		var err error
