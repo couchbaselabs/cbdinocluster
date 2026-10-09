@@ -15,6 +15,15 @@ type Manager struct {
 	Client *Controller
 }
 
+func (m *Manager) sleep(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}
+
 func (m *Manager) WaitForClusterState(
 	ctx context.Context,
 	tenantID, clusterID string,
@@ -81,7 +90,9 @@ func (m *Manager) WaitForClusterState(
 			zap.String("desired", desiredState))
 
 		if clusterStatus != desiredState {
-			time.Sleep(10 * time.Second)
+			if err := m.sleep(ctx, 10*time.Second); err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -154,7 +165,9 @@ func (m *Manager) WaitForServerLogsCollected(
 			zap.String("desiredState", desiredState))
 
 		if status != desiredState {
-			time.Sleep(15 * time.Second)
+			if err := m.sleep(ctx, 15*time.Second); err != nil {
+				return nil, err
+			}
 			continue
 		}
 

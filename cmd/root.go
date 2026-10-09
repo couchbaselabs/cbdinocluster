@@ -46,4 +46,5 @@ func init() {
 	rootCmd.PersistentFlags().BoolP("verbose", "v", false, "Turns on verbose logging")
 	rootCmd.PersistentFlags().Bool("json", false, "Turns on JSON output for supported commands")
 	rootCmd.PersistentFlags().String("config", "", "Path to the config file (overrides $"+cbdcconfig.EnvConfigPath+" and the default ~/.cbdinocluster)")
+	rootCmd.PersistentFlags().Duration("timeout", 0, "Give up after this long, for example 30m. 0 means no limit")
 }

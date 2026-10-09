@@ -3,6 +3,7 @@ package cmd
 import (
 	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/gcpcontrol"
+	"github.com/pkg/errors"
 	"go.uber.org/zap"
 
 	"github.com/spf13/cobra"
@@ -18,9 +19,18 @@ var removeCmd = &cobra.Command{
 		logger := helper.GetLogger()
 		ctx := helper.GetContext()
 
-		_, deployer, cluster := helper.IdentifyCluster(ctx, args[0])
+		ignoreMissing, _ := cmd.Flags().GetBool("ignore-missing")
 
-		err := deployer.RemoveCluster(ctx, cluster.GetID())
+		_, deployer, cluster, err := findCluster(ctx, logger, helper.GetAllDeployers(ctx), args[0])
+		if ignoreMissing && errors.Is(err, errClusterNotFound) {
+			logger.Info("cluster not found, nothing to remove", zap.String("identifier", args[0]))
+			return
+		}
+		if err != nil {
+			logger.Fatal(err.Error(), zap.String("identifier", args[0]))
+		}
+
+		err = deployer.RemoveCluster(ctx, cluster.GetID())
 		if err != nil {
 			logger.Fatal("failed to remove cluster", zap.Error(err))
 		}
@@ -53,4 +63,6 @@ var removeCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(removeCmd)
+
+	removeCmd.Flags().Bool("ignore-missing", false, "Exit 0 when no deployer has the cluster")
 }
