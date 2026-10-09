@@ -1253,8 +1253,7 @@ func (d *Deployer) RemoveNode(ctx context.Context, clusterID string, nodeID stri
 }
 
 // canDeleteProjectName reports if cbdinocluster owns the project, which means
-// the project name parses as cbdc2 meta data. A later change can also refuse
-// a configured shared project here.
+// the project name parses as cbdc2 meta data.
 func canDeleteProjectName(projectName string) bool {
 	meta, err := stringclustermeta.Parse(projectName)
 	return err == nil && meta != nil
@@ -1711,8 +1710,7 @@ type removalTarget struct {
 // message that says why. An empty result means the cluster goes. Capella failed
 // to destroy a destroyFailed cluster, so asking again does nothing and a human
 // must act. Capella already deletes a destroying cluster, so a wait on it only
-// holds the cleanup back. It is pure so tests can cover the rule without API
-// calls.
+// holds the cleanup back.
 func skipReason(currentState string, skipStuck bool) string {
 	if !skipStuck {
 		return ""
@@ -1844,8 +1842,7 @@ func (p *Deployer) removeTargets(ctx context.Context, targets []removalTarget) (
 	return failedProjects, errs
 }
 
-// cleanupShouldTake decides if a cleanup takes the project. It is pure so tests
-// can cover the scope rules without API calls.
+// cleanupShouldTake decides if a cleanup takes the project.
 func cleanupShouldTake(meta *stringclustermeta.MetaData, opts deployment.CleanupOptions, now time.Time) bool {
 	// A zero expiry means the project never expires.
 	if meta.Expiry.IsZero() || meta.Expiry.After(now) {
@@ -1873,8 +1870,6 @@ func (p *Deployer) removeProjects(
 ) error {
 	var errs error
 
-	// A corrupted project can hold more than one cluster, which inspectProject
-	// collapses into one.
 	var targets []removalTarget
 	keptProjects := make(map[string]bool)
 	for _, project := range projects {
