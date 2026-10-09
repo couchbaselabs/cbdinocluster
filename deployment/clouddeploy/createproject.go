@@ -30,8 +30,8 @@ func CheckNewProjectName(name string) error {
 			name, maxProjectNameLen)
 	}
 
-	// cbdinocluster deletes the cbdc2_ projects of the old layout, so a shared
-	// project must never look like one.
+	// cbdinocluster deletes legacy cbdc2_ projects, so a shared project must
+	// never look like one.
 	if strings.HasPrefix(name, "cbdc2_") {
 		return errors.Errorf("capella project name %q starts with cbdc2_, "+
 			"which cbdinocluster keeps for the projects it deletes", name)

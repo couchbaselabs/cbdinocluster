@@ -830,8 +830,8 @@ func TestCleanupWithConfiguredProjectNotFound(t *testing.T) {
 	assert.Equal(t, []string{"p-legacy"}, srv.projectDeletes)
 }
 
-// Without a project ID a removal handles only the old layout. The server fails
-// the test on a cluster listing for any project not in clusters.
+// Without a project ID a removal handles only the legacy projects. The server
+// fails the test on a cluster listing for any project not in clusters.
 func TestRemovalWithoutProjectIDHandlesOnlyOldLayout(t *testing.T) {
 	newServer := func(t *testing.T, legacyID cbdcuuid.UUID) *removalServer {
 		return &removalServer{
