@@ -1454,6 +1454,7 @@ func (p *Deployer) deleteCloudCluster(ctx context.Context, projectID, clusterID 
 		return nil
 	}
 	if capellav4.IsNotFound(err) && capellav4.IsNotFound(ftErr) {
+		p.logger.Info("cluster already removed", zap.String("cluster-id", clusterID))
 		return nil
 	}
 	return multierr.Combine(err, ftErr)

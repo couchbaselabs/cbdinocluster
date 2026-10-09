@@ -215,6 +215,92 @@ func TestRemoveClusterAlreadyRemoved(t *testing.T) {
 	})
 }
 
+func TestRemoveClusterAlreadyRemovedInConfiguredProject(t *testing.T) {
+	requireAlreadyRemoved := func(t *testing.T, deployer *Deployer, clusterID string) {
+		core, logs := observer.New(zapcore.InfoLevel)
+		deployer.logger = zap.New(core)
+
+		require.NoError(t, deployer.RemoveCluster(context.Background(), clusterID))
+		assert.Equal(t, 1, logs.FilterMessage("cluster already removed").Len())
+	}
+
+	t.Run("project lists no such cluster", func(t *testing.T) {
+		srv := &removalServer{
+			t:        t,
+			projects: []capellav4.ProjectInfo{{ID: testProjectID, Name: testSharedProjectName}},
+			clusters: map[string][]removalCluster{
+				testProjectID: {{ID: "c-other", Name: projectNameForID(t, cbdcuuid.New()), State: capellav4.StateHealthy}},
+			},
+		}
+
+		requireAlreadyRemoved(t, newTestDeployer(t, srv.handler()), cbdcuuid.New().String())
+		assert.Zero(t, srv.deletes)
+	})
+
+	t.Run("project not found", func(t *testing.T) {
+		srv := &removalServer{
+			t:               t,
+			missingProjects: map[string]bool{testProjectID: true},
+		}
+
+		requireAlreadyRemoved(t, newTestDeployer(t, srv.handler()), cbdcuuid.New().String())
+		assert.Zero(t, srv.deletes)
+	})
+
+	t.Run("cluster not found", func(t *testing.T) {
+		id := cbdcuuid.New()
+
+		deployer := newTestDeployer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/projects"):
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":%q,"name":%q}]}`, testProjectID, testSharedProjectName)
+			case strings.HasSuffix(r.URL.Path, "/"+testProjectID+"/clusters"):
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":"c-gone","name":%q}]}`, projectNameForID(t, id))
+			case strings.HasSuffix(r.URL.Path, "/"+testProjectID+"/analyticsClusters"):
+				_, _ = w.Write([]byte(`{}`))
+			case strings.HasSuffix(r.URL.Path, "/c-gone"):
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"code":4025,"httpStatusCode":404,"message":"cluster not found"}`))
+			default:
+				t.Errorf("unexpected request %s %q", r.Method, r.URL.Path)
+				w.WriteHeader(http.StatusNotImplemented)
+			}
+		}))
+
+		requireAlreadyRemoved(t, deployer, id.String())
+	})
+
+	t.Run("other errors still fail", func(t *testing.T) {
+		srv := &removalServer{
+			t:           t,
+			clusters:    map[string][]removalCluster{testProjectID: nil},
+			failListing: map[string]bool{testProjectID: true},
+		}
+		deployer := newTestDeployer(t, srv.handler())
+
+		err := deployer.RemoveCluster(context.Background(), cbdcuuid.New().String())
+		require.ErrorContains(t, err, "forbidden")
+	})
+
+	t.Run("deadline still fails", func(t *testing.T) {
+		deployer := newTestDeployer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/projects") {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":%q,"name":%q}]}`, testProjectID, testSharedProjectName)
+				return
+			}
+			<-r.Context().Done()
+		}))
+
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+
+		err := deployer.RemoveCluster(ctx, cbdcuuid.New().String())
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	})
+}
+
 func TestSplitProjects(t *testing.T) {
 	legacyID := cbdcuuid.New()
 	legacyName := projectNameForID(t, legacyID)
