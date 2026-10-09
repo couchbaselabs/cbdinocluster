@@ -30,7 +30,7 @@ var removeAllCmd = &cobra.Command{
 				"To remove only the expired clusters, use cleanup")
 		}
 
-		// --all without --dry-run keeps the old unscoped behavior.
+		// Only the scoped path supports a dry run, so --all --dry-run uses it too.
 		scoped := !all || dryRun
 		opts := deployment.RemoveAllOptions{
 			Purpose: purpose,
@@ -66,7 +66,7 @@ var removeAllCmd = &cobra.Command{
 				}
 
 				// The private DNS sweep below removes every entry, which a scoped
-				// removal must not do. Cleanup takes the stale entries later.
+				// removal must not do. The cleanup command removes the stale entries.
 				continue
 			}
 
