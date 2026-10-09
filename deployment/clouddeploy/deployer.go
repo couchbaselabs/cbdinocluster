@@ -304,6 +304,8 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 	return out, nil
 }
 
+var errClusterNotFound = errors.New("failed to find cluster")
+
 // findClusterInfo returns the project whose meta ID matches, inspected, with
 // no check on its state, so it also finds an empty or a corrupted project.
 func (p *Deployer) findClusterInfo(ctx context.Context, clusterID string) (*clusterInfo, error) {
@@ -320,7 +322,7 @@ func (p *Deployer) findClusterInfo(ctx context.Context, clusterID string) (*clus
 		}
 	}
 	if foundProject == nil {
-		return nil, errors.New("failed to find cluster")
+		return nil, errClusterNotFound
 	}
 
 	return p.inspectProject(ctx, *foundProject)
@@ -1372,6 +1374,11 @@ func (p *Deployer) removeCluster(ctx context.Context, clusterInfo *clusterInfo) 
 // empty project and a corrupted one.
 func (p *Deployer) RemoveCluster(ctx context.Context, clusterID string) error {
 	clusterInfo, err := p.findClusterInfo(ctx, clusterID)
+	// A sweep can remove the cluster after the caller found it.
+	if errors.Is(err, errClusterNotFound) || capellav4.IsProjectNotFound(err) {
+		p.logger.Info("cluster already removed", zap.String("cluster-id", clusterID))
+		return nil
+	}
 	if err != nil {
 		return err
 	}

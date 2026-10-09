@@ -160,3 +160,44 @@ func TestFindClustersReportsOtherErrors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "access denied")
 }
+
+func TestRemoveClusterAlreadyRemoved(t *testing.T) {
+	t.Run("project not found", func(t *testing.T) {
+		goneID := cbdcuuid.New()
+
+		deployer := newTestDeployer(t, createHandlerForFindClusters(t,
+			map[string]string{"p-gone": projectNameForID(t, goneID)},
+			map[string]bool{"p-gone": true},
+		))
+
+		require.NoError(t, deployer.RemoveCluster(context.Background(), goneID.String()))
+	})
+
+	t.Run("cluster no longer listed", func(t *testing.T) {
+		deployer := newTestDeployer(t, createHandlerForFindClusters(t,
+			map[string]string{"p-other": projectNameForID(t, cbdcuuid.New())},
+			nil,
+		))
+
+		require.NoError(t, deployer.RemoveCluster(context.Background(), cbdcuuid.New().String()))
+	})
+
+	t.Run("other errors still fail", func(t *testing.T) {
+		id := cbdcuuid.New()
+		name := projectNameForID(t, id)
+
+		deployer := newTestDeployer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/projects") {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprintf(w, `{"data":[{"id":"p-1","name":%q}]}`, name)
+				return
+			}
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"code":1002,"httpStatusCode":403,"message":"access denied"}`))
+		}))
+
+		err := deployer.RemoveCluster(context.Background(), id.String())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "access denied")
+	})
+}
