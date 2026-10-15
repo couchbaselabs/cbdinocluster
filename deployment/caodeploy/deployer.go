@@ -260,6 +260,7 @@ func (d *Deployer) generateClusterSpec(
 	ctx context.Context,
 	def *clusterdef.Cluster,
 	isOpenShift bool,
+	cngTlsSecretName string,
 ) (map[string]string, map[string]interface{}, error) {
 	clusterVersion := ""
 	for _, nodeGrp := range def.NodeGroups {
@@ -340,6 +341,10 @@ func (d *Deployer) generateClusterSpec(
 
 	if len(cngSpec) == 0 {
 		cngSpec = nil
+	} else if cngTlsSecretName != "" {
+		cngSpec["tls"] = map[string]interface{}{
+			"serverSecretName": cngTlsSecretName,
+		}
 	}
 
 	clusterSpec := map[string]interface{}{
@@ -419,7 +424,25 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to create admin auth")
 	}
 
-	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
+	// The gateway is reached through a passthrough route in OpenShift, so it needs a
+	// certificate valid for the route host for clients to be able to verify it.
+	cngTlsSecretName := ""
+	hasCng := def.Cao.GatewayVersion != "" || def.Cao.GatewayLogLevel != ""
+	if isOpenShift && hasCng && (def.Cao.Ingress == "" || def.Cao.Ingress == "route") {
+		cngHost, err := d.cngRouteHost(ctx, namespace)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to compute cng route host")
+		}
+
+		err = d.createCngTlsSecret(ctx, namespace, clusterID.String(), cngHost)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to create cng tls secret")
+		}
+
+		cngTlsSecretName = CngTlsSecretName
+	}
+
+	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift, cngTlsSecretName)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to generate cluster spec")
 	}
@@ -492,7 +515,17 @@ func (d *Deployer) ModifyCluster(ctx context.Context, clusterID string, def *clu
 		return err
 	}
 
-	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift)
+	cngTlsSecret, err := d.getCngTlsSecret(ctx, namespaceName)
+	if err != nil {
+		return err
+	}
+
+	cngTlsSecretName := ""
+	if cngTlsSecret != nil {
+		cngTlsSecretName = cngTlsSecret.Name
+	}
+
+	clusterAnnotations, clusterSpec, err := d.generateClusterSpec(ctx, def, isOpenShift, cngTlsSecretName)
 	if err != nil {
 		return errors.Wrap(err, "failed to generate cluster spec")
 	}
@@ -721,12 +754,11 @@ func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string, ingres
 	if err != nil {
 		d.logger.Info("no cng service detected")
 	} else {
-		_, err = d.client.GetRouteHost(ctx, namespace, "cng")
+		_, err = d.client.GetRouteHost(ctx, namespace, cngRouteName)
 		if err != nil {
 			d.logger.Info("cng service detected, creating cng route")
 
-			// this must be a short name or we hit dns name length limits
-			err = d.client.CreateRoute(ctx, namespace, "cng", map[string]interface{}{
+			routeSpec := map[string]interface{}{
 				"tls": map[string]interface{}{
 					"termination": "passthrough",
 				},
@@ -737,7 +769,19 @@ func (d *Deployer) EnableIngresses(ctx context.Context, clusterID string, ingres
 				"port": map[string]interface{}{
 					"targetPort": 18098,
 				},
-			})
+			}
+
+			cngTlsSecret, err := d.getCngTlsSecret(ctx, namespace)
+			if err != nil {
+				return err
+			}
+			if cngTlsSecret != nil && cngTlsSecret.Annotations[cngHostAnnotation] != "" {
+				// the gateway's certificate is only valid for the host it was issued for
+				routeSpec["host"] = cngTlsSecret.Annotations[cngHostAnnotation]
+			}
+
+			// this must be a short name or we hit dns name length limits
+			err = d.client.CreateRoute(ctx, namespace, cngRouteName, routeSpec)
 			if err != nil {
 				return errors.Wrap(err, "failed to create cng route")
 			}
@@ -1022,6 +1066,21 @@ func (d *Deployer) GetGatewayCertificate(ctx context.Context, clusterID string) 
 		return "", err
 	}
 
+	cngTlsSecret, err := d.getCngTlsSecret(ctx, namespaceName)
+	if err != nil {
+		return "", err
+	}
+	if cngTlsSecret != nil {
+		caPem := cngTlsSecret.Data[cngTlsCaKey]
+		if len(caPem) == 0 {
+			return "", errors.New("cng tls secret has no ca certificate")
+		}
+
+		return string(caPem), nil
+	}
+
+	// Clusters created before cbdinocluster issued gateway certificates use the operator's
+	// self-signed one, which is only valid for an in-cluster service name.
 	secret, err := d.client.GetSecret(ctx, namespaceName, "couchbase-cloud-native-gateway-self-signed-secret-cluster")
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get secret")
