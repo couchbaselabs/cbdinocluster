@@ -562,7 +562,10 @@ type BeginLogsCollectionOptions struct {
 }
 
 func (c *Controller) BeginLogsCollection(ctx context.Context, opts *BeginLogsCollectionOptions) error {
-	form, _ := query.Values(opts)
+	form, err := query.Values(opts)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode form values")
+	}
 	return c.doFormPost(ctx, "/controller/startLogsCollection", form, true, nil)
 }
 
@@ -690,9 +693,12 @@ type ListUsersResponse_User_Role_Origin struct {
 func (c *Controller) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error) {
 	resp := &ListUsersResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode query parameters")
+	}
 	path := fmt.Sprintf("/settings/rbac/users?%s", form.Encode())
-	err := c.doGet(ctx, path, &resp)
+	err = c.doGet(ctx, path, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -708,9 +714,12 @@ type CreateUserRequest struct {
 }
 
 func (c *Controller) CreateUser(ctx context.Context, username string, req *CreateUserRequest) error {
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode form values")
+	}
 	path := fmt.Sprintf("/settings/rbac/users/local/%s", username)
-	err := c.doFormPut(ctx, path, form, true, nil)
+	err = c.doFormPut(ctx, path, form, true, nil)
 	if err != nil {
 		return err
 	}
@@ -762,9 +771,12 @@ type CreateBucketRequest struct {
 }
 
 func (c *Controller) CreateBucket(ctx context.Context, req *CreateBucketRequest) error {
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode form values")
+	}
 	path := "/pools/default/buckets"
-	err := c.doFormPost(ctx, path, form, true, nil)
+	err = c.doFormPost(ctx, path, form, true, nil)
 	if err != nil {
 		return err
 	}
