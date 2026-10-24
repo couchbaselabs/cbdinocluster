@@ -441,9 +441,12 @@ func (c *Controller) ListProjects(
 ) (*ListProjectsResponse, error) {
 	resp := &ListProjectsResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/projects?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -600,9 +603,12 @@ func (c *Controller) ListAllClusters(
 ) (*ListClustersResponse, error) {
 	resp := &ListClustersResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/clusters?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -619,9 +625,12 @@ func (c *Controller) ListAllColumnars(
 ) (*ListColumnarsResponse, error) {
 	resp := &ListColumnarsResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/instance?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -920,9 +929,12 @@ func (c *Controller) GetProviderDeploymentOptions(
 ) (*GetProviderDeploymentOptionsV2Response, error) {
 	resp := &GetProviderDeploymentOptionsV2Response{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode query parameters")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/clusters/deployment-options/v2?%s", tenantID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -949,9 +961,12 @@ func (c *Controller) ListAllowListEntries(
 ) (*ListAllowListEntriesResponse, error) {
 	resp := &ListAllowListEntriesResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/allowlists?%s", tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -987,10 +1002,13 @@ func (c *Controller) ListUsers(
 ) (*ListUsersResponse, error) {
 	resp := &ListUsersResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/clusters/%s/users?%s",
 		tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1069,10 +1087,13 @@ func (c *Controller) GetColumnarRoles(
 ) (*ListColumnarRolesResponse, error) {
 	resp := &ListColumnarRolesResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/roles?%s",
 		tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1087,10 +1108,13 @@ func (c *Controller) ListColumnarUsers(
 ) (*ListColumnarUsersResponse, error) {
 	resp := &ListColumnarUsersResponse{}
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to encode pagination query")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/apikeys?%s",
 		tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, true, "GET", path, nil, &resp)
+	err = c.doBasicReq(ctx, true, "GET", path, nil, &resp)
 	if err != nil {
 		return nil, err
 	}
@@ -1412,9 +1436,12 @@ func (c *Controller) LoadColumnarSampleBucket(
 	req *LoadColumnarSampleBucketRequest,
 ) error {
 
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode query parameters")
+	}
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/api/v1/samples?%s", tenantID, projectID, clusterID, form.Encode())
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	err = c.doBasicReq(ctx, false, "POST", path, req, nil)
 	return err
 }
 
@@ -1451,11 +1478,14 @@ func (c *Controller) CreateColumnarS3Link(
 	tenantID, projectID, columnarID, linkName string,
 	req *CreateColumnarS3LinkRequest,
 ) error {
-	form, _ := query.Values(req)
+	form, err := query.Values(req)
+	if err != nil {
+		return errors.Wrap(err, "failed to encode query parameters")
+	}
 
 	path := fmt.Sprintf("/v2/organizations/%s/projects/%s/instance/%s/proxy/analytics/link/%s?%s",
 		tenantID, projectID, columnarID, linkName, form.Encode())
-	err := c.doBasicReq(ctx, false, "POST", path, req, nil)
+	err = c.doBasicReq(ctx, false, "POST", path, req, nil)
 	return err
 }
 
