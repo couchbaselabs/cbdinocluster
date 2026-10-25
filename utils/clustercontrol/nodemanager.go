@@ -193,6 +193,8 @@ func (m *NodeManager) Rebalance(ctx context.Context, ejectedNodeOtps []string) e
 func (m *NodeManager) WaitForNoRunningTasks(ctx context.Context) error {
 	c := m.Controller()
 
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	for {
 		tasks, err := c.ListTasks(ctx)
 		if err != nil {
@@ -210,7 +212,11 @@ func (m *NodeManager) WaitForNoRunningTasks(ctx context.Context) error {
 		}
 
 		if hasRunningTask {
-			time.Sleep(1 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
@@ -223,6 +229,8 @@ func (m *NodeManager) WaitForNoRunningTasks(ctx context.Context) error {
 func (m *NodeManager) WaitForTaskRunning(ctx context.Context, taskType string) error {
 	c := m.Controller()
 
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	for {
 		tasks, err := c.ListTasks(ctx)
 		if err != nil {
@@ -237,7 +245,11 @@ func (m *NodeManager) WaitForTaskRunning(ctx context.Context, taskType string) e
 		}
 
 		if !hasRunningTask {
-			time.Sleep(1 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
@@ -251,6 +263,8 @@ func (m *NodeManager) WaitForTaskRunning(ctx context.Context, taskType string) e
 func (m *NodeManager) WaitForLogCollection(ctx context.Context) (map[string]string, error) {
 	c := m.Controller()
 
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	for {
 		tasks, err := c.ListTasks(ctx)
 		if err != nil {
@@ -268,7 +282,11 @@ func (m *NodeManager) WaitForLogCollection(ctx context.Context) (map[string]stri
 		}
 
 		if foundLogTask.Status != "completed" {
-			time.Sleep(1 * time.Second)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 

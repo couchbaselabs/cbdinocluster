@@ -68,6 +68,8 @@ func (a *AwsDnsProvider) waitForChangeId(
 
 	client := a.getRoute53Client(ctx)
 
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
 		change, err := client.GetChange(ctx, &route53.GetChangeInput{
 			Id: &changeId,
@@ -82,7 +84,11 @@ func (a *AwsDnsProvider) waitForChangeId(
 			zap.String("current", string(changeStatus)))
 
 		if changeStatus != types.ChangeStatusInsync {
-			time.Sleep(5 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
