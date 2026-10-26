@@ -99,6 +99,8 @@ func waitForFunc(ctx context.Context, fn func(ctx context.Context) (bool, error)
 	subCtx, cancel := context.WithDeadline(ctx, expiryTime)
 	defer cancel()
 
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		success, err := fn(subCtx)
 		if err != nil {
@@ -109,7 +111,11 @@ func waitForFunc(ctx context.Context, fn func(ctx context.Context) (bool, error)
 			return nil
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
 
 		if time.Now().After(expiryTime) {
 			return errors.New("timed out waiting for condition")

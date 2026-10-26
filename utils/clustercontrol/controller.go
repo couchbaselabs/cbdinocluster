@@ -395,6 +395,8 @@ func (c *Controller) getServerGroups(ctx context.Context) ([]serverGroup, error)
 }
 
 func (c *Controller) waitForServerGroup(ctx context.Context, groupName string) (*serverGroup, error) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 	for {
 		groups, err := c.getServerGroups(ctx)
 		if err != nil {
@@ -405,7 +407,11 @@ func (c *Controller) waitForServerGroup(ctx context.Context, groupName string) (
 				return &group, nil
 			}
 		}
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
 	}
 }
 

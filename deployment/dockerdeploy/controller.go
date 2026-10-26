@@ -298,11 +298,17 @@ func (c *Controller) DeployS3MockNode(ctx context.Context, clusterID string, exp
 
 	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
 
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		resp, err := http.Get(fmt.Sprintf("http://%s:%d", node.IPAddress, 9090))
 		if err != nil || resp.StatusCode != 200 {
 			logger.Debug("s3mock not ready yet", zap.Error(err))
-			time.Sleep(500 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
@@ -389,11 +395,17 @@ func (c *Controller) DeployNginxNode(ctx context.Context, clusterID string, expi
 
 	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
 
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		resp, err := http.Get(fmt.Sprintf("http://%s:%d", node.IPAddress, 80))
 		if err != nil || resp.StatusCode != 200 {
 			logger.Debug("nginx not ready yet", zap.Error(err))
-			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
@@ -499,11 +511,17 @@ func (c *Controller) DeployHaproxyNode(ctx context.Context, clusterID string, ex
 
 	logger.Debug("container has started, waiting for it to get ready", zap.String("address", node.IPAddress))
 
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		resp, err := http.Get(fmt.Sprintf("http://%s:%d", node.IPAddress, 80))
 		if err != nil || resp.StatusCode != 503 {
 			logger.Debug("haproxy not ready yet", zap.Error(err))
-			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
@@ -1052,6 +1070,8 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 	logger.Debug("waiting for container to disappear")
 
 	// We call this to 'wait' for the removal to finish...
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
 	for {
 		nodes, err := c.ListNodes(ctx)
 		if err != nil {
@@ -1066,7 +1086,11 @@ func (c *Controller) RemoveNode(ctx context.Context, containerID string) error {
 		}
 
 		if foundNode {
-			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 

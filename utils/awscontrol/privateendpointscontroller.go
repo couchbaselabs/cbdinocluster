@@ -103,6 +103,8 @@ func (c *PrivateEndpointsController) WaitForVPCEndpointStatus(ctx context.Contex
 		desiredState = MISSING_STATE
 	}
 
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
 		vpcEndpoints, err := ec2Client.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{
 			VpcEndpointIds: []string{vpceID},
@@ -132,7 +134,11 @@ func (c *PrivateEndpointsController) WaitForVPCEndpointStatus(ctx context.Contex
 			zap.String("desired", desiredState))
 
 		if endpointStatus != desiredState {
-			time.Sleep(5 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 

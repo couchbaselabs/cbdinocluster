@@ -28,6 +28,8 @@ func (m *Manager) WaitForClusterState(
 		desiredState = MISSING_STATE
 	}
 
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 	for {
 		clusterStatus := ""
 		if !columnar {
@@ -81,7 +83,11 @@ func (m *Manager) WaitForClusterState(
 			zap.String("desired", desiredState))
 
 		if clusterStatus != desiredState {
-			time.Sleep(10 * time.Second)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
@@ -133,6 +139,8 @@ func (m *Manager) WaitForServerLogsCollected(
 ) (map[string]PerNode, error) {
 	desiredState := "completed"
 
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 	for {
 		resp, err := m.Client.DownloadServerLogs(ctx, clusterID, token, req)
 		if err != nil {
@@ -154,7 +162,11 @@ func (m *Manager) WaitForServerLogsCollected(
 			zap.String("desiredState", desiredState))
 
 		if status != desiredState {
-			time.Sleep(15 * time.Second)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-ticker.C:
+			}
 			continue
 		}
 
