@@ -55,6 +55,25 @@ func (p *GhcrImageProvider) GetImage(ctx context.Context, def *ImageDef) (*Image
 
 	serverVersion := fmt.Sprintf("%s-%d", def.Version, def.BuildNo)
 
+	if def.ToyName != "" {
+		if def.UseColumnar {
+			return nil, errors.New("cannot use toy builds for columnar")
+		}
+
+		edition := "enterprise"
+		if def.UseCommunityEdition {
+			edition = "community"
+		}
+
+		ghcrImagePath := fmt.Sprintf("ghcr.io/cb-vanilla/server-toy:%s-%s-%s", def.ToyName, edition, serverVersion)
+		return MultiArchImagePuller{
+			Logger:       p.Logger,
+			DockerCli:    p.DockerCli,
+			RegistryAuth: p.genGhcrAuthStr(),
+			ImagePath:    ghcrImagePath,
+		}.Pull(ctx)
+	}
+
 	if !def.UseColumnar {
 		if def.UseCommunityEdition {
 			serverVersion = "community-" + serverVersion

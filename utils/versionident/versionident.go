@@ -2,6 +2,7 @@ package versionident
 
 import (
 	"context"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,9 +14,29 @@ type Version struct {
 	BuildNo          int
 	CommunityEdition bool
 	Serverless       bool
+
+	// ToyName is set for toy builds, specified as <version>+toy:<name>.
+	ToyName string
 }
 
+var toyNameRegexp = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
 func Identify(ctx context.Context, userInput string) (*Version, error) {
+	toyName := ""
+	if versionPart, qualifier, hasQualifier := strings.Cut(userInput, "+"); hasQualifier {
+		qualifierName, qualifierValue, _ := strings.Cut(qualifier, ":")
+		if qualifierName != "toy" {
+			return nil, errors.Errorf("unknown version qualifier `%s`", qualifierName)
+		}
+
+		if !toyNameRegexp.MatchString(qualifierValue) {
+			return nil, errors.Errorf("invalid toy build name `%s`", qualifierValue)
+		}
+
+		userInput = versionPart
+		toyName = qualifierValue
+	}
+
 	editionPart := "enterprise"
 	versionPart := ""
 	buildNoPart := "0"
@@ -63,10 +84,15 @@ func Identify(ctx context.Context, userInput string) (*Version, error) {
 		return nil, errors.Wrap(err, "failed to parse build number")
 	}
 
+	if toyName != "" && buildNo == 0 {
+		return nil, errors.New("toy builds must specify a build number")
+	}
+
 	return &Version{
 		Version:          versionPart,
 		BuildNo:          int(buildNo),
 		CommunityEdition: communityEdition,
 		Serverless:       serverless,
+		ToyName:          toyName,
 	}, nil
 }

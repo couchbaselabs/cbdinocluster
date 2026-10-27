@@ -14,7 +14,7 @@ func parseSimpleVersion(ctx context.Context, version string) (string, int, error
 		return "", 0, err
 	}
 
-	if ver.CommunityEdition || ver.Serverless {
+	if ver.CommunityEdition || ver.Serverless || ver.ToyName != "" {
 		return "", 0, errors.New("invalid version format")
 	}
 
@@ -105,6 +105,19 @@ func GetServerImage(ctx context.Context, version string, needRhcc bool) (string,
 
 	if ver.Serverless {
 		return "", errors.New("cao does not support serverless images")
+	}
+
+	if ver.ToyName != "" {
+		if needRhcc {
+			return "", errors.New("toy builds are not available as rhcc images")
+		}
+
+		edition := "enterprise"
+		if ver.CommunityEdition {
+			edition = "community"
+		}
+
+		return fmt.Sprintf("ghcr.io/cb-vanilla/server-toy:%s-%s-%s-%d", ver.ToyName, edition, ver.Version, ver.BuildNo), nil
 	}
 
 	image := ""

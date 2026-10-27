@@ -23,6 +23,7 @@ func TestVersionIdent(t *testing.T) {
 				require.Equal(t, expected.BuildNo, v.BuildNo)
 				require.Equal(t, expected.CommunityEdition, v.CommunityEdition)
 				require.Equal(t, expected.Serverless, v.Serverless)
+				require.Equal(t, expected.ToyName, v.ToyName)
 			}
 		}
 	}
@@ -77,5 +78,34 @@ func TestVersionIdent(t *testing.T) {
 	})
 	checkVersion("7", nil)
 	checkVersion("invalid", nil)
+
+	checkVersion("8.6.0-23545+toy:brett", &versionident.Version{
+		Version: "8.6.0",
+		BuildNo: 23545,
+		ToyName: "brett",
+	})
+	checkVersion("community-8.6.0-23545+toy:brett", &versionident.Version{
+		Version:          "8.6.0",
+		BuildNo:          23545,
+		CommunityEdition: true,
+		ToyName:          "brett",
+	})
+	checkVersion("8.6.0-23545+toy:jira-MB-12345", &versionident.Version{
+		Version: "8.6.0",
+		BuildNo: 23545,
+		ToyName: "jira-MB-12345",
+	})
+	checkVersion("8.6.0-23545-serverless+toy:brett", &versionident.Version{
+		Version:    "8.6.0",
+		BuildNo:    23545,
+		Serverless: true,
+		ToyName:    "brett",
+	})
+	checkVersion("8.6.0+toy:brett", nil)
+	checkVersion("8.6.0-23545+toy:", nil)
+	checkVersion("8.6.0-23545+toy", nil)
+	checkVersion("8.6.0-23545+toy:bad:name", nil)
+	checkVersion("8.6.0-23545+brett", nil)
+	checkVersion("8.6.0-23545+mb:12345", nil)
 
 }
