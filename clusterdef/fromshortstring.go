@@ -7,7 +7,8 @@ import (
 )
 
 func FromShortString(shortStr string) (*Cluster, error) {
-	defIdParts := strings.Split(shortStr, ":")
+	// the version may itself contain a colon (e.g. 8.6.0-1234+toy:name)
+	defIdParts := strings.SplitN(shortStr, ":", 2)
 	if len(defIdParts) != 2 {
 		return nil, errors.New("unexpected short string format")
 	}

@@ -2,6 +2,7 @@ package dockerdeploy
 
 import (
 	"context"
+	"strings"
 
 	"github.com/couchbaselabs/cbdinocluster/deployment"
 	"golang.org/x/mod/semver"
@@ -13,6 +14,7 @@ type ImageDef struct {
 	UseCommunityEdition bool
 	UseServerless       bool
 	UseColumnar         bool
+	ToyName             string
 }
 
 type ImageRef struct {
@@ -56,5 +58,5 @@ func CompareImageDefs(a, b *ImageDef) int {
 		return +1
 	}
 
-	return 0
+	return strings.Compare(a.ToyName, b.ToyName)
 }

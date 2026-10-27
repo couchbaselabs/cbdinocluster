@@ -86,6 +86,10 @@ func (d *Deployer) NewCluster(ctx context.Context, def *clusterdef.Cluster) (dep
 		return nil, errors.Wrap(err, "failed to identify version")
 	}
 
+	if versionInfo.ToyName != "" {
+		return nil, errors.New("toy builds are not supported for local deploy")
+	}
+
 	err = d.controller().Start(ctx, &ServerDef{
 		Version:             versionInfo.Version,
 		BuildNo:             versionInfo.BuildNo,

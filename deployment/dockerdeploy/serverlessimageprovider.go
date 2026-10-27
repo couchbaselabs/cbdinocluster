@@ -36,6 +36,10 @@ func (p *ServerlessImageProvider) GetImage(ctx context.Context, def *ImageDef) (
 		return nil, errors.New("cannot use serverless provider for columnar images")
 	}
 
+	if def.ToyName != "" {
+		return nil, errors.New("cannot use serverless provider for toy builds")
+	}
+
 	var serverVariant string
 	if def.UseCommunityEdition {
 		serverVariant = "community"

@@ -23,6 +23,10 @@ func (p *DockerHubImageProvider) GetImage(ctx context.Context, def *ImageDef) (*
 		return nil, errors.New("cannot use dockerhub for non-ga releases")
 	}
 
+	if def.ToyName != "" {
+		return nil, errors.New("cannot use dockerhub for toy builds")
+	}
+
 	if def.UseServerless {
 		return nil, errors.New("cannot use dockerhub for serverless releases")
 	}
