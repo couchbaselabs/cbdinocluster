@@ -38,4 +38,11 @@ func TestStringClusterMeta(t *testing.T) {
 		Expiry:  testExpiry,
 		Purpose: "this is a test",
 	})
+
+	// With underscores and dashes in the purpose
+	testOne(stringclustermeta.MetaData{
+		ID:      testUuid,
+		Expiry:  testExpiry,
+		Purpose: "my_test-run__a_b",
+	})
 }

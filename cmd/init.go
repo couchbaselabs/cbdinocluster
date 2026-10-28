@@ -26,6 +26,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/couchbaselabs/cbdinocluster/cbdcconfig"
+	"github.com/couchbaselabs/cbdinocluster/deployment/clouddeploy"
 	"github.com/couchbaselabs/cbdinocluster/utils/awscontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/azurecontrol"
 	"github.com/couchbaselabs/cbdinocluster/utils/caocontrol"
@@ -1149,6 +1150,7 @@ var initCmd = &cobra.Command{
 			fmt.Printf("  Username: %s\n", curConfig.Capella.Username)
 			fmt.Printf("  Password: %s\n", strings.Repeat("*", len(curConfig.Capella.Password)))
 			fmt.Printf("  Organization ID: %s\n", curConfig.Capella.OrganizationID)
+			fmt.Printf("  Project ID: %s\n", curConfig.Capella.ProjectID)
 			fmt.Printf("  Override Token: %s\n", strings.Repeat("*", len(curConfig.Capella.OverrideToken)))
 			fmt.Printf("  Internal Support Token: %s\n", strings.Repeat("*", len(curConfig.Capella.InternalSupportToken)))
 			fmt.Printf("  Default Cloud: %s\n", curConfig.Capella.DefaultCloud)
@@ -1170,6 +1172,7 @@ var initCmd = &cobra.Command{
 			flagCapellaUser, _ := cmd.Flags().GetString("capella-user")
 			flagCapellaPass, _ := cmd.Flags().GetString("capella-pass")
 			flagCapellaOid, _ := cmd.Flags().GetString("capella-oid")
+			flagCapellaProjectID, _ := cmd.Flags().GetString("capella-project-id")
 			flagCapellaOverrideToken, _ := cmd.Flags().GetString("capella-override-token")
 			flagCapellaInternalSupportToken, _ := cmd.Flags().GetString("capella-internal-support-token")
 			flagUploadServerLogsHostName, _ := cmd.Flags().GetString("upload-server-logs-host-name")
@@ -1184,6 +1187,7 @@ var initCmd = &cobra.Command{
 			envCapellaUser := os.Getenv("CAPELLA_USER")
 			envCapellaPass := os.Getenv("CAPELLA_PASS")
 			envCapellaOid := os.Getenv("CAPELLA_OID")
+			envCapellaProjectID := os.Getenv("CAPELLA_PROJECT_ID")
 			envCapellaOverrideToken := os.Getenv("CAPELLA_OVERRIDE_TOKEN")
 			envCapellaInternalSupportToken := os.Getenv("CAPELLA_INTERNAL_SUPPORT_TOKEN")
 
@@ -1202,6 +1206,7 @@ var initCmd = &cobra.Command{
 			capellaUser := curConfig.Capella.Username
 			capellaPass := curConfig.Capella.Password
 			capellaOid := curConfig.Capella.OrganizationID
+			capellaProjectID := curConfig.Capella.ProjectID
 			capellaOverrideToken := curConfig.Capella.OverrideToken
 			capellaInternalSupportToken := curConfig.Capella.InternalSupportToken
 			UploadServerLogsHostName := curConfig.Capella.UploadServerLogsHostName
@@ -1319,6 +1324,47 @@ var initCmd = &cobra.Command{
 					fmt.Printf("Capella oid is required.\n")
 					capellaEnabled = false
 					continue
+				}
+
+				if flagCapellaProjectID != "" {
+					fmt.Printf("Capella project id specified via flags:\n  %s\n", flagCapellaProjectID)
+					capellaProjectID = flagCapellaProjectID
+				} else {
+					if capellaProjectID == "" && envCapellaProjectID != "" {
+						fmt.Printf("Defaulting to capella project id from environment.\n")
+						capellaProjectID = envCapellaProjectID
+					}
+
+					// With no ID, the shared project lookup below asks instead.
+					if capellaProjectID != "" {
+						capellaProjectID = readString(
+							"What Capella project ID should clusters go into?",
+							capellaProjectID, false)
+					}
+				}
+				if capellaProjectID != "" {
+					if err := clouddeploy.CheckProjectID(capellaProjectID); err != nil {
+						fmt.Printf("%s\n", err)
+						capellaEnabled = false
+						continue
+					}
+				}
+
+				// `init --auto` makes no Capella API call, see the key pool below.
+				if capellaProjectID == "" && !autoConfig {
+					projectClient, err := capellav4.NewClient(&capellav4.ClientOptions{
+						Logger:     logger,
+						Endpoint:   capellaV4Endpoint,
+						SecretKeys: []string{capellaApiKeys[0].Secret},
+					})
+					if err != nil {
+						fmt.Printf("Skipping the %s project lookup.\n  %s\n",
+							clouddeploy.SharedProjectName, err)
+						capellaProjectID = promptCapellaProjectID(readString)
+					} else {
+						capellaProjectID = chooseCapellaSharedProject(ctx, logger, projectClient,
+							capellaOid, readBool, readString)
+					}
 				}
 
 				// `init --auto` must stay free of Capella API calls and of key
@@ -1777,6 +1823,7 @@ var initCmd = &cobra.Command{
 			curConfig.Capella.Username = capellaUser
 			curConfig.Capella.Password = capellaPass
 			curConfig.Capella.OrganizationID = capellaOid
+			curConfig.Capella.ProjectID = strings.ToLower(capellaProjectID)
 			curConfig.Capella.OverrideToken = capellaOverrideToken
 			curConfig.Capella.InternalSupportToken = capellaInternalSupportToken
 			curConfig.Capella.DefaultCloud = capellaProvider
@@ -2013,6 +2060,7 @@ func init() {
 	initCmd.Flags().String("capella-user", "", "Capella v2 user to use, only needed for features the v4 api does not expose")
 	initCmd.Flags().String("capella-pass", "", "Capella v2 pass to use, only needed for features the v4 api does not expose")
 	initCmd.Flags().String("capella-oid", "", "Capella organization id to use")
+	initCmd.Flags().String("capella-project-id", "", "Capella project id every cluster goes into")
 	initCmd.Flags().String("capella-override-token", "", "Capella override token to use")
 	initCmd.Flags().String("capella-internal-support-token", "", "Capella internal support token to use")
 	initCmd.Flags().String("capella-provider", "", "Capella default cloud provider to use")
