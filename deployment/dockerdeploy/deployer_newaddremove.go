@@ -599,6 +599,16 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 		}
 	}
 
+	nodeServices := make(map[string][]string)
+	for _, node := range setupNodeOpts {
+		nodeServices[node.Address] = node.Services
+	}
+
+	err = d.waitForServicesInConfig(ctx, nodeServices)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to wait for services to appear in cluster config")
+	}
+
 	leaveNodesAfterReturn = true
 	return thisCluster, nil
 }
@@ -758,6 +768,18 @@ func (d *Deployer) addRemoveNodes(
 		return nil, errors.Wrap(err, "failed to reconcile rebalance")
 	}
 
+	if len(setupNodeOpts) > 0 {
+		nodeServices := make(map[string][]string)
+		for _, node := range setupNodeOpts {
+			nodeServices[node.Address] = node.Services
+		}
+
+		err = d.waitForServicesInConfig(ctx, nodeServices)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wait for services to appear in cluster config")
+		}
+	}
+
 	for _, node := range nodesToRemove {
 		d.logger.Info("removing node",
 			zap.String("container", node.ContainerID))
@@ -841,6 +863,29 @@ func (d *Deployer) removeNodes(ctx context.Context, nodes []*ContainerInfo) erro
 	}
 
 	d.removeDnsNames(ctx, dnsToRemove)
+
+	return nil
+}
+
+func (d *Deployer) waitForServicesInConfig(ctx context.Context, nodeServices map[string][]string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+
+	for address, services := range nodeServices {
+		d.logger.Info("waiting for node services to appear in cluster config",
+			zap.String("address", address),
+			zap.Strings("services", services))
+
+		nodeMgr := clustercontrol.NodeManager{
+			Logger:   d.logger,
+			Endpoint: fmt.Sprintf("http://%s:8091", address),
+		}
+
+		err := nodeMgr.WaitForServicesInConfig(ctx, services)
+		if err != nil {
+			return errors.Wrapf(err, "services on node %s did not appear in cluster config", address)
+		}
+	}
 
 	return nil
 }
