@@ -43,6 +43,70 @@ func (m *NodeManager) WaitForOnline(ctx context.Context) error {
 	return nil
 }
 
+// the key under which each service lists its port in the nodeServices cluster config
+var serviceNodeServicesConfigKeys = map[string]string{
+	"kv":       "kv",
+	"n1ql":     "n1ql",
+	"index":    "indexHttp",
+	"fts":      "fts",
+	"cbas":     "cbas",
+	"eventing": "eventingAdminPort",
+	"backup":   "backupAPI",
+}
+
+func (m *NodeManager) WaitForServicesInConfig(ctx context.Context, services []string) error {
+	c := m.Controller()
+
+	for _, service := range services {
+		if _, ok := serviceNodeServicesConfigKeys[service]; !ok {
+			return fmt.Errorf("unsupported service %s", service)
+		}
+	}
+
+	for {
+		var resp struct {
+			NodesExt []struct {
+				ThisNode bool           `json:"thisNode"`
+				Services map[string]int `json:"services"`
+			} `json:"nodesExt"`
+		}
+		err := c.doGet(ctx, "/pools/default/nodeServices", &resp)
+		if err != nil {
+			m.Logger.Debug("failed to fetch cluster config", zap.Error(err))
+		}
+
+		var pending []string
+		for _, service := range services {
+			found := false
+			for _, node := range resp.NodesExt {
+				if node.ThisNode {
+					_, found = node.Services[serviceNodeServicesConfigKeys[service]]
+					break
+				}
+			}
+
+			if !found {
+				pending = append(pending, service)
+			}
+		}
+
+		if len(pending) == 0 {
+			return nil
+		}
+
+		m.Logger.Debug("waiting for services to appear in cluster config",
+			zap.String("endpoint", m.Endpoint),
+			zap.Strings("pending", pending))
+
+		select {
+		case <-time.After(1 * time.Second):
+			// continue
+		case <-ctx.Done():
+			return errors.Wrapf(ctx.Err(), "context finished while waiting for services to appear in cluster config (pending: %v)", pending)
+		}
+	}
+}
+
 type AnalyticsSettings struct {
 	BlobStorageRegion         string
 	BlobStoragePrefix         string
