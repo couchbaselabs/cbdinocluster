@@ -13,12 +13,16 @@ import (
 type NodeManager struct {
 	Logger   *zap.Logger
 	Endpoint string
+	Username string
+	Password string
 }
 
 func (m *NodeManager) Controller() *Controller {
 	return &Controller{
 		Logger:   m.Logger,
 		Endpoint: m.Endpoint,
+		Username: m.Username,
+		Password: m.Password,
 	}
 }
 
@@ -72,7 +76,8 @@ func (m *NodeManager) WaitForServicesInConfig(ctx context.Context, services []st
 		}
 		err := c.doGet(ctx, "/pools/default/nodeServices", &resp)
 		if err != nil {
-			m.Logger.Debug("failed to fetch cluster config", zap.Error(err))
+			// doGet already retries failures to fetch the config, so if we get here we should fast-fail
+			return errors.Wrap(err, "failed to fetch cluster config")
 		}
 
 		var pending []string

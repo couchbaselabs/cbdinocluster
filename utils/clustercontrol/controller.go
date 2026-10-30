@@ -29,12 +29,23 @@ func (e *non200StatusCodeError) Error() string {
 type Controller struct {
 	Logger   *zap.Logger
 	Endpoint string
+
+	// Username and Password default to Administrator/password when empty
+	Username string
+	Password string
 }
 
 func (c *Controller) doReq(ctx context.Context, req *http.Request, out interface{}) error {
 	client := &http.Client{}
 
-	req.SetBasicAuth("Administrator", "password")
+	username, password := c.Username, c.Password
+	if username == "" {
+		username = "Administrator"
+	}
+	if password == "" {
+		password = "password"
+	}
+	req.SetBasicAuth(username, password)
 
 	resp, err := client.Do(req)
 	if err != nil {
