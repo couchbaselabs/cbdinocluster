@@ -61,6 +61,8 @@ const (
 	PrivateEndpointServiceEnabled  = "enabled"
 	PrivateEndpointServiceDisabled = "disabled"
 	PrivateEndpointServiceIdle     = "idle"
+
+	PrivateEndpointServiceEnableFailed = "enableFailed"
 )
 
 const (

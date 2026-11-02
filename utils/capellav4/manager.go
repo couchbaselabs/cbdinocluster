@@ -18,6 +18,12 @@ type Manager struct {
 const (
 	clusterPollInterval  = 10 * time.Second
 	endpointPollInterval = 5 * time.Second
+
+	// Capella's enable job gives up waiting on its AWS load balancer after a
+	// hardcoded 3 minutes and reports enableFailed, but then requeues itself and
+	// usually succeeds a few minutes later (AV-137114). Each attempt can take up
+	// to 20 minutes, so keep polling through enableFailed for that long.
+	privateEndpointEnableFailedGrace = 20 * time.Minute
 )
 
 // StateDeleted is the desired state that means "wait until the resource is gone".
@@ -167,7 +173,7 @@ func (m *Manager) WaitForPrivateEndpointServiceEnabled(ctx context.Context, orgI
 			return "", err
 		}
 		return info.Status, nil
-	})
+	}, clusterPollInterval, privateEndpointEnableFailedGrace)
 }
 
 func (m *Manager) WaitForAnalyticsPrivateEndpointServiceEnabled(ctx context.Context, orgID, projectID, clusterID string) error {
@@ -177,13 +183,16 @@ func (m *Manager) WaitForAnalyticsPrivateEndpointServiceEnabled(ctx context.Cont
 			return "", err
 		}
 		return info.Status, nil
-	})
+	}, clusterPollInterval, privateEndpointEnableFailedGrace)
 }
 
 func (m *Manager) waitForPrivateEndpointServiceEnabled(
 	ctx context.Context,
 	fetchStatus func(ctx context.Context) (string, error),
+	pollInterval time.Duration,
+	enableFailedGrace time.Duration,
 ) error {
+	var enableFailedSince time.Time
 	for {
 		status, err := fetchStatus(ctx)
 		if err != nil {
@@ -194,16 +203,29 @@ func (m *Manager) waitForPrivateEndpointServiceEnabled(
 			zap.String("current", status),
 			zap.String("desired", PrivateEndpointServiceEnabled))
 
-		// Terminal failure states share a "Failed" suffix, such as enableFailed.
-		if strings.HasSuffix(status, "Failed") {
-			return fmt.Errorf("cancelling as private endpoint service is in a failed state ('%s')", status)
+		if status == PrivateEndpointServiceEnableFailed {
+			if enableFailedSince.IsZero() {
+				enableFailedSince = time.Now()
+				m.Logger.Warn("private endpoint service reported enableFailed, continuing to wait as Capella usually retries it (AV-137114)",
+					zap.Duration("grace", enableFailedGrace))
+			}
+			if time.Since(enableFailedSince) >= enableFailedGrace {
+				return fmt.Errorf("cancelling as private endpoint service stayed in a failed state ('%s') for %s", status, enableFailedGrace)
+			}
+		} else {
+			enableFailedSince = time.Time{}
+
+			// Other terminal failure states share a "Failed" suffix, such as disableFailed.
+			if strings.HasSuffix(status, "Failed") {
+				return fmt.Errorf("cancelling as private endpoint service is in a failed state ('%s')", status)
+			}
 		}
 
 		if status == PrivateEndpointServiceEnabled {
 			return nil
 		}
 
-		if err := m.sleep(ctx, clusterPollInterval); err != nil {
+		if err := m.sleep(ctx, pollInterval); err != nil {
 			return err
 		}
 	}
