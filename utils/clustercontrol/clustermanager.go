@@ -98,6 +98,15 @@ func (m *ClusterManager) SetupNewCluster(ctx context.Context, opts *SetupNewClus
 		if err != nil {
 			return errors.Wrap(err, "failed to complete cluster setup rebalance")
 		}
+
+		clusterNodeOtps, err := firstNodeCtrl.ListNodeOTPs(ctx)
+		if err != nil {
+			return errors.Wrap(err, "failed to list cluster nodes after setup")
+		}
+		if len(clusterNodeOtps) != len(opts.Nodes) {
+			return fmt.Errorf("cluster has %d nodes after setup, expected %d",
+				len(clusterNodeOtps), len(opts.Nodes))
+		}
 	}
 
 	m.Logger.Info("cluster setup completed")
