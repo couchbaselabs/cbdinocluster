@@ -260,7 +260,6 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 
 	d.logger.Info("deploying nodes")
 
-	nodes := make([]*ContainerInfo, 0)
 	leaveNodesAfterReturn := false
 	cleanupNodes := func() {
 		if !leaveNodesAfterReturn {
@@ -305,9 +304,14 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 		}
 	}
 
-	waitCh := make(chan error)
-	for _, deployOpts := range nodeOpts {
-		go func(deployOpts *DeployNodeOptions) {
+	// Each goroutine writes only its own slot, so results can't be lost to
+	// concurrent appends, and each node stays paired with the node group it
+	// was deployed from. The channel is buffered so that goroutines don't
+	// block forever if we return early on the first error.
+	nodes := make([]*ContainerInfo, len(nodeOpts))
+	waitCh := make(chan error, len(nodeOpts))
+	for nodeIdx, deployOpts := range nodeOpts {
+		go func(nodeIdx int, deployOpts *DeployNodeOptions) {
 			d.logger.Info("deploying node", zap.Any("deployOpts", deployOpts))
 
 			node, err := d.controller.DeployNode(ctx, deployOpts)
@@ -321,14 +325,20 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 				zap.String("id", node.NodeID),
 				zap.String("container", node.ContainerID))
 
-			nodes = append(nodes, node)
+			nodes[nodeIdx] = node
 			waitCh <- nil
-		}(deployOpts)
+		}(nodeIdx, deployOpts)
 	}
 	for range nodeOpts {
 		err := <-waitCh
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	for nodeIdx, node := range nodes {
+		if node == nil {
+			return nil, fmt.Errorf("node %d of %d was not deployed", nodeIdx+1, len(nodes))
 		}
 	}
 
@@ -338,6 +348,10 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	thisCluster, err := d.getCluster(ctx, clusterID)
 	if err != nil {
 		return nil, errors.New("failed to find new cluster after deployment")
+	}
+	if len(thisCluster.Nodes) != len(nodes) {
+		return nil, fmt.Errorf("expected %d nodes in new cluster after deployment, found %d",
+			len(nodes), len(thisCluster.Nodes))
 	}
 
 	if clusterCa != nil {
@@ -383,18 +397,32 @@ func (d *Deployer) newCluster(ctx context.Context, def *clusterdef.Cluster) (*cl
 	// end up initializing the higher version nodes first, disallowing older nodes
 	// from being initialized into the cluster (couchbase does not permit downgrades).
 	// We also sort by IP address next
-	slices.SortFunc(nodes, func(a, b *ContainerInfo) int {
-		res := semver.Compare("v"+a.InitialServerVersion, "v"+b.InitialServerVersion)
+	// Nodes are sorted together with their node groups, so that each node
+	// keeps the services and server group it was deployed for.
+	type nodeWithGrp struct {
+		node    *ContainerInfo
+		nodeGrp *clusterdef.NodeGroup
+	}
+	setupOrder := make([]nodeWithGrp, len(nodes))
+	for nodeIdx, node := range nodes {
+		setupOrder[nodeIdx] = nodeWithGrp{node: node, nodeGrp: nodeNodeGrps[nodeIdx]}
+	}
+	slices.SortFunc(setupOrder, func(a, b nodeWithGrp) int {
+		res := semver.Compare("v"+a.node.InitialServerVersion, "v"+b.node.InitialServerVersion)
 		if res != 0 {
 			return res
 		}
-		return strings.Compare(a.IPAddress, b.IPAddress)
+		return strings.Compare(a.node.IPAddress, b.node.IPAddress)
 	})
+	for nodeIdx := range setupOrder {
+		nodes[nodeIdx] = setupOrder[nodeIdx].node
+	}
 	d.logger.Debug("reordered setup order", zap.Any("nodes", nodes))
 
 	var setupNodeOpts []*clustercontrol.SetupNewClusterNodeOptions
-	for nodeIdx, node := range nodes {
-		nodeGrp := nodeNodeGrps[nodeIdx]
+	for _, entry := range setupOrder {
+		node := entry.node
+		nodeGrp := entry.nodeGrp
 
 		services := nodeGrp.Services
 		if len(services) == 0 {
