@@ -183,6 +183,20 @@ func (c *Client) UpdateCluster(
 	return c.doWrite(ctx, http.MethodPut, path, req, nil)
 }
 
+type UpdateFreeTierClusterRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (c *Client) UpdateFreeTierCluster(
+	ctx context.Context,
+	orgID, projectID, clusterID string,
+	req *UpdateFreeTierClusterRequest,
+) error {
+	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/freeTier/%s", orgID, projectID, clusterID)
+	return c.doWrite(ctx, http.MethodPut, path, req, nil)
+}
+
 func (c *Client) DeleteCluster(ctx context.Context, orgID, projectID, clusterID string) error {
 	path := fmt.Sprintf("/v4/organizations/%s/projects/%s/clusters/%s", orgID, projectID, clusterID)
 	return c.doWrite(ctx, http.MethodDelete, path, nil, nil)

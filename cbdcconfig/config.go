@@ -137,6 +137,9 @@ type Config_Capella struct {
 	OverrideToken        string `yaml:"override-token"`
 	InternalSupportToken string `yaml:"Internal-support-token"`
 
+	// The ID of the project every Capella cluster goes into.
+	ProjectID string `yaml:"project-id,omitempty"`
+
 	DefaultCloud       string `yaml:"default-cloud"`
 	DefaultAwsRegion   string `yaml:"default-aws-region"`
 	DefaultAzureRegion string `yaml:"default-azure-region"`
