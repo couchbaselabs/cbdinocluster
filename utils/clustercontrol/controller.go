@@ -308,6 +308,40 @@ func (c *Controller) UpdateWebSettings(ctx context.Context, opts *UpdateWebSetti
 	return c.doFormPost(ctx, "/settings/web", form, true, nil)
 }
 
+type UpdatePasswordPolicyOptions struct {
+	MinLength        int
+	EnforceUppercase bool
+	EnforceLowercase bool
+	EnforceDigits    bool
+	EnforceSpecial   bool
+}
+
+// UpdatePasswordPolicy sets the password policy. Rules left out are turned off.
+func (c *Controller) UpdatePasswordPolicy(ctx context.Context, opts *UpdatePasswordPolicyOptions) error {
+	form := make(url.Values)
+	form.Add("minLength", fmt.Sprintf("%d", opts.MinLength))
+	if opts.EnforceUppercase {
+		form.Add("enforceUppercase", "true")
+	}
+	if opts.EnforceLowercase {
+		form.Add("enforceLowercase", "true")
+	}
+	if opts.EnforceDigits {
+		form.Add("enforceDigits", "true")
+	}
+	if opts.EnforceSpecial {
+		form.Add("enforceSpecialChars", "true")
+	}
+	return c.doFormPost(ctx, "/settings/passwordPolicy", form, true, nil)
+}
+
+// SetLegacyPasswordPolicy applies the pre-8.6 default password policy.
+func (c *Controller) SetLegacyPasswordPolicy(ctx context.Context) error {
+	return c.UpdatePasswordPolicy(ctx, &UpdatePasswordPolicyOptions{
+		MinLength: 6,
+	})
+}
+
 type SetupAnalyticsOptions struct {
 	BlobStorageRegion         string
 	BlobStoragePrefix         string
