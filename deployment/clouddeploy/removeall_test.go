@@ -873,3 +873,124 @@ func TestRemovalWithoutProjectIDHandlesOnlyOldLayout(t *testing.T) {
 		assert.Equal(t, []string{"p-legacy"}, srv.projectDeletes)
 	})
 }
+
+// Without a project ID every CBDC2_SHARED project is shared, so a cluster in a
+// duplicate from two racing allocates stays visible and removable. No
+// CBDC2_SHARED project is ever deleted.
+func TestReadsWithoutProjectIDUseEveryCBDC2SharedProject(t *testing.T) {
+	firstID := cbdcuuid.New()
+	secondID := cbdcuuid.New()
+	legacyID := cbdcuuid.New()
+
+	newServer := func(t *testing.T) *removalServer {
+		return &removalServer{
+			t: t,
+			projects: []capellav4.ProjectInfo{
+				{ID: "p-first", Name: SharedProjectName},
+				{ID: "p-second", Name: SharedProjectName},
+				{ID: "p-foreign", Name: "someone-else"},
+				{ID: "p-legacy", Name: testMetaName(legacyID, "", testExpired)},
+			},
+			clusters: map[string][]removalCluster{
+				"p-first": {
+					{ID: "c-first", Name: testMetaName(firstID, "", testExpired), State: capellav4.StateHealthy},
+				},
+				"p-second": {
+					{ID: "c-second", Name: testMetaName(secondID, "", testExpired), State: capellav4.StateHealthy},
+					{ID: "c-foreign", Name: "someone-else-cluster", State: capellav4.StateHealthy},
+				},
+				"p-legacy": {
+					{ID: "c-legacy", Name: fmt.Sprintf("cbdc2_%s", legacyID), State: capellav4.StateHealthy},
+				},
+			},
+		}
+	}
+	newDeployer := func(t *testing.T, srv *removalServer) *Deployer {
+		deployer := newTestDeployer(t, srv.handler())
+		deployer.projectID = ""
+		return deployer
+	}
+
+	t.Run("ps", func(t *testing.T) {
+		deployer := newDeployer(t, newServer(t))
+
+		clusters, err := deployer.findClusters(context.Background(), "")
+		require.NoError(t, err)
+
+		var projectIDs []string
+		for _, cluster := range clusters {
+			projectIDs = append(projectIDs, cluster.ProjectID)
+		}
+		assert.ElementsMatch(t, []string{"p-legacy", "p-first", "p-second"}, projectIDs)
+	})
+
+	t.Run("rm", func(t *testing.T) {
+		srv := newServer(t)
+		deployer := newDeployer(t, srv)
+
+		err := deployer.RemoveCluster(context.Background(), secondID.String())
+		require.NoError(t, err)
+
+		assert.Equal(t, []string{"p-second/c-second"}, srv.clusterDeletes)
+		assert.Empty(t, srv.projectDeletes)
+	})
+
+	t.Run("cleanup", func(t *testing.T) {
+		srv := newServer(t)
+		deployer := newDeployer(t, srv)
+
+		err := deployer.cleanup(context.Background(), deployment.CleanupOptions{})
+		require.NoError(t, err)
+
+		assert.ElementsMatch(t, []string{"p-legacy/c-legacy", "p-first/c-first", "p-second/c-second"},
+			srv.clusterDeletes)
+		assert.Equal(t, []string{"p-legacy"}, srv.projectDeletes)
+	})
+
+	t.Run("remove-all", func(t *testing.T) {
+		srv := newServer(t)
+		deployer := newDeployer(t, srv)
+
+		err := deployer.removeAll(context.Background(), deployment.RemoveAllOptions{})
+		require.NoError(t, err)
+
+		assert.ElementsMatch(t, []string{"p-legacy/c-legacy", "p-first/c-first", "p-second/c-second"},
+			srv.clusterDeletes)
+		assert.Equal(t, []string{"p-legacy"}, srv.projectDeletes)
+	})
+
+	t.Run("one failed listing keeps the other projects", func(t *testing.T) {
+		srv := newServer(t)
+		srv.failListing = map[string]bool{"p-first": true}
+		deployer := newDeployer(t, srv)
+
+		err := deployer.cleanup(context.Background(), deployment.CleanupOptions{})
+		require.ErrorContains(t, err, "failed to list the clusters of the shared project")
+
+		assert.ElementsMatch(t, []string{"p-legacy/c-legacy", "p-second/c-second"}, srv.clusterDeletes)
+		assert.Equal(t, []string{"p-legacy"}, srv.projectDeletes)
+	})
+}
+
+// With a project ID set, a CBDC2_SHARED project is not read.
+func TestReadsWithProjectIDIgnoreCBDC2SharedProjects(t *testing.T) {
+	srv := &removalServer{
+		t: t,
+		projects: []capellav4.ProjectInfo{
+			{ID: "p-shared", Name: testSharedProjectName},
+			{ID: "p-by-name", Name: SharedProjectName},
+		},
+		clusters: map[string][]removalCluster{
+			"p-shared": {
+				{ID: "c-shared", Name: testMetaName(cbdcuuid.New(), "", testExpired), State: capellav4.StateHealthy},
+			},
+		},
+	}
+	deployer := newTestDeployer(t, srv.handler())
+
+	err := deployer.cleanup(context.Background(), deployment.CleanupOptions{})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"p-shared/c-shared"}, srv.clusterDeletes)
+	assert.Empty(t, srv.projectDeletes)
+}

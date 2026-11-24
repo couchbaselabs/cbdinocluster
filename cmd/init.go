@@ -2060,7 +2060,7 @@ func init() {
 	initCmd.Flags().String("capella-user", "", "Capella v2 user to use, only needed for features the v4 api does not expose")
 	initCmd.Flags().String("capella-pass", "", "Capella v2 pass to use, only needed for features the v4 api does not expose")
 	initCmd.Flags().String("capella-oid", "", "Capella organization id to use")
-	initCmd.Flags().String("capella-project-id", "", "Capella project id every cluster goes into")
+	initCmd.Flags().String("capella-project-id", "", "Capella project id every cluster goes into, without it allocate uses the oldest CBDC2_SHARED project or creates one")
 	initCmd.Flags().String("capella-override-token", "", "Capella override token to use")
 	initCmd.Flags().String("capella-internal-support-token", "", "Capella internal support token to use")
 	initCmd.Flags().String("capella-provider", "", "Capella default cloud provider to use")

@@ -15,9 +15,13 @@ import (
 // maxProjectNameLen is the limit the v4 api puts on a project name.
 const maxProjectNameLen = 128
 
-// SharedProjectName is the project that init offers to find or create when no
-// project ID is set.
+// SharedProjectName is the project that init offers and that allocate uses
+// when no project ID is set.
 const SharedProjectName = "CBDC2_SHARED"
+
+// SharedProjectDescription is the description of a SharedProjectName project
+// that cbdinocluster creates.
+const SharedProjectDescription = "Shared project for cbdinocluster clusters"
 
 // CheckNewProjectName rejects a name that a new cbdinocluster project cannot use.
 func CheckNewProjectName(name string) error {
@@ -109,18 +113,73 @@ func FindSharedProject(
 		return nil, 0, errors.Wrap(err, "failed to list projects")
 	}
 
+	matches := filterSharedProjects(projects)
+	return oldestProject(matches), len(matches), nil
+}
+
+func filterSharedProjects(projects []*capellav4.ProjectInfo) []*capellav4.ProjectInfo {
 	var matches []*capellav4.ProjectInfo
 	for _, project := range projects {
 		if project.Name == SharedProjectName {
 			matches = append(matches, project)
 		}
 	}
+	return matches
+}
 
-	return oldestProject(matches), len(matches), nil
+// sharedProjectID returns the project a new cluster goes into. With no
+// configured project, it uses the oldest SharedProjectName project, and creates
+// one when there is none. Two allocates can both create one. Each then lists
+// again and takes the oldest, so both use the same project. Reads still find a
+// cluster in a duplicate.
+func (p *Deployer) sharedProjectID(ctx context.Context) (string, error) {
+	if p.projectID != "" {
+		return p.projectID, nil
+	}
+
+	project, _, err := FindSharedProject(ctx, p.v4, p.tenantID)
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to find the %s capella project", SharedProjectName)
+	}
+
+	if project == nil {
+		p.logger.Debug("creating the shared capella project", zap.String("project-name", SharedProjectName))
+
+		resp, createErr := p.v4.CreateProject(ctx, p.tenantID, &capellav4.CreateProjectRequest{
+			Name:        SharedProjectName,
+			Description: SharedProjectDescription,
+		})
+
+		// A failed create can mean another allocate created the project first.
+		project, _, err = FindSharedProject(ctx, p.v4, p.tenantID)
+		if err != nil {
+			return "", errors.Wrapf(err, "failed to find the %s capella project", SharedProjectName)
+		}
+
+		if project == nil {
+			if createErr != nil {
+				return "", errors.Wrapf(createErr, "failed to create the %s capella project, "+
+					"set a project with \"cbdinocluster init --capella-project-id <id>\" or CAPELLA_PROJECT_ID",
+					SharedProjectName)
+			}
+			if resp.ID == "" {
+				return "", errors.Errorf("capella created the %s project but returned no ID", SharedProjectName)
+			}
+			// The listing can lag behind the create.
+			project = &capellav4.ProjectInfo{ID: resp.ID}
+		}
+	}
+
+	p.logger.Info("no capella project id is set, using the "+SharedProjectName+
+		" project, run \"cbdinocluster init\" to pin it",
+		zap.String("project-id", project.ID))
+
+	return project.ID, nil
 }
 
 // oldestProject returns the project with the earliest creation time, nil when
-// the list is empty. A project with a time that does not parse sorts last.
+// the list is empty. A project with a time that does not parse sorts last. The
+// ID breaks a tie, so two callers with the same list pick the same project.
 func oldestProject(projects []*capellav4.ProjectInfo) *capellav4.ProjectInfo {
 	if len(projects) == 0 {
 		return nil
@@ -141,7 +200,10 @@ func oldestProject(projects []*capellav4.ProjectInfo) *capellav4.ProjectInfo {
 		if dated[i].dated != dated[j].dated {
 			return dated[i].dated
 		}
-		return dated[i].createdAt.Before(dated[j].createdAt)
+		if !dated[i].createdAt.Equal(dated[j].createdAt) {
+			return dated[i].createdAt.Before(dated[j].createdAt)
+		}
+		return dated[i].project.ID < dated[j].project.ID
 	})
 
 	return dated[0].project

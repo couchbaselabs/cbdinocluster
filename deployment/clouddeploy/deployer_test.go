@@ -311,9 +311,9 @@ func TestSplitProjects(t *testing.T) {
 			{ID: "p-legacy", Name: legacyName},
 		}, "p-shared", zap.NewNop())
 
-		require.NotNil(t, shared)
-		assert.Equal(t, "p-shared", shared.ID)
-		assert.Equal(t, testSharedProjectName, shared.Name)
+		require.Len(t, shared, 1)
+		assert.Equal(t, "p-shared", shared[0].ID)
+		assert.Equal(t, testSharedProjectName, shared[0].Name)
 		require.Len(t, legacy, 1)
 		assert.Equal(t, "p-legacy", legacy[0].Info.ID)
 		assert.Equal(t, legacyID, legacy[0].Meta.ID)
@@ -324,10 +324,21 @@ func TestSplitProjects(t *testing.T) {
 			{ID: "p-legacy", Name: legacyName},
 		}, "p-shared", zap.NewNop())
 
-		require.NotNil(t, shared)
-		assert.Equal(t, "p-shared", shared.ID)
-		assert.Empty(t, shared.Name)
+		require.Len(t, shared, 1)
+		assert.Equal(t, "p-shared", shared[0].ID)
+		assert.Empty(t, shared[0].Name)
 		require.Len(t, legacy, 1)
+	})
+
+	t.Run("configured project ignores CBDC2_SHARED projects", func(t *testing.T) {
+		shared, legacy := splitProjects([]*capellav4.ProjectInfo{
+			{ID: "p-by-name", Name: SharedProjectName},
+			{ID: "p-shared", Name: testSharedProjectName},
+		}, "p-shared", zap.NewNop())
+
+		require.Len(t, shared, 1)
+		assert.Equal(t, "p-shared", shared[0].ID)
+		assert.Empty(t, legacy)
 	})
 
 	t.Run("no project id", func(t *testing.T) {
@@ -336,7 +347,22 @@ func TestSplitProjects(t *testing.T) {
 			{ID: "p-legacy", Name: legacyName},
 		}, "", zap.NewNop())
 
-		assert.Nil(t, shared)
+		assert.Empty(t, shared)
+		require.Len(t, legacy, 1)
+		assert.Equal(t, "p-legacy", legacy[0].Info.ID)
+	})
+
+	t.Run("no project id takes every CBDC2_SHARED project", func(t *testing.T) {
+		shared, legacy := splitProjects([]*capellav4.ProjectInfo{
+			{ID: "p-first", Name: SharedProjectName},
+			{ID: "p-lower", Name: "cbdc2_shared"},
+			{ID: "p-legacy", Name: legacyName},
+			{ID: "p-second", Name: SharedProjectName},
+		}, "", zap.NewNop())
+
+		require.Len(t, shared, 2)
+		assert.Equal(t, "p-first", shared[0].ID)
+		assert.Equal(t, "p-second", shared[1].ID)
 		require.Len(t, legacy, 1)
 		assert.Equal(t, "p-legacy", legacy[0].Info.ID)
 	})
@@ -347,8 +373,8 @@ func TestSplitProjects(t *testing.T) {
 			{ID: "p-legacy", Name: legacyName},
 		}, "p-shared", zap.NewNop())
 
-		require.NotNil(t, shared)
-		assert.Equal(t, "p-shared", shared.ID)
+		require.Len(t, shared, 1)
+		assert.Equal(t, "p-shared", shared[0].ID)
 		require.Len(t, legacy, 1)
 		assert.Equal(t, "p-legacy", legacy[0].Info.ID)
 	})
@@ -359,8 +385,8 @@ func TestSplitProjects(t *testing.T) {
 			{ID: "p-shared", Name: testSharedProjectName},
 		}, "p-shared", zap.NewNop())
 
-		require.NotNil(t, shared)
-		assert.Equal(t, "p-shared", shared.ID)
+		require.Len(t, shared, 1)
+		assert.Equal(t, "p-shared", shared[0].ID)
 		assert.Empty(t, legacy)
 	})
 
@@ -370,7 +396,7 @@ func TestSplitProjects(t *testing.T) {
 			{ID: "p-legacy", Name: legacyName},
 		}, "", zap.NewNop())
 
-		assert.Nil(t, shared)
+		assert.Empty(t, shared)
 		require.Len(t, legacy, 1)
 		assert.Equal(t, "p-legacy", legacy[0].Info.ID)
 	})
@@ -381,7 +407,7 @@ func TestSplitProjects(t *testing.T) {
 			{ID: "p-prefix", Name: testSharedProjectName + "-2"},
 		}, "", zap.NewNop())
 
-		assert.Nil(t, shared)
+		assert.Empty(t, shared)
 		assert.Empty(t, legacy)
 	})
 }
@@ -594,13 +620,30 @@ type clusterCreateCall struct {
 	Name      string
 }
 
-// allocateServer stubs the v4 calls of an allocate and records the writes. Any
-// project listing, create or delete fails the test, because an allocate uses
-// the configured project as it is.
+// allocateServer stubs the v4 calls of an allocate and records the writes. A
+// project delete fails the test. A project listing or create fails the test
+// unless lookupProjects is set, because an allocate uses the configured
+// project as it is.
 type allocateServer struct {
 	t *testing.T
 
 	mu sync.Mutex
+
+	// lookupProjects serves the project listing and create that an allocate
+	// with no project ID makes.
+	lookupProjects bool
+	projects       []capellav4.ProjectInfo
+	// A non zero status fails the call with that status.
+	listProjectsStatus  int
+	createProjectStatus int
+	// racedProject joins the listing on a project create, as if another
+	// allocate created it at the same time.
+	racedProject *capellav4.ProjectInfo
+	// hideCreated keeps a created project out of the listing.
+	hideCreated bool
+
+	projectLists   int
+	projectCreates []capellav4.CreateProjectRequest
 
 	// A non zero status fails the call with that status.
 	createClusterStatus int
@@ -653,9 +696,58 @@ func (s *allocateServer) handler() http.Handler {
 	projectsPath := "/v4/organizations/" + testTenantID + "/projects"
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+projectsPath, func(w http.ResponseWriter, r *http.Request) {
+		if !s.lookupProjects {
+			s.t.Errorf("unexpected project listing")
+			w.WriteHeader(http.StatusNotImplemented)
+			return
+		}
+
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.projectLists++
+		if s.listProjectsStatus != 0 {
+			writeError(w, s.listProjectsStatus, 1000)
+			return
+		}
+		var data []any
+		for _, project := range s.projects {
+			data = append(data, map[string]any{
+				"id":    project.ID,
+				"name":  project.Name,
+				"audit": map[string]any{"createdAt": project.Audit.CreatedAt},
+			})
+		}
+		writeJson(w, http.StatusOK, map[string]any{"data": data})
+	})
 	mux.HandleFunc("POST "+projectsPath, func(w http.ResponseWriter, r *http.Request) {
-		s.t.Errorf("unexpected project create")
-		w.WriteHeader(http.StatusNotImplemented)
+		if !s.lookupProjects {
+			s.t.Errorf("unexpected project create")
+			w.WriteHeader(http.StatusNotImplemented)
+			return
+		}
+
+		var req capellav4.CreateProjectRequest
+		assert.NoError(s.t, json.NewDecoder(r.Body).Decode(&req))
+
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.projectCreates = append(s.projectCreates, req)
+		if s.racedProject != nil {
+			s.projects = append(s.projects, *s.racedProject)
+		}
+		if s.createProjectStatus != 0 {
+			writeError(w, s.createProjectStatus, 1000)
+			return
+		}
+		if !s.hideCreated {
+			s.projects = append(s.projects, capellav4.ProjectInfo{
+				ID:    "p-created",
+				Name:  req.Name,
+				Audit: capellav4.Audit{CreatedAt: "2026-11-24T10:00:01Z"},
+			})
+		}
+		writeJson(w, http.StatusCreated, map[string]any{"id": "p-created"})
 	})
 	mux.HandleFunc("DELETE "+projectsPath+"/{projectId}", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
@@ -712,39 +804,167 @@ func TestCreateNewClusterUsesSharedProject(t *testing.T) {
 	assert.Equal(t, "c-new", info.(*ClusterInfo).CloudClusterID)
 }
 
-const errNoProjectIDText = `a capella project id is required, run "cbdinocluster init" to find or create the CBDC2_SHARED project, or run "cbdinocluster cloud projects create <name>" and set the id with "cbdinocluster init --capella-project-id <id>"`
+func testFreeTierDef() *clusterdef.Cluster {
+	def := testClusterDef("free")
+	def.Cloud.FreeTier = true
+	def.NodeGroups = nil
+	return def
+}
 
-func TestAllocateWithoutProjectIDFails(t *testing.T) {
-	failOnRequest := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected request %s %q", r.Method, r.URL.Path)
-		w.WriteHeader(http.StatusNotImplemented)
-	})
+const sharedProjectLogText = `no capella project id is set, using the CBDC2_SHARED project, run "cbdinocluster init" to pin it`
 
-	freeTier := testClusterDef("free")
-	freeTier.Cloud.FreeTier = true
-	freeTier.NodeGroups = nil
-
+func TestAllocateWithoutProjectIDUsesOldestSharedProject(t *testing.T) {
 	for name, def := range map[string]*clusterdef.Cluster{
 		"cluster":   testClusterDef("sdk"),
-		"free tier": freeTier,
+		"free tier": testFreeTierDef(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			deployer := newTestDeployer(t, failOnRequest)
+			srv := &allocateServer{t: t, lookupProjects: true, projects: []capellav4.ProjectInfo{
+				*projectCreatedAt("p-new", "2026-03-01T00:00:00Z"),
+				{ID: "p-older-other", Name: "someone-else", Audit: capellav4.Audit{CreatedAt: "2020-01-01T00:00:00Z"}},
+				*projectCreatedAt("p-old", "2025-06-01T00:00:00Z"),
+			}}
+			deployer := newTestDeployer(t, srv.handler())
 			deployer.projectID = ""
+			core, logs := observer.New(zapcore.InfoLevel)
+			deployer.logger = zap.New(core)
 
-			_, err := deployer.createNewCluster(context.Background(), def, "")
-			require.EqualError(t, err, errNoProjectIDText)
+			info, err := deployer.createNewCluster(context.Background(), def, "")
+			require.NoError(t, err)
+
+			assert.Equal(t, 1, srv.projectLists)
+			assert.Empty(t, srv.projectCreates)
+			require.Len(t, srv.clusterCreates, 1)
+			assert.Equal(t, "p-old", srv.clusterCreates[0].ProjectID)
+			assert.Equal(t, "p-old", info.(*ClusterInfo).CloudProjectID)
+
+			entries := logs.FilterMessage(sharedProjectLogText).All()
+			require.Len(t, entries, 1)
+			assert.Equal(t, "p-old", entries[0].ContextMap()["project-id"])
 		})
 	}
+}
+
+func TestAllocateWithoutProjectIDCreatesSharedProject(t *testing.T) {
+	older := projectCreatedAt("p-raced", "2026-11-24T10:00:00Z")
+
+	tests := []struct {
+		name        string
+		srv         *allocateServer
+		wantProject string
+	}{
+		{
+			name:        "none exists",
+			srv:         &allocateServer{projects: []capellav4.ProjectInfo{{ID: "p-other", Name: "someone-else"}}},
+			wantProject: "p-created",
+		},
+		{
+			name:        "another allocate created an older one",
+			srv:         &allocateServer{racedProject: older},
+			wantProject: "p-raced",
+		},
+		{
+			name:        "the listing does not show the new project yet",
+			srv:         &allocateServer{hideCreated: true},
+			wantProject: "p-created",
+		},
+		{
+			name:        "the create fails because another allocate created one",
+			srv:         &allocateServer{racedProject: older, createProjectStatus: http.StatusConflict},
+			wantProject: "p-raced",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := tt.srv
+			srv.t = t
+			srv.lookupProjects = true
+			deployer := newTestDeployer(t, srv.handler())
+			deployer.projectID = ""
+
+			_, err := deployer.createNewCluster(context.Background(), testClusterDef("sdk"), "")
+			require.NoError(t, err)
+
+			assert.Equal(t, 2, srv.projectLists)
+			require.Len(t, srv.projectCreates, 1)
+			assert.Equal(t, SharedProjectName, srv.projectCreates[0].Name)
+			assert.Equal(t, SharedProjectDescription, srv.projectCreates[0].Description)
+			require.Len(t, srv.clusterCreates, 1)
+			assert.Equal(t, tt.wantProject, srv.clusterCreates[0].ProjectID)
+			assert.Zero(t, srv.projectDeletes)
+		})
+	}
+}
+
+// Two allocates that race each create a project. Both must then pick the
+// same one, even when the creation times are equal.
+func TestAllocateRaceEndsInOneProject(t *testing.T) {
+	projects := []capellav4.ProjectInfo{
+		*projectCreatedAt("p-b", "2026-11-24T10:00:00Z"),
+		*projectCreatedAt("p-a", "2026-11-24T10:00:00Z"),
+	}
+
+	for _, order := range [][]capellav4.ProjectInfo{projects, {projects[1], projects[0]}} {
+		srv := &allocateServer{t: t, lookupProjects: true, projects: order}
+		deployer := newTestDeployer(t, srv.handler())
+		deployer.projectID = ""
+
+		_, err := deployer.createNewCluster(context.Background(), testClusterDef("sdk"), "")
+		require.NoError(t, err)
+
+		require.Len(t, srv.clusterCreates, 1)
+		assert.Equal(t, "p-a", srv.clusterCreates[0].ProjectID)
+	}
+}
+
+func TestAllocateWithoutProjectIDFails(t *testing.T) {
+	t.Run("project create fails", func(t *testing.T) {
+		srv := &allocateServer{t: t, lookupProjects: true, createProjectStatus: http.StatusForbidden}
+		deployer := newTestDeployer(t, srv.handler())
+		deployer.projectID = ""
+
+		_, err := deployer.createNewCluster(context.Background(), testClusterDef("sdk"), "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `failed to create the CBDC2_SHARED capella project, `+
+			`set a project with "cbdinocluster init --capella-project-id <id>" or CAPELLA_PROJECT_ID`)
+		assert.Contains(t, err.Error(), "stub failure")
+		assert.Len(t, srv.projectCreates, 1)
+		assert.Empty(t, srv.clusterCreates)
+	})
+
+	t.Run("project listing fails", func(t *testing.T) {
+		srv := &allocateServer{t: t, lookupProjects: true, listProjectsStatus: http.StatusForbidden}
+		deployer := newTestDeployer(t, srv.handler())
+		deployer.projectID = ""
+
+		_, err := deployer.createNewCluster(context.Background(), testFreeTierDef(), "")
+		require.ErrorContains(t, err, "failed to find the CBDC2_SHARED capella project")
+		assert.Empty(t, srv.projectCreates)
+		assert.Empty(t, srv.clusterCreates)
+	})
 
 	t.Run("server image", func(t *testing.T) {
 		// The v2 client stays nil, so any v2 call would panic.
-		deployer := newTestDeployer(t, failOnRequest)
+		srv := &allocateServer{t: t, lookupProjects: true, listProjectsStatus: http.StatusForbidden}
+		deployer := newTestDeployer(t, srv.handler())
 		deployer.projectID = ""
 		deployer.hasLegacyCredentials = true
 
 		_, err := deployer.deployNewCluster(context.Background(), testClusterDef("sdk"), "7.6.0", "image")
-		require.EqualError(t, err, errNoProjectIDText)
+		require.ErrorContains(t, err, "failed to find the CBDC2_SHARED capella project")
+	})
+
+	t.Run("shared project gone", func(t *testing.T) {
+		srv := &allocateServer{t: t, lookupProjects: true, projectNotFound: true, projects: []capellav4.ProjectInfo{
+			*projectCreatedAt("p-old", "2025-06-01T00:00:00Z"),
+		}}
+		deployer := newTestDeployer(t, srv.handler())
+		deployer.projectID = ""
+
+		_, err := deployer.createNewCluster(context.Background(), testClusterDef("sdk"), "")
+		require.ErrorContains(t, err, "the CBDC2_SHARED capella project p-old does not exist")
+		assert.True(t, capellav4.IsProjectNotFound(err))
 	})
 }
 

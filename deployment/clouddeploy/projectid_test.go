@@ -84,8 +84,8 @@ func TestNewDeployerLowerCasesProjectID(t *testing.T) {
 			{ID: listedID, Name: listedName},
 		}, deployer.projectID, zap.NewNop())
 
-		require.NotNil(t, shared)
-		assert.Equal(t, listedName, shared.Name)
+		require.Len(t, shared, 1)
+		assert.Equal(t, listedName, shared[0].Name)
 		assert.Empty(t, legacy)
 	})
 

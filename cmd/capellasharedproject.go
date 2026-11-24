@@ -9,8 +9,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const capellaSharedProjectDescription = "Shared project for cbdinocluster clusters"
-
 // chooseCapellaSharedProject helps a person with no project ID find or create
 // the shared project. When that ends without a project, it asks for an ID. It
 // returns the ID to save, or empty. A failed call prints the error, so init
@@ -38,7 +36,7 @@ func chooseCapellaSharedProject(
 		}
 
 		projectID, err := clouddeploy.CreateProject(ctx, logger, client, orgID,
-			projectName, capellaSharedProjectDescription)
+			projectName, clouddeploy.SharedProjectDescription)
 		if err != nil {
 			fmt.Printf("Failed to create the %s project.\n  %s\n", projectName, err)
 			return promptCapellaProjectID(readString)

@@ -77,7 +77,7 @@ func NewDeployer(opts *NewDeployerOptions) (*Deployer, error) {
 	// with that list.
 	projectID := strings.ToLower(opts.ProjectID)
 
-	// Empty is valid. Reads and removal of legacy clusters need no project.
+	// Empty is valid. Allocate then uses the CBDC2_SHARED project.
 	if projectID != "" {
 		if err := CheckProjectID(projectID); err != nil {
 			return nil, err
@@ -128,7 +128,7 @@ func (p *Deployer) requireSupportToken(feature string) error {
 }
 
 // A legacy project holds one cluster and its name carries the meta data. In
-// the configured project each cluster name carries its own meta data.
+// a shared project each cluster name carries its own meta data.
 type clusterInfo struct {
 	Meta        *stringclustermeta.MetaData
 	ProjectID   string
@@ -146,9 +146,9 @@ type cbdc2Project struct {
 
 const maxProjectInspectConcurrency = 8
 
-// listProjects returns the configured project, nil when no project ID is set,
-// and the legacy cbdc2 projects. It lists the projects only once.
-func (p *Deployer) listProjects(ctx context.Context) (*capellav4.ProjectInfo, []cbdc2Project, error) {
+// listProjects returns the shared projects and the legacy cbdc2 projects. It
+// lists the projects only once.
+func (p *Deployer) listProjects(ctx context.Context) ([]*capellav4.ProjectInfo, []cbdc2Project, error) {
 	p.logger.Debug("listing cloud projects")
 
 	projects, err := p.v4.ListProjects(ctx, p.tenantID)
@@ -160,23 +160,28 @@ func (p *Deployer) listProjects(ctx context.Context) (*capellav4.ProjectInfo, []
 	return shared, legacy, nil
 }
 
-// splitProjects never treats the configured project as a legacy project, even
-// when its name parses as cbdc2 meta data. The configured project keeps an
-// empty name when the list does not hold it.
+// splitProjects returns the configured project as the only shared project.
+// With no project ID, every CBDC2_SHARED project is shared, so a cluster in a
+// duplicate from two racing allocates stays visible. It never treats the
+// configured project as a legacy project, even when its name parses as cbdc2
+// meta data. The configured project keeps an empty name when the list does not
+// hold it.
 func splitProjects(
 	projects []*capellav4.ProjectInfo,
 	sharedID string,
 	logger *zap.Logger,
-) (*capellav4.ProjectInfo, []cbdc2Project) {
-	var shared *capellav4.ProjectInfo
+) ([]*capellav4.ProjectInfo, []cbdc2Project) {
+	var shared []*capellav4.ProjectInfo
 	if sharedID != "" {
-		shared = &capellav4.ProjectInfo{ID: sharedID}
+		shared = []*capellav4.ProjectInfo{{ID: sharedID}}
+	} else {
+		shared = filterSharedProjects(projects)
 	}
 
 	var legacy []cbdc2Project
 	for _, project := range projects {
 		if sharedID != "" && project.ID == sharedID {
-			shared = project
+			shared[0] = project
 			continue
 		}
 
@@ -233,9 +238,9 @@ func (p *Deployer) inspectProject(ctx context.Context, project cbdc2Project) (*c
 	return base, nil
 }
 
-// listSharedClusters returns the cbdinocluster clusters of the configured
-// project. A missing project gives no clusters, so ps and cleanup go on with
-// the legacy projects.
+// listSharedClusters returns the cbdinocluster clusters of a shared project. A
+// missing project gives no clusters, so ps and cleanup go on with the legacy
+// projects.
 func (p *Deployer) listSharedClusters(ctx context.Context, project *capellav4.ProjectInfo) ([]*clusterInfo, error) {
 	clusters, err := p.v4.ListClusters(ctx, p.tenantID, project.ID)
 	if err != nil {
@@ -312,7 +317,7 @@ func parseClusterNameMeta(name string, logger *zap.Logger) *stringclustermeta.Me
 
 // findClusters inspects only the cbdc2 projects whose cluster ID matches, so a
 // single lookup costs one project listing instead of one per project. It lists
-// clusters only in those projects and in the shared project.
+// clusters only in those projects and in the shared projects.
 func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*clusterInfo, error) {
 	shared, projects, err := p.listProjects(ctx)
 	if err != nil {
@@ -327,8 +332,8 @@ func (p *Deployer) findClusters(ctx context.Context, idPrefix string) ([]*cluste
 	}
 
 	var sharedMatched []*clusterInfo
-	if shared != nil {
-		sharedClusters, err := p.listSharedClusters(ctx, shared)
+	for _, sharedProject := range shared {
+		sharedClusters, err := p.listSharedClusters(ctx, sharedProject)
 		if err != nil {
 			return nil, err
 		}
@@ -443,8 +448,8 @@ func (p *Deployer) findClusterInfo(ctx context.Context, clusterID string) (*clus
 		}
 	}
 
-	if shared != nil {
-		sharedClusters, err := p.listSharedClusters(ctx, shared)
+	for _, sharedProject := range shared {
+		sharedClusters, err := p.listSharedClusters(ctx, sharedProject)
 		if err != nil {
 			return nil, err
 		}
@@ -713,7 +718,7 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 		return nil, err
 	}
 
-	cloudProjectID, err := p.requireProjectID()
+	cloudProjectID, err := p.sharedProjectID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -828,18 +833,12 @@ func (p *Deployer) deployNewCluster(ctx context.Context, def *clusterdef.Cluster
 	}, nil
 }
 
-// requireProjectID returns the project every new cluster goes into.
-// cbdinocluster never creates this project on allocate.
-func (p *Deployer) requireProjectID() (string, error) {
-	if p.projectID == "" {
-		return "", errors.New(`a capella project id is required, run "cbdinocluster init" to find or create the CBDC2_SHARED project, or run "cbdinocluster cloud projects create <name>" and set the id with "cbdinocluster init --capella-project-id <id>"`)
-	}
-	return p.projectID, nil
-}
-
-func (p *Deployer) wrapCreateError(err error) error {
+func (p *Deployer) wrapCreateError(err error, projectID string) error {
 	if capellav4.IsProjectNotFound(err) {
-		return errors.Wrapf(err, "the configured capella project %s does not exist", p.projectID)
+		if p.projectID == "" {
+			return errors.Wrapf(err, "the %s capella project %s does not exist", SharedProjectName, projectID)
+		}
+		return errors.Wrapf(err, "the configured capella project %s does not exist", projectID)
 	}
 	return errors.Wrap(err, "failed to create cluster")
 }
@@ -868,7 +867,7 @@ func (p *Deployer) resolveCloudLocation(def *clusterdef.Cluster) (string, string
 }
 
 func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster, clusterVersion string) (deployment.ClusterInfo, error) {
-	cloudProjectID, err := p.requireProjectID()
+	cloudProjectID, err := p.sharedProjectID(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -917,7 +916,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 		newCluster, err := p.v4.CreateFreeTierCluster(ctx, p.tenantID, cloudProjectID, createReq)
 		if err != nil {
-			return nil, p.wrapCreateError(err)
+			return nil, p.wrapCreateError(err, cloudProjectID)
 		}
 
 		cloudClusterID = newCluster.ID
@@ -955,7 +954,7 @@ func (p *Deployer) createNewCluster(ctx context.Context, def *clusterdef.Cluster
 
 		newCluster, err := p.v4.CreateCluster(ctx, p.tenantID, cloudProjectID, createReq)
 		if err != nil {
-			return nil, p.wrapCreateError(err)
+			return nil, p.wrapCreateError(err, cloudProjectID)
 		}
 
 		cloudClusterID = newCluster.ID
@@ -2081,18 +2080,21 @@ func (p *Deployer) sharedRemovalTarget(ctx context.Context, cluster *clusterInfo
 	}, nil
 }
 
-// listSharedForRemoval returns no clusters when no project ID is set.
-func (p *Deployer) listSharedForRemoval(ctx context.Context, shared *capellav4.ProjectInfo) ([]*clusterInfo, error) {
-	if shared == nil {
-		return nil, nil
+// listSharedForRemoval returns the clusters of every shared project it can
+// list, next to the errors of the others.
+func (p *Deployer) listSharedForRemoval(ctx context.Context, shared []*capellav4.ProjectInfo) ([]*clusterInfo, error) {
+	var errs error
+	var out []*clusterInfo
+	for _, project := range shared {
+		clusters, err := p.listSharedClusters(ctx, project)
+		if err != nil {
+			errs = multierr.Append(errs, errors.Wrap(err, "failed to list the clusters of the shared project"))
+			continue
+		}
+		out = append(out, clusters...)
 	}
 
-	clusters, err := p.listSharedClusters(ctx, shared)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to list the clusters of the shared project")
-	}
-
-	return clusters, nil
+	return out, errs
 }
 
 func (p *Deployer) logSkippedSharedClusters(clusters []*clusterInfo) {
@@ -2107,7 +2109,7 @@ func (p *Deployer) logSkippedSharedClusters(clusters []*clusterInfo) {
 // shared cluster first, and waits after, so the deletions overlap on the
 // Capella side. It then deletes the legacy projects whose clusters all went.
 // An empty legacy project holds no target, so it goes straight away. The
-// shared project is never deleted, because it is not in projects.
+// shared projects are never deleted, because they are not in projects.
 func (p *Deployer) removeClusters(
 	ctx context.Context,
 	projects []cbdc2Project,
@@ -2414,12 +2416,17 @@ func (p *Deployer) cleanup(ctx context.Context, opts deployment.CleanupOptions) 
 	}
 
 	p.logSkippedSharedClusters(sharedKeep)
-	p.logCleanupScope(opts.Purpose, shared, projects, len(sharedTake))
+	p.logCleanupScope(opts.Purpose, shared, projects, sharedTake)
 
 	return multierr.Combine(sharedListErr, p.removeClusters(ctx, projects, sharedTake, true))
 }
 
-func (p *Deployer) logCleanupScope(purpose string, shared *capellav4.ProjectInfo, projects []cbdc2Project, sharedCount int) {
+func (p *Deployer) logCleanupScope(
+	purpose string,
+	shared []*capellav4.ProjectInfo,
+	projects []cbdc2Project,
+	sharedTake []*clusterInfo,
+) {
 	var purposeFields []zap.Field
 	if purpose != "" {
 		purposeFields = append(purposeFields, zap.String("purpose", purpose))
@@ -2437,11 +2444,21 @@ func (p *Deployer) logCleanupScope(purpose string, shared *capellav4.ProjectInfo
 			}, purposeFields...)...)
 	}
 
-	if shared != nil {
-		p.logger.Info("found expired clusters in the configured project",
+	message := "found expired clusters in the configured project"
+	if p.projectID == "" {
+		message = "found expired clusters in the " + SharedProjectName + " project"
+	}
+	for _, project := range shared {
+		count := 0
+		for _, cluster := range sharedTake {
+			if cluster.ProjectID == project.ID {
+				count++
+			}
+		}
+		p.logger.Info(message,
 			append([]zap.Field{
-				zap.String("project-id", shared.ID),
-				zap.Int("count", sharedCount),
+				zap.String("project-id", project.ID),
+				zap.Int("count", count),
 			}, purposeFields...)...)
 	}
 }
