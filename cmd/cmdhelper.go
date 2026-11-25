@@ -233,6 +233,11 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 	capellaInternalSupportToken := config.Capella.InternalSupportToken
 	uploadServerLogsHostName := config.Capella.UploadServerLogsHostName
 
+	projectID := config.Capella.ProjectID
+	if projectID == "" {
+		projectID = os.Getenv("CAPELLA_PROJECT_ID")
+	}
+
 	capellaApiKeys := appendApiKeys(nil, config.Capella.ApiKeys...)
 	if len(capellaApiKeys) == 0 {
 		capellaApiKeys = appendApiKeys(capellaApiKeys, cbdcconfig.Config_CapellaApiKey{
@@ -295,6 +300,7 @@ func (h *CmdHelper) getCloudDeployer(ctx context.Context) (*clouddeploy.Deployer
 		DefaultAzureRegion:       defaultAzureRegion,
 		DefaultGcpRegion:         defaultGcpRegion,
 		UploadServerLogsHostName: uploadServerLogsHostName,
+		ProjectID:                projectID,
 	})
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create deployer")

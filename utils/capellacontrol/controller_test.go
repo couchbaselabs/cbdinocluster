@@ -2,6 +2,7 @@ package capellacontrol_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
@@ -67,4 +68,15 @@ func TestMultipleControllers(t *testing.T) {
 		SortDirection: "asc",
 	})
 	require.NoError(t, err)
+}
+
+func TestDeployClusterRequestOmitsEmptyCidr(t *testing.T) {
+	// An empty CIDR is left out, so Capella picks a free block.
+	body, err := json.Marshal(capellacontrol.DeployClusterRequest{})
+	require.NoError(t, err)
+	require.NotContains(t, string(body), `"cidr"`)
+
+	body, err = json.Marshal(capellacontrol.DeployClusterRequest{CIDR: "10.0.0.0/23"})
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"cidr":"10.0.0.0/23"`)
 }
