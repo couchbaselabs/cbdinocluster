@@ -149,6 +149,14 @@ func (m *NodeManager) SetupOneNodeCluster(ctx context.Context, opts *SetupOneNod
 		}
 	}
 
+	// Set the legacy policy before initializing so the default "password" keeps working on 8.6+. See MB-69868.
+	err = c.SetLegacyPasswordPolicy(ctx)
+	if err != nil {
+		// A failure is not fatal, since this policy is the default on older versions. On newer servers
+		// the failure will surface when configuring the credentials later.
+		m.Logger.Warn("failed to set legacy password policy, continuing", zap.Error(err))
+	}
+
 	err = c.UpdateWebSettings(ctx, &UpdateWebSettingsOptions{
 		Username: opts.Username,
 		Password: opts.Password,
