@@ -291,11 +291,13 @@ func runTestInit(t *testing.T, configPath, v4Endpoint string, poolArgs ...string
 	})
 
 	// Cobra flags are process globals, so a value set by one Execute leaks into
-	// the next. The expiry flag is the only pool flag the base args leave unset.
-	expiryFlag := initCmd.Flags().Lookup("capella-pool-expiry")
-	require.NotNil(t, expiryFlag)
-	require.NoError(t, expiryFlag.Value.Set(expiryFlag.DefValue))
-	expiryFlag.Changed = false
+	// the next. Reset the flags the base args leave unset.
+	for _, flagName := range []string{"capella-pool-expiry"} {
+		flag := initCmd.Flags().Lookup(flagName)
+		require.NotNil(t, flag)
+		require.NoError(t, flag.Value.Set(flag.DefValue))
+		flag.Changed = false
+	}
 
 	args := []string{"init", "--auto",
 		"--config", configPath,
